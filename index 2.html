@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ElectroMax — Финансовый учёт</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: #f0f4f8; color: #1a202c; }
+
+  /* LOGIN */
+  #login-screen {
+    min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+  }
+  .login-card {
+    background: white; border-radius: 16px; padding: 48px 40px;
+    width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  }
+  .login-logo { text-align: center; margin-bottom: 32px; }
+  .login-logo h1 { font-size: 28px; font-weight: 700; color: #1e3a5f; }
+  .login-logo p { color: #64748b; font-size: 14px; margin-top: 4px; }
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+  .form-group input {
+    width: 100%; padding: 10px 14px; border: 1.5px solid #e2e8f0;
+    border-radius: 8px; font-size: 15px; transition: border-color 0.2s;
+  }
+  .form-group input:focus { outline: none; border-color: #2563eb; }
+  .btn-primary {
+    width: 100%; padding: 12px; background: #2563eb; color: white;
+    border: none; border-radius: 8px; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: background 0.2s; margin-top: 8px;
+  }
+  .btn-primary:hover { background: #1d4ed8; }
+  .login-error { color: #ef4444; font-size: 13px; text-align: center; margin-top: 12px; display: none; }
+
+  /* APP LAYOUT */
+  #app { display: none; min-height: 100vh; }
+  .sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
+    background: #1e3a5f; display: flex; flex-direction: column; z-index: 100;
+  }
+  .sidebar-brand { padding: 24px 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  .sidebar-brand h2 { color: white; font-size: 18px; font-weight: 700; }
+  .sidebar-brand p { color: #93c5fd; font-size: 12px; margin-top: 2px; }
+  .sidebar-nav { flex: 1; padding: 12px 0; overflow-y: auto; }
+  .nav-item {
+    display: flex; align-items: center; gap: 12px; padding: 10px 20px;
+    color: #cbd5e1; font-size: 14px; cursor: pointer; transition: all 0.2s;
+    border-left: 3px solid transparent;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.08); color: white; }
+  .nav-item.active { background: rgba(37,99,235,0.3); color: white; border-left-color: #60a5fa; }
+  .nav-item .icon { font-size: 18px; width: 22px; text-align: center; }
+  .sidebar-footer { padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.1); }
+  .user-info { color: #93c5fd; font-size: 12px; margin-bottom: 10px; }
+  .btn-logout {
+    width: 100%; padding: 8px; background: rgba(255,255,255,0.1); color: #cbd5e1;
+    border: none; border-radius: 6px; font-size: 13px; cursor: pointer; transition: all 0.2s;
+  }
+  .btn-logout:hover { background: rgba(255,255,255,0.2); color: white; }
+
+  .main { margin-left: 240px; padding: 32px; min-height: 100vh; }
+  .page { display: none; }
+  .page.active { display: block; }
+  .page-title { font-size: 24px; font-weight: 700; color: #1e3a5f; margin-bottom: 24px; }
+
+  /* CARDS */
+  .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .card {
+    background: white; border-radius: 12px; padding: 20px 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;
+  }
+  .card-label { font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card-value { font-size: 26px; font-weight: 700; color: #1e3a5f; margin-top: 6px; }
+  .card-value.green { color: #16a34a; }
+  .card-value.red { color: #dc2626; }
+  .card-sub { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+
+  /* FORM */
+  .form-card { background: white; border-radius: 12px; padding: 28px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; max-width: 680px; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .form-row.single { grid-template-columns: 1fr; }
+  .form-row.triple { grid-template-columns: 1fr 1fr 1fr; }
+  .field label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+  .field input, .field select, .field textarea {
+    width: 100%; padding: 9px 12px; border: 1.5px solid #e2e8f0;
+    border-radius: 8px; font-size: 14px; color: #1a202c; background: white; transition: border-color 0.2s;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: #2563eb; }
+  .field textarea { resize: vertical; min-height: 72px; }
+  .field .required { color: #ef4444; }
+
+  /* TYPE BUTTONS */
+  .type-buttons { display: flex; gap: 10px; margin-bottom: 20px; }
+  .type-btn {
+    flex: 1; padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px;
+    background: white; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; text-align: center;
+  }
+  .type-btn.expense.active { border-color: #dc2626; background: #fef2f2; color: #dc2626; }
+  .type-btn.income.active { border-color: #16a34a; background: #f0fdf4; color: #16a34a; }
+  .type-btn.transfer.active { border-color: #6366f1; background: #eef2ff; color: #6366f1; }
+  .type-btn:hover { border-color: #94a3b8; }
+
+  /* TAGS */
+  .auto-tags { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .tag { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .tag.dds { background: #dbeafe; color: #1d4ed8; }
+  .tag.opiu { background: #dcfce7; color: #15803d; }
+  .tag.no-opiu { background: #f1f5f9; color: #64748b; }
+
+  /* BUTTONS */
+  .btn-row { display: flex; gap: 12px; margin-top: 24px; }
+  .btn { padding: 10px 24px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; }
+  .btn-save { background: #2563eb; color: white; }
+  .btn-save:hover { background: #1d4ed8; }
+  .btn-save:disabled { background: #93c5fd; cursor: not-allowed; }
+  .btn-clear { background: #f1f5f9; color: #475569; }
+  .btn-clear:hover { background: #e2e8f0; }
+
+  /* TABLE */
+  .table-wrapper { background: white; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; overflow: hidden; }
+  .table-header { padding: 16px 20px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; }
+  .filters input, .filters select { padding: 7px 10px; border: 1.5px solid #e2e8f0; border-radius: 7px; font-size: 13px; }
+  .filters input:focus, .filters select:focus { outline: none; border-color: #2563eb; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { background: #f8fafc; }
+  th { padding: 11px 14px; text-align: left; font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; }
+  td { padding: 11px 14px; font-size: 13px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f8fafc; }
+  .badge { padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .badge-expense { background: #fef2f2; color: #dc2626; }
+  .badge-income { background: #f0fdf4; color: #16a34a; }
+  .badge-transfer { background: #eef2ff; color: #6366f1; }
+  .amount-expense { color: #dc2626; font-weight: 600; }
+  .amount-income { color: #16a34a; font-weight: 600; }
+  .table-footer { padding: 14px 20px; border-top: 1px solid #e2e8f0; background: #f8fafc; display: flex; gap: 24px; font-size: 13px; font-weight: 600; }
+  .empty-state { text-align: center; padding: 48px; color: #94a3b8; }
+  .empty-state .emoji { font-size: 40px; margin-bottom: 12px; }
+
+  /* TOAST */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; padding: 14px 20px;
+    border-radius: 10px; color: white; font-size: 14px; font-weight: 600;
+    z-index: 9999; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    max-width: 320px; box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  }
+  .toast.success { background: #16a34a; }
+  .toast.error { background: #dc2626; }
+  .toast.show { opacity: 1; }
+
+  /* LOADING */
+  .loading { text-align: center; padding: 32px; color: #64748b; }
+  .spinner { width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* SETUP NOTICE */
+  .setup-notice { background: #fef3c7; border: 1.5px solid #f59e0b; border-radius: 10px; padding: 16px 20px; margin-bottom: 24px; font-size: 14px; color: #92400e; display: none; }
+  .setup-notice strong { display: block; margin-bottom: 4px; }
+
+  @media (max-width: 768px) {
+    .sidebar { width: 200px; }
+    .main { margin-left: 200px; padding: 20px; }
+    .form-row { grid-template-columns: 1fr; }
+    .form-row.triple { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <h1>⚡ ElectroMax</h1>
+      <p>Финансовый учёт</p>
+    </div>
+    <div class="form-group">
+      <label>Логин</label>
+      <input type="text" id="login-username" placeholder="Введите логин" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>Пароль</label>
+      <input type="password" id="login-password" placeholder="Введите пароль" autocomplete="current-password">
+    </div>
+    <button class="btn-primary" onclick="doLogin()">Войти</button>
+    <div class="login-error" id="login-error">Неверный логин или пароль</div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="sidebar">
+    <div class="sidebar-brand">
+      <h2>⚡ ElectroMax</h2>
+      <p>Финансовый учёт</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-item active" onclick="showPage('dashboard')"><span class="icon">📊</span> Дашборд</div>
+      <div class="nav-item" onclick="showPage('entry')"><span class="icon">➕</span> Ввод операции</div>
+      <div class="nav-item" onclick="showPage('journal')"><span class="icon">📋</span> Журнал</div>
+      <div class="nav-item" onclick="showPage('reconcile')"><span class="icon">🔍</span> Сверка выписки</div>
+      <div class="nav-item" onclick="showPage('dds-daily')"><span class="icon">📅</span> ДДС Ежедневный</div>
+      <div class="nav-item" onclick="showPage('dds')"><span class="icon">💸</span> ДДС Месячный</div>
+      <div class="nav-item" onclick="showPage('opiu')"><span class="icon">📈</span> ОПИУ</div>
+      <div class="nav-item" onclick="showPage('balances')"><span class="icon">💰</span> Остатки счетов</div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-info" id="user-info">Вы вошли как: —</div>
+      <button class="btn-logout" onclick="doLogout()">→ Выйти</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- SETUP NOTICE -->
+    <div class="setup-notice" id="setup-notice">
+      <strong>⚙️ Требуется настройка</strong>
+      Замените SCRIPT_URL в коде на ваш Google Apps Script URL. Инструкция внутри файла.
+    </div>
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-title">Дашборд</div>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-label">Расходы за месяц</div>
+          <div class="card-value red" id="dash-expense">—</div>
+          <div class="card-sub" id="dash-month">загрузка...</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Доходы за месяц</div>
+          <div class="card-value green" id="dash-income">—</div>
+          <div class="card-sub">текущий месяц</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Чистый поток</div>
+          <div class="card-value" id="dash-net">—</div>
+          <div class="card-sub">доходы − расходы</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Операций всего</div>
+          <div class="card-value" id="dash-count">—</div>
+          <div class="card-sub">в базе данных</div>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <div class="table-header"><strong>Последние 10 операций</strong></div>
+        <div id="dash-recent"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
+      </div>
+    </div>
+
+    <!-- ENTRY FORM -->
+    <div class="page" id="page-entry">
+      <div class="page-title">Ввод операции</div>
+      <div class="form-card">
+        <div style="font-size:13px;font-weight:700;color:#475569;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px;">Тип операции</div>
+        <div class="type-buttons">
+          <button class="type-btn expense active" onclick="setType('расход')">💸 Расход</button>
+          <button class="type-btn income" onclick="setType('доход')">💰 Доход</button>
+          <button class="type-btn transfer" onclick="setType('перевод')">🔄 Перевод</button>
+        </div>
+        <input type="hidden" id="f-type" value="расход">
+
+        <div class="form-row">
+          <div class="field">
+            <label>Дата <span class="required">*</span></label>
+            <input type="date" id="f-date">
+          </div>
+          <div class="field">
+            <label>Сумма (₸) <span class="required">*</span></label>
+            <input type="number" id="f-amount" placeholder="0" min="0" step="0.01">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label>Категория <span class="required">*</span></label>
+            <select id="f-category" onchange="updateTags()">
+              <option value="">— Выберите —</option>
+              <option value="аренда">Аренда</option>
+              <option value="ком платежи">Коммунальные платежи</option>
+              <option value="командировочные">Командировочные</option>
+              <option value="зарплата">Зарплата</option>
+              <option value="аванс">Аванс</option>
+              <option value="налоги">Налоги</option>
+              <option value="упаковка">Упаковка</option>
+              <option value="логистика">Логистика</option>
+              <option value="комиссия">Комиссия</option>
+              <option value="авторасходы">Авторасходы</option>
+              <option value="канц товары">Канц. товары</option>
+              <option value="обед">Обед / питание</option>
+              <option value="компенсация">Компенсация</option>
+              <option value="наемники">Наёмники</option>
+              <option value="услуги">Услуги</option>
+              <option value="шашу">Шашу (реклама)</option>
+              <option value="кредит">Кредит</option>
+              <option value="шеф">Вывод Шеф</option>
+              <option value="ОС">Основные средства (ОС)</option>
+              <option value="прочее">Прочее</option>
+            </select>
+            <div class="auto-tags" id="auto-tags"></div>
+          </div>
+          <div class="field">
+            <label>Название / Назначение <span class="required">*</span></label>
+            <input type="text" id="f-name" placeholder="Например: Аренда склада Алматы">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label>Тип счёта</label>
+            <select id="f-account-type" onchange="toggleAccountFields()">
+              <option value="юр">Юридический счёт</option>
+              <option value="физ">Физический счёт</option>
+            </select>
+          </div>
+          <div class="field" id="field-legal">
+            <label>Юридический счёт <span class="required">*</span></label>
+            <select id="f-legal-account">
+              <option value="">— Выберите счёт —</option>
+              <option value="ТОО Phonehouse">ТОО Phonehouse</option>
+              <option value="ТОО СТД">ТОО СТД</option>
+              <option value="ТОО Elektro">ТОО Elektro</option>
+              <option value="ТОО Technovision Holding">ТОО Technovision Holding</option>
+              <option value="ТОО Technovision">ТОО Technovision</option>
+              <option value="БЦК Phonehouse">БЦК Phonehouse</option>
+              <option value="БЦК СТД">БЦК СТД</option>
+              <option value="БЦК Elektro">БЦК Elektro</option>
+              <option value="БЦК Technovision Holding">БЦК Technovision Holding</option>
+              <option value="Счёт Халык СТД">Счёт Халык СТД</option>
+              <option value="Счёт Жусан СТД">Счёт Жусан СТД</option>
+              <option value="Счёт Форте СТД">Счёт Форте СТД</option>
+              <option value="ИП АМДК">ИП АМДК</option>
+            </select>
+          </div>
+          <div class="field" id="field-physical" style="display:none">
+            <label>Физический счёт <span class="required">*</span></label>
+            <select id="f-physical-account" onchange="toggleKaspi()">
+              <option value="Касса нал Алматы">Касса нал Алматы</option>
+              <option value="Каспи голд">Каспи голд</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row" id="field-kaspi-row" style="display:none">
+          <div class="field">
+            <label>Держатель Каспи голд</label>
+            <select id="f-kaspi-holder">
+              <option value="">— Выберите —</option>
+              <option value="Темирлан">Темирлан</option>
+              <option value="Актоты">Актоты</option>
+              <option value="Дастан">Дастан</option>
+              <option value="Аружан">Аружан</option>
+            </select>
+          </div>
+          <div class="field"></div>
+        </div>
+
+        <div class="form-row triple">
+          <div class="field">
+            <label>Город</label>
+            <select id="f-city">
+              <option value="Алматы">Алматы</option>
+              <option value="Астана">Астана</option>
+              <option value="Шымкент">Шымкент</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Ответственный</label>
+            <select id="f-responsible">
+              <option value="">— Выберите —</option>
+              <option value="Темирлан">Темирлан</option>
+              <option value="Актоты">Актоты</option>
+              <option value="Аружан">Аружан</option>
+              <option value="Дастан">Дастан</option>
+              <option value="Аббас">Аббас</option>
+              <option value="Алихан">Алихан</option>
+              <option value="Айсултан">Айсултан</option>
+              <option value="Аяжан">Аяжан</option>
+              <option value="Камран">Камран</option>
+              <option value="Кундыз">Кундыз</option>
+              <option value="Намка">Намка</option>
+              <option value="Нурай">Нурай</option>
+              <option value="Ерик">Ерик</option>
+              <option value="Беглан">Беглан</option>
+              <option value="Бека">Бека</option>
+              <option value="Баха">Баха</option>
+              <option value="Жаксылык">Жаксылык</option>
+              <option value="Ергазы">Ергазы</option>
+              <option value="Марик">Марик</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Комментарий</label>
+            <input type="text" id="f-notes" placeholder="Необязательно">
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-save" id="btn-save" onclick="saveOperation()">✅ Сохранить операцию</button>
+          <button class="btn btn-clear" onclick="clearForm()">✕ Очистить</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- JOURNAL -->
+    <div class="page" id="page-journal">
+      <div class="page-title">Журнал операций</div>
+      <div class="table-wrapper">
+        <div class="table-header">
+          <div class="filters">
+            <input type="date" id="filter-from" onchange="renderJournal()" title="Дата от">
+            <input type="date" id="filter-to" onchange="renderJournal()" title="Дата до">
+            <select id="filter-type" onchange="renderJournal()">
+              <option value="">Все типы</option>
+              <option value="расход">Расход</option>
+              <option value="доход">Доход</option>
+              <option value="перевод">Перевод</option>
+            </select>
+            <select id="filter-city" onchange="renderJournal()">
+              <option value="">Все города</option>
+              <option value="Алматы">Алматы</option>
+              <option value="Астана">Астана</option>
+              <option value="Шымкент">Шымкент</option>
+            </select>
+            <input type="text" id="filter-search" placeholder="Поиск..." oninput="renderJournal()" style="width:150px">
+          </div>
+          <button class="btn btn-clear" onclick="exportJournal()" style="padding:7px 16px;font-size:13px;">⬇ Excel</button>
+        </div>
+        <div id="journal-table"><div class="loading"><div class="spinner"></div>Загрузка данных...</div></div>
+        <div class="table-footer" id="journal-totals"></div>
+      </div>
+    </div>
+
+    <!-- RECONCILE -->
+    <div class="page" id="page-reconcile">
+      <div class="page-title">Сверка с выпиской</div>
+      <div class="form-card" style="max-width:100%;margin-bottom:20px;">
+        <p style="color:#64748b;font-size:14px;margin-bottom:16px;">Вставьте данные из банковской выписки (CSV или скопированные из Excel). Система сравнит с журналом.</p>
+        <div class="form-row">
+          <div class="field">
+            <label>Счёт для сверки</label>
+            <select id="rec-account">
+              <option value="">— Выберите счёт —</option>
+              <option value="ТОО СТД">ТОО СТД</option>
+              <option value="БЦК СТД">БЦК СТД</option>
+              <option value="БЦК Elektro">БЦК Elektro</option>
+              <option value="Счёт Халык СТД">Счёт Халык СТД</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Период сверки</label>
+            <input type="month" id="rec-month">
+          </div>
+        </div>
+        <div class="field" style="margin-bottom:16px;">
+          <label>Данные выписки (формат: дата;сумма;назначение — каждая строка)</label>
+          <textarea id="rec-data" placeholder="01.06.2026;-150000;Аренда склада&#10;03.06.2026;-85000;ГСМ Алматы&#10;05.06.2026;500000;Оплата от клиента" style="min-height:120px;font-family:monospace;font-size:13px;"></textarea>
+        </div>
+        <button class="btn btn-save" onclick="doReconcile()">🔍 Сверить</button>
+      </div>
+      <div id="reconcile-result"></div>
+    </div>
+
+    <!-- DDS DAILY -->
+    <div class="page" id="page-dds-daily">
+      <div class="page-title">ДДС Ежедневный — Остатки по счетам</div>
+      <div class="form-card" style="max-width:400px;margin-bottom:20px;">
+        <div class="form-row">
+          <div class="field">
+            <label>Выберите дату</label>
+            <input type="date" id="dds-daily-date">
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button class="btn btn-save" onclick="buildDDSDaily()" style="width:100%;">Показать</button>
+          </div>
+        </div>
+      </div>
+      <div id="dds-daily-result"></div>
+    </div>
+
+    <!-- DDS MONTHLY -->
+    <div class="page" id="page-dds">
+      <div class="page-title">ДДС — Движение денежных средств</div>
+      <div class="form-card" style="max-width:400px;margin-bottom:20px;">
+        <div class="form-row">
+          <div class="field">
+            <label>Месяц</label>
+            <input type="month" id="dds-month">
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button class="btn btn-save" onclick="buildDDS()" style="width:100%;">Сформировать</button>
+          </div>
+        </div>
+      </div>
+      <div id="dds-result"></div>
+    </div>
+
+    <!-- OPIU -->
+    <div class="page" id="page-opiu">
+      <div class="page-title">ОПИУ — Отчёт о прибылях и убытках</div>
+      <div class="form-card" style="max-width:400px;margin-bottom:20px;">
+        <div class="form-row">
+          <div class="field">
+            <label>Месяц</label>
+            <input type="month" id="opiu-month">
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button class="btn btn-save" onclick="buildOPIU()" style="width:100%;">Сформировать</button>
+          </div>
+        </div>
+      </div>
+      <div id="opiu-result"></div>
+    </div>
+
+    <!-- BALANCES -->
+    <div class="page" id="page-balances">
+      <div class="page-title">Остатки счетов</div>
+      <div id="balances-grid"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// НАСТРОЙКА — замените на ваш Google Apps Script URL
+// После публикации Apps Script вставьте URL сюда:
+// ============================================================
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzPV6fiatTrh3l7-hEjJ-HNtSPL7DMcDz1eFLpckUKXQ6Tbay9v--4euTtHMz-WWWEtag/exec';
+// ============================================================
+
+const USERS = { admin: 'electromax2026', manager: 'manager2026' };
+let currentUser = null;
+let currentRole = null;
+let allData = [];
+
+const CATEGORY_MAP = {
+  'аренда':        { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
+  'ком платежи':   { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
+  'командировочные':{ dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
+  'зарплата':      { dds: 'Операционная', opiu: 'ФОТ' },
+  'аванс':         { dds: 'Операционная', opiu: 'ФОТ' },
+  'налоги':        { dds: 'Операционная', opiu: 'ФОТ' },
+  'упаковка':      { dds: 'Операционная', opiu: 'ПЕРЕМЕННЫЕ РАСХОДЫ' },
+  'логистика':     { dds: 'Операционная', opiu: 'ПЕРЕМЕННЫЕ РАСХОДЫ' },
+  'комиссия':      { dds: 'Операционная', opiu: 'ПЕРЕМЕННЫЕ РАСХОДЫ' },
+  'авторасходы':   { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'канц товары':   { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'обед':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'компенсация':   { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'наемники':      { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'услуги':        { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'шашу':          { dds: 'Операционная', opiu: 'Маркетинг' },
+  'кредит':        { dds: 'Финансовая',   opiu: '' },
+  'шеф':           { dds: 'Финансовая',   opiu: '' },
+  'ОС':            { dds: 'Инвестиционная', opiu: '' },
+  'прочее':        { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+};
+
+// AUTH
+async function doLogin() {
+  const u = document.getElementById('login-username').value.trim();
+  const p = document.getElementById('login-password').value;
+  const btn = document.querySelector('.btn-primary');
+  btn.textContent = '⏳ Вход...'; btn.disabled = true;
+
+  let role = null;
+
+  if (SCRIPT_URL !== 'ВСТАВЬТЕ_СЮДА_URL_APPS_SCRIPT') {
+    // Проверяем логин через Google Sheets
+    try {
+      const r = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'login', username: u, password: p })
+      });
+      const d = await r.json();
+      if (d.success) { role = d.role; }
+      else {
+        document.getElementById('login-error').style.display = 'block';
+        document.getElementById('login-error').textContent = d.error || 'Неверный логин или пароль';
+        btn.textContent = 'Войти'; btn.disabled = false; return;
+      }
+    } catch(e) {
+      // Fallback на локальные данные если нет сети
+      if (USERS[u] && USERS[u] === p) role = u === 'admin' ? 'admin' : 'manager';
+    }
+  } else {
+    // Режим без Google Sheets — локальная проверка
+    if (USERS[u] && USERS[u] === p) role = u === 'admin' ? 'admin' : 'manager';
+  }
+
+  if (role) {
+    currentUser = u; currentRole = role;
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    document.getElementById('user-info').textContent = 'Вы вошли как: ' + u + ' (' + role + ')';
+    if (SCRIPT_URL === 'ВСТАВЬТЕ_СЮДА_URL_APPS_SCRIPT') {
+      document.getElementById('setup-notice').style.display = 'block';
+    }
+    // Скрыть кнопку удаления для менеджера
+    if (role !== 'admin') {
+      document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+    }
+    setTodayDate();
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('dds-daily-date').value = today;
+    loadData();
+  } else {
+    document.getElementById('login-error').style.display = 'block';
+    document.getElementById('login-error').textContent = 'Неверный логин или пароль';
+  }
+  btn.textContent = 'Войти'; btn.disabled = false;
+}
+document.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+function doLogout() {
+  currentUser = null; allData = [];
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('login-username').value = '';
+  document.getElementById('login-password').value = '';
+}
+
+// NAVIGATION
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  event.currentTarget.classList.add('active');
+  if (name === 'journal') renderJournal();
+  if (name === 'balances') renderBalances();
+  if (name === 'dds') document.getElementById('dds-month').value = currentMonth();
+  if (name === 'opiu') document.getElementById('opiu-month').value = currentMonth();
+}
+
+function currentMonth() {
+  const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+
+// DATA
+async function loadData() {
+  if (SCRIPT_URL === 'ВСТАВЬТЕ_СЮДА_URL_APPS_SCRIPT') {
+    allData = getSampleData();
+    renderDashboard(); renderJournal(); renderBalances(); return;
+  }
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getAll');
+    const d = await r.json();
+    allData = d.data || [];
+  } catch(e) { allData = getSampleData(); }
+  renderDashboard(); renderBalances();
+}
+
+function getSampleData() {
+  return [
+    { id:1, date:'2026-06-01', type:'расход', category:'аренда', name:'Аренда склада Алматы', amount:450000, account:'ТОО СТД', city:'Алматы', responsible:'Темирлан', dds:'Операционная', opiu:'ПОСТОЯННЫЕ РАСХОДЫ', notes:'' },
+    { id:2, date:'2026-06-03', type:'расход', category:'зарплата', name:'ЗП Алихан июнь', amount:180000, account:'БЦК СТД', city:'Алматы', responsible:'Актоты', dds:'Операционная', opiu:'ФОТ', notes:'' },
+    { id:3, date:'2026-06-05', type:'доход', category:'доход', name:'Поступление от Kaspi', amount:1200000, account:'ТОО СТД', city:'Алматы', responsible:'Темирлан', dds:'Операционная', opiu:'', notes:'' },
+    { id:4, date:'2026-06-08', type:'расход', category:'авторасходы', name:'ГСМ Спринтер Алматы', amount:45000, account:'Касса нал Алматы', city:'Алматы', responsible:'Аружан', dds:'Операционная', opiu:'Коммерческие расходы', notes:'' },
+    { id:5, date:'2026-06-12', type:'расход', category:'шашу', name:'Шашу Kaspi июнь', amount:320000, account:'ТОО Phonehouse', city:'Алматы', responsible:'Актоты', dds:'Операционная', opiu:'Маркетинг', notes:'' },
+  ];
+}
+
+// FORM
+function setTodayDate() {
+  const d = new Date();
+  document.getElementById('f-date').value = d.toISOString().split('T')[0];
+}
+
+function setType(t) {
+  document.getElementById('f-type').value = t;
+  document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+  const map = { расход:'expense', доход:'income', перевод:'transfer' };
+  document.querySelector('.type-btn.' + map[t]).classList.add('active');
+}
+
+function toggleAccountFields() {
+  const t = document.getElementById('f-account-type').value;
+  document.getElementById('field-legal').style.display = t === 'юр' ? 'block' : 'none';
+  document.getElementById('field-physical').style.display = t === 'физ' ? 'block' : 'none';
+  document.getElementById('field-kaspi-row').style.display = 'none';
+}
+
+function toggleKaspi() {
+  const v = document.getElementById('f-physical-account').value;
+  document.getElementById('field-kaspi-row').style.display = v === 'Каспи голд' ? 'grid' : 'none';
+}
+
+function updateTags() {
+  const cat = document.getElementById('f-category').value;
+  const m = CATEGORY_MAP[cat];
+  const el = document.getElementById('auto-tags');
+  if (!m) { el.innerHTML = ''; return; }
+  el.innerHTML = `<span class="tag dds">ДДС: ${m.dds}</span>` +
+    (m.opiu ? `<span class="tag opiu">ОПИУ: ${m.opiu}</span>` : `<span class="tag no-opiu">Не входит в ОПИУ</span>`);
+}
+
+async function saveOperation() {
+  const date = document.getElementById('f-date').value;
+  const amount = document.getElementById('f-amount').value;
+  const name = document.getElementById('f-name').value.trim();
+  const category = document.getElementById('f-category').value;
+  if (!date || !amount || !name || !category) { showToast('Заполните обязательные поля', 'error'); return; }
+
+  const accountType = document.getElementById('f-account-type').value;
+  let account = '';
+  if (accountType === 'юр') account = document.getElementById('f-legal-account').value;
+  else {
+    const phys = document.getElementById('f-physical-account').value;
+    account = phys === 'Каспи голд' ? 'Каспи — ' + document.getElementById('f-kaspi-holder').value : phys;
+  }
+
+  const m = CATEGORY_MAP[category] || { dds: 'Операционная', opiu: '' };
+  const row = {
+    date, type: document.getElementById('f-type').value,
+    category, name, amount: parseFloat(amount), account,
+    city: document.getElementById('f-city').value,
+    responsible: document.getElementById('f-responsible').value,
+    dds: m.dds, opiu: m.opiu,
+    notes: document.getElementById('f-notes').value,
+    created_by: currentUser
+  };
+
+  const btn = document.getElementById('btn-save');
+  btn.disabled = true; btn.textContent = '⏳ Сохранение...';
+
+  if (SCRIPT_URL !== 'ВСТАВЬТЕ_СЮДА_URL_APPS_SCRIPT') {
+    try {
+      await fetch(SCRIPT_URL, { method:'POST', body: JSON.stringify({ action:'addRow', data: row }) });
+    } catch(e) { showToast('Ошибка подключения к базе', 'error'); btn.disabled=false; btn.textContent='✅ Сохранить операцию'; return; }
+  }
+
+  allData.push({ ...row, id: Date.now() });
+  showToast('✅ Операция сохранена!', 'success');
+  clearForm();
+  renderDashboard();
+  btn.disabled = false; btn.textContent = '✅ Сохранить операцию';
+}
+
+function clearForm() {
+  ['f-amount','f-name','f-notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-category').value = '';
+  document.getElementById('auto-tags').innerHTML = '';
+  setType('расход');
+  setTodayDate();
+}
+
+// DASHBOARD
+function renderDashboard() {
+  const now = new Date();
+  const monthStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  const monthData = allData.filter(r => r.date && r.date.startsWith(monthStr));
+  const expense = monthData.filter(r => r.type === 'расход').reduce((s,r) => s + (+r.amount||0), 0);
+  const income = monthData.filter(r => r.type === 'доход').reduce((s,r) => s + (+r.amount||0), 0);
+  const net = income - expense;
+  const months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+
+  document.getElementById('dash-expense').textContent = fmt(expense) + ' ₸';
+  document.getElementById('dash-income').textContent = fmt(income) + ' ₸';
+  document.getElementById('dash-net').textContent = fmt(net) + ' ₸';
+  document.getElementById('dash-net').className = 'card-value ' + (net >= 0 ? 'green' : 'red');
+  document.getElementById('dash-count').textContent = allData.length;
+  document.getElementById('dash-month').textContent = months[now.getMonth()] + ' ' + now.getFullYear();
+
+  const recent = [...allData].sort((a,b) => b.date > a.date ? 1 : -1).slice(0, 10);
+  document.getElementById('dash-recent').innerHTML = recent.length ? buildTable(recent, false) : '<div class="empty-state"><div class="emoji">📭</div>Нет данных</div>';
+}
+
+// JOURNAL
+function renderJournal() {
+  let data = [...allData];
+  const from = document.getElementById('filter-from').value;
+  const to = document.getElementById('filter-to').value;
+  const type = document.getElementById('filter-type').value;
+  const city = document.getElementById('filter-city').value;
+  const search = document.getElementById('filter-search').value.toLowerCase();
+  if (from) data = data.filter(r => r.date >= from);
+  if (to) data = data.filter(r => r.date <= to);
+  if (type) data = data.filter(r => r.type === type);
+  if (city) data = data.filter(r => r.city === city);
+  if (search) data = data.filter(r => (r.name||'').toLowerCase().includes(search) || (r.category||'').toLowerCase().includes(search));
+  data.sort((a,b) => b.date > a.date ? 1 : -1);
+
+  document.getElementById('journal-table').innerHTML = data.length ? buildTable(data, currentUser === 'admin') : '<div class="empty-state"><div class="emoji">🔍</div>Ничего не найдено</div>';
+
+  const exp = data.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+  const inc = data.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
+  document.getElementById('journal-totals').innerHTML = `<span style="color:#dc2626">Расходы: ${fmt(exp)} ₸</span><span style="color:#16a34a">Доходы: ${fmt(inc)} ₸</span><span>Чистый поток: <b style="color:${inc-exp>=0?'#16a34a':'#dc2626'}">${fmt(inc-exp)} ₸</b></span>`;
+}
+
+function buildTable(data, withActions) {
+  const typeMap = { расход: 'expense', доход: 'income', перевод: 'transfer' };
+  const typeLabel = { расход: 'Расход', доход: 'Доход', перевод: 'Перевод' };
+  let rows = data.map(r => `
+    <tr>
+      <td>${fmtDate(r.date)}</td>
+      <td><span class="badge badge-${typeMap[r.type]||'transfer'}">${typeLabel[r.type]||r.type}</span></td>
+      <td>${r.category||'—'}</td>
+      <td>${r.name||'—'}</td>
+      <td class="amount-${typeMap[r.type]||'transfer'}">${fmt(r.amount)} ₸</td>
+      <td style="font-size:12px">${r.account||'—'}</td>
+      <td>${r.city||'—'}</td>
+      <td>${r.responsible||'—'}</td>
+      <td><span class="tag dds" style="font-size:11px">${r.dds||'—'}</span></td>
+      <td><span class="tag ${r.opiu?'opiu':'no-opiu'}" style="font-size:11px">${r.opiu||'—'}</span></td>
+      ${withActions ? `<td><button onclick="deleteRow(${r.id})" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px" title="Удалить">🗑</button></td>` : ''}
+    </tr>`).join('');
+  return `<table><thead><tr>
+    <th>Дата</th><th>Тип</th><th>Категория</th><th>Название</th><th>Сумма</th>
+    <th>Счёт</th><th>Город</th><th>Ответственный</th><th>ДДС</th><th>ОПИУ</th>
+    ${withActions ? '<th></th>' : ''}
+  </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function deleteRow(id) {
+  if (!confirm('Удалить операцию?')) return;
+  allData = allData.filter(r => r.id !== id);
+  if (SCRIPT_URL !== 'ВСТАВЬТЕ_СЮДА_URL_APPS_SCRIPT') {
+    fetch(SCRIPT_URL, { method:'POST', body: JSON.stringify({ action:'deleteRow', id }) });
+  }
+  renderJournal(); renderDashboard(); renderBalances();
+  showToast('Операция удалена', 'success');
+}
+
+// BALANCES
+function renderBalances() {
+  const accounts = [...new Set(allData.map(r => r.account).filter(Boolean))];
+  if (!accounts.length) { document.getElementById('balances-grid').innerHTML = '<div class="empty-state"><div class="emoji">💳</div>Нет данных по счетам</div>'; return; }
+  let html = '<div class="cards-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">';
+  let total = 0;
+  accounts.forEach(acc => {
+    const inc = allData.filter(r=>r.account===acc&&r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
+    const exp = allData.filter(r=>r.account===acc&&r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+    const bal = inc - exp;
+    total += bal;
+    html += `<div class="card"><div class="card-label" style="font-size:11px">${acc}</div><div class="card-value ${bal>=0?'green':'red'}" style="font-size:20px">${fmt(bal)} ₸</div><div class="card-sub">+${fmt(inc)} / -${fmt(exp)}</div></div>`;
+  });
+  html += `</div><div class="card" style="margin-top:16px;background:#1e3a5f;"><div class="card-label" style="color:#93c5fd">ИТОГО ПО ВСЕМ СЧЕТАМ</div><div class="card-value" style="color:white;font-size:28px">${fmt(total)} ₸</div></div>`;
+  document.getElementById('balances-grid').innerHTML = html;
+}
+
+// RECONCILE
+function doReconcile() {
+  const raw = document.getElementById('rec-data').value.trim();
+  const account = document.getElementById('rec-account').value;
+  const month = document.getElementById('rec-month').value;
+  if (!raw) { showToast('Вставьте данные выписки', 'error'); return; }
+
+  const lines = raw.split('\n').filter(l => l.trim());
+  const statement = lines.map(l => {
+    const parts = l.split(';');
+    return { date: parts[0]?.trim(), amount: Math.abs(parseFloat((parts[1]||'0').replace(',','.'))), name: parts[2]?.trim() || '' };
+  }).filter(l => l.amount > 0);
+
+  const journalFiltered = allData.filter(r => (!account || r.account === account) && (!month || r.date?.startsWith(month)));
+
+  let matched = [], unmatched = [], notInJournal = [];
+
+  statement.forEach(s => {
+    const found = journalFiltered.find(j => Math.abs(+j.amount - s.amount) < 1 && (!s.date || j.date?.includes(s.date.split('.').reverse().join('-').slice(0,7))));
+    if (found) matched.push({ statement: s, journal: found });
+    else notInJournal.push(s);
+  });
+
+  journalFiltered.forEach(j => {
+    const found = statement.find(s => Math.abs(+j.amount - s.amount) < 1);
+    if (!found) unmatched.push(j);
+  });
+
+  let html = `<div class="table-wrapper"><div class="table-header"><strong>Результат сверки</strong></div>`;
+  html += `<div style="padding:16px 20px;display:flex;gap:20px;flex-wrap:wrap">
+    <span style="color:#16a34a;font-weight:700">✅ Совпало: ${matched.length}</span>
+    <span style="color:#f59e0b;font-weight:700">⚠️ Не в журнале: ${notInJournal.length}</span>
+    <span style="color:#dc2626;font-weight:700">❌ Не в выписке: ${unmatched.length}</span>
+  </div>`;
+
+  if (notInJournal.length) {
+    html += `<div style="padding:0 20px 16px"><strong style="color:#92400e">⚠️ Есть в выписке, нет в журнале — нужно добавить:</strong><table style="margin-top:8px;width:100%"><thead><tr><th>Дата</th><th>Сумма</th><th>Назначение</th></tr></thead><tbody>`;
+    notInJournal.forEach(s => { html += `<tr style="background:#fef3c7"><td>${s.date}</td><td style="color:#dc2626">${fmt(s.amount)} ₸</td><td>${s.name}</td></tr>`; });
+    html += '</tbody></table></div>';
+  }
+  if (unmatched.length) {
+    html += `<div style="padding:0 20px 16px"><strong style="color:#991b1b">❌ Есть в журнале, нет в выписке — проверьте:</strong><table style="margin-top:8px;width:100%"><thead><tr><th>Дата</th><th>Категория</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
+    unmatched.forEach(j => { html += `<tr style="background:#fef2f2"><td>${fmtDate(j.date)}</td><td>${j.category}</td><td>${j.name}</td><td style="color:#dc2626">${fmt(j.amount)} ₸</td></tr>`; });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+  document.getElementById('reconcile-result').innerHTML = html;
+}
+
+// DDS
+function buildDDS() {
+  const month = document.getElementById('dds-month').value;
+  if (!month) { showToast('Выберите месяц', 'error'); return; }
+  const data = allData.filter(r => r.date?.startsWith(month) && r.type !== 'перевод');
+
+  const blocks = { 'Операционная': {}, 'Инвестиционная': {}, 'Финансовая': {} };
+  data.forEach(r => {
+    const block = r.dds || 'Операционная';
+    if (!blocks[block]) blocks[block] = {};
+    if (!blocks[block][r.category]) blocks[block][r.category] = { in: 0, out: 0 };
+    if (r.type === 'доход') blocks[block][r.category].in += +r.amount||0;
+    else blocks[block][r.category].out += +r.amount||0;
+  });
+
+  let html = '<div class="table-wrapper"><table><thead><tr><th style="width:50%">Статья</th><th>Приход ₸</th><th>Расход ₸</th><th>Итого ₸</th></tr></thead><tbody>';
+  let totalIn = 0, totalOut = 0;
+
+  Object.entries(blocks).forEach(([block, cats]) => {
+    if (!Object.keys(cats).length) return;
+    html += `<tr style="background:#f0f4f8"><td colspan="4" style="font-weight:700;color:#1e3a5f;padding:12px 14px">📌 ${block} деятельность</td></tr>`;
+    let bIn = 0, bOut = 0;
+    Object.entries(cats).forEach(([cat, v]) => {
+      const net = v.in - v.out;
+      html += `<tr><td style="padding-left:28px">${cat}</td><td style="color:#16a34a">${v.in?fmt(v.in)+' ₸':'-'}</td><td style="color:#dc2626">${v.out?fmt(v.out)+' ₸':'-'}</td><td style="font-weight:600;color:${net>=0?'#16a34a':'#dc2626'}">${fmt(net)} ₸</td></tr>`;
+      bIn += v.in; bOut += v.out;
+    });
+    html += `<tr style="background:#e8f0fe"><td style="font-weight:700;padding-left:14px">Итого ${block}</td><td style="font-weight:700;color:#16a34a">${fmt(bIn)} ₸</td><td style="font-weight:700;color:#dc2626">${fmt(bOut)} ₸</td><td style="font-weight:700;color:${bIn-bOut>=0?'#16a34a':'#dc2626'}">${fmt(bIn-bOut)} ₸</td></tr>`;
+    totalIn += bIn; totalOut += bOut;
+  });
+
+  html += `<tr style="background:#1e3a5f;color:white"><td style="font-weight:700;padding:12px 14px">ЧИСТЫЙ ПОТОК ЗА МЕСЯЦ</td><td style="font-weight:700;color:#86efac">${fmt(totalIn)} ₸</td><td style="font-weight:700;color:#fca5a5">${fmt(totalOut)} ₸</td><td style="font-weight:700;font-size:16px;color:${totalIn-totalOut>=0?'#86efac':'#fca5a5'}">${fmt(totalIn-totalOut)} ₸</td></tr>`;
+  html += '</tbody></table></div>';
+  document.getElementById('dds-result').innerHTML = html;
+}
+
+// OPIU
+function buildOPIU() {
+  const month = document.getElementById('opiu-month').value;
+  if (!month) { showToast('Выберите месяц', 'error'); return; }
+  const data = allData.filter(r => r.date?.startsWith(month) && r.opiu);
+
+  const groups = {};
+  data.forEach(r => {
+    if (!r.opiu) return;
+    if (!groups[r.opiu]) groups[r.opiu] = [];
+    groups[r.opiu].push(r);
+  });
+
+  const income = allData.filter(r => r.date?.startsWith(month) && r.type === 'доход').reduce((s,r) => s+(+r.amount||0), 0);
+  const groupOrder = ['ФОТ','ПОСТОЯННЫЕ РАСХОДЫ','ПЕРЕМЕННЫЕ РАСХОДЫ','Коммерческие расходы','Маркетинг','Финансовые расходы'];
+
+  let totalExp = 0;
+  let html = '<div class="table-wrapper"><table><thead><tr><th style="width:50%">Статья ОПИУ</th><th>Сумма ₸</th></tr></thead><tbody>';
+  html += `<tr style="background:#f0fdf4"><td style="font-weight:700;color:#15803d;padding:12px 14px">💰 ДОХОДЫ (из данных кассы)</td><td style="font-weight:700;color:#15803d;font-size:16px">${fmt(income)} ₸</td></tr>`;
+  html += `<tr style="background:#f8fafc"><td colspan="2" style="font-weight:700;color:#1e3a5f;padding:10px 14px">📊 РАСХОДЫ</td></tr>`;
+
+  groupOrder.forEach(g => {
+    if (!groups[g]) return;
+    const sum = groups[g].reduce((s,r) => s + (r.type==='расход'?+r.amount||0:0), 0);
+    totalExp += sum;
+    html += `<tr style="background:#f8fafc"><td style="font-weight:700;padding-left:14px">${g}</td><td style="font-weight:700;color:#dc2626">${fmt(sum)} ₸</td></tr>`;
+    groups[g].forEach(r => {
+      if (r.type === 'расход') html += `<tr><td style="padding-left:32px;font-size:12px;color:#64748b">${r.name}</td><td style="font-size:12px;color:#dc2626">${fmt(r.amount)} ₸</td></tr>`;
+    });
+  });
+
+  const profit = income - totalExp;
+  const margin = income > 0 ? ((profit/income)*100).toFixed(1) : 0;
+  html += `<tr style="background:#1e3a5f;color:white"><td style="font-weight:700;padding:12px 14px">ОПЕРАЦИОННАЯ ПРИБЫЛЬ</td><td style="font-weight:700;font-size:16px;color:${profit>=0?'#86efac':'#fca5a5'}">${fmt(profit)} ₸ (${margin}%)</td></tr>`;
+  html += '</tbody></table></div>';
+  document.getElementById('opiu-result').innerHTML = html;
+}
+
+// ДДС ЕЖЕДНЕВНЫЙ
+function buildDDSDaily() {
+  const date = document.getElementById('dds-daily-date').value;
+  if (!date) { showToast('Выберите дату', 'error'); return; }
+
+  // Все операции до выбранной даты (для расчёта начального остатка)
+  const before = allData.filter(r => r.date < date && r.type !== 'перевод');
+  // Операции за выбранный день
+  const today  = allData.filter(r => r.date === date && r.type !== 'перевод');
+
+  // Все уникальные счета
+  const accounts = [...new Set(allData.map(r => r.account).filter(Boolean))].sort();
+
+  if (!accounts.length) {
+    document.getElementById('dds-daily-result').innerHTML = '<div class="empty-state"><div class="emoji">📭</div>Нет данных</div>';
+    return;
+  }
+
+  const d = new Date(date);
+  const dateLabel = fmtDate(date);
+  let html = `<div style="font-size:14px;color:#64748b;margin-bottom:12px;">Дата: <strong>${dateLabel}</strong></div>`;
+
+  // Таблица остатков по счетам
+  html += `<div class="table-wrapper" style="margin-bottom:20px;">
+    <div class="table-header"><strong>Остатки по счетам на ${dateLabel}</strong></div>
+    <table><thead><tr>
+      <th>Счёт</th><th>Нач. остаток</th><th style="color:#16a34a">+ Приход</th>
+      <th style="color:#dc2626">− Расход</th><th>Кон. остаток</th>
+    </tr></thead><tbody>`;
+
+  let totalOpen = 0, totalIn = 0, totalOut = 0;
+
+  accounts.forEach(acc => {
+    const open = before.filter(r => r.account === acc)
+      .reduce((s,r) => s + (r.type==='доход'?1:-1)*(+r.amount||0), 0);
+    const dayIn  = today.filter(r => r.account===acc && r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
+    const dayOut = today.filter(r => r.account===acc && r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+    const close  = open + dayIn - dayOut;
+    if (open===0 && dayIn===0 && dayOut===0) return; // скрыть нулевые счета
+
+    totalOpen += open; totalIn += dayIn; totalOut += dayOut;
+    html += `<tr>
+      <td style="font-weight:600">${acc}</td>
+      <td>${fmt(open)} ₸</td>
+      <td style="color:#16a34a">${dayIn ? '+'+fmt(dayIn)+' ₸' : '—'}</td>
+      <td style="color:#dc2626">${dayOut ? '−'+fmt(dayOut)+' ₸' : '—'}</td>
+      <td style="font-weight:700;color:${close>=0?'#16a34a':'#dc2626'}">${fmt(close)} ₸</td>
+    </tr>`;
+  });
+
+  const totalClose = totalOpen + totalIn - totalOut;
+  html += `<tr style="background:#1e3a5f;color:white">
+    <td style="font-weight:700">ИТОГО</td>
+    <td style="font-weight:700">${fmt(totalOpen)} ₸</td>
+    <td style="font-weight:700;color:#86efac">+${fmt(totalIn)} ₸</td>
+    <td style="font-weight:700;color:#fca5a5">−${fmt(totalOut)} ₸</td>
+    <td style="font-weight:700;font-size:15px;color:${totalClose>=0?'#86efac':'#fca5a5'}">${fmt(totalClose)} ₸</td>
+  </tr></tbody></table></div>`;
+
+  // Детализация операций за день
+  if (today.length) {
+    html += `<div class="table-wrapper">
+      <div class="table-header"><strong>Операции за ${dateLabel} (${today.length} шт.)</strong></div>
+      <table><thead><tr>
+        <th>Тип</th><th>Счёт</th><th>Категория</th><th>Название</th>
+        <th>Сумма</th><th>Ответственный</th><th>ДДС блок</th>
+      </tr></thead><tbody>`;
+    today.sort((a,b) => a.account > b.account ? 1 : -1).forEach(r => {
+      const isInc = r.type === 'доход';
+      html += `<tr>
+        <td><span class="badge badge-${isInc?'income':'expense'}">${r.type}</span></td>
+        <td style="font-size:12px">${r.account||'—'}</td>
+        <td>${r.category||'—'}</td>
+        <td>${r.name||'—'}</td>
+        <td style="font-weight:600;color:${isInc?'#16a34a':'#dc2626'}">${isInc?'+':'−'}${fmt(r.amount)} ₸</td>
+        <td>${r.responsible||'—'}</td>
+        <td><span class="tag dds" style="font-size:11px">${r.dds||'—'}</span></td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+  } else {
+    html += '<div class="card" style="text-align:center;color:#94a3b8">За эту дату операций не найдено</div>';
+  }
+
+  document.getElementById('dds-daily-result').innerHTML = html;
+}
+
+// EXPORT EXCEL
+function exportJournal() {
+  if (typeof XLSX === 'undefined') { showToast('Библиотека Excel не загружена', 'error'); return; }
+
+  // Получаем отфильтрованные данные
+  let data = [...allData];
+  const from   = document.getElementById('filter-from')?.value;
+  const to     = document.getElementById('filter-to')?.value;
+  const type   = document.getElementById('filter-type')?.value;
+  const city   = document.getElementById('filter-city')?.value;
+  const search = document.getElementById('filter-search')?.value?.toLowerCase();
+  if (from)   data = data.filter(r => r.date >= from);
+  if (to)     data = data.filter(r => r.date <= to);
+  if (type)   data = data.filter(r => r.type === type);
+  if (city)   data = data.filter(r => r.city === city);
+  if (search) data = data.filter(r => (r.name||'').toLowerCase().includes(search));
+  data.sort((a,b) => b.date > a.date ? 1 : -1);
+
+  const rows = [
+    ['Дата','Тип','Категория','Название','Сумма (₸)','Счёт','Город','Ответственный','Блок ДДС','Группа ОПИУ','Комментарий'],
+    ...data.map(r => [
+      fmtDate(r.date), r.type, r.category, r.name,
+      +r.amount||0, r.account, r.city, r.responsible,
+      r.dds, r.opiu, r.notes
+    ])
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+
+  // Ширина колонок
+  ws['!cols'] = [
+    {wch:12},{wch:10},{wch:18},{wch:35},{wch:14},
+    {wch:26},{wch:10},{wch:14},{wch:20},{wch:22},{wch:20}
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Журнал');
+
+  // Второй лист — сводка по категориям
+  const summary = {};
+  data.filter(r=>r.type==='расход').forEach(r => {
+    const k = r.category||'Прочее';
+    summary[k] = (summary[k]||0) + (+r.amount||0);
+  });
+  const sumRows = [
+    ['Категория','Сумма расходов (₸)'],
+    ...Object.entries(summary).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v])
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(sumRows);
+  ws2['!cols'] = [{wch:22},{wch:20}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Сводка расходов');
+
+  const filename = 'ElectroMax_' + new Date().toISOString().split('T')[0] + '.xlsx';
+  XLSX.writeFile(wb, filename);
+  showToast('✅ Excel файл скачан', 'success');
+}
+
+// UTILS
+function fmt(n) { return Math.round(+n||0).toLocaleString('ru-RU'); }
+function fmtDate(d) { if (!d) return '—'; const p = d.split('-'); return p.length===3 ? p[2]+'.'+p[1]+'.'+p[0] : d; }
+function showToast(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast ' + type + ' show';
+  setTimeout(() => { t.classList.remove('show'); }, 3000);
+}
+</script>
+</body>
+</html>
