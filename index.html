@@ -465,8 +465,8 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5PqK482OTgS95CZPqGjGDxo2rYhnHHlabqwcDCAAqRbEpvRWTeE70KvECENJcJrlZzQ/exec';
-const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026' };
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwZIpS8AfuLtOYeivUqBLh4dDW-YGVIqxG4JWz3r68LjKQmW4nHnH0M38UUlxvMpqWwfw/exec';
+const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
 let allData = [];
@@ -506,13 +506,15 @@ async function doLogin() {
     const r = await fetch(`${SCRIPT_URL}?action=login&username=${encodeURIComponent(u)}&password=${encodeURIComponent(p)}`);
     const d = await r.json();
     if (d.success) { role = d.role; }
-    else {
+    else if (FALLBACK_USERS[u] === p) {
+      role = (u === 'admin' || u === 'Гульмира') ? 'admin' : 'manager';
+    } else {
       document.getElementById('login-error').style.display = 'block';
-      document.getElementById('login-error').textContent = d.error || 'Неверный логин или пароль';
+      document.getElementById('login-error').textContent = 'Неверный логин или пароль';
       btn.textContent = 'Войти'; btn.disabled = false; return;
     }
   } catch(e) {
-    if (FALLBACK_USERS[u] === p) role = u === 'admin' ? 'admin' : 'manager';
+    if (FALLBACK_USERS[u] === p) role = (u === 'admin' || u === 'Гульмира') ? 'admin' : 'manager';
   }
   if (role) {
     currentUser = u; currentRole = role;
