@@ -225,7 +225,9 @@
               <option value="услуги">Услуги</option>
               <option value="шашу">Шашу (реклама)</option>
               <option value="кредит">Кредит</option>
-              <option value="шеф">Вывод Шеф</option>
+              <option value="шеф">Вывод Шеф (Темирлан)</option>
+              <option value="дастан">Вывод Дастан</option>
+              <option value="еркин">Вывод Еркин</option>
               <option value="ОС">Основные средства (ОС)</option>
               <option value="прочее">Прочее</option>
             </select>
@@ -396,11 +398,27 @@
       <div id="dds-result"></div>
     </div>
     <div class="page" id="page-opiu">
-      <div class="page-title">ОПИУ — Отчёт о прибылях и убытках</div>
-      <div class="form-card" style="max-width:400px;margin-bottom:20px;">
+      <div class="page-title">ОПУ — Отчёт о прибылях и убытках</div>
+      <div class="form-card" style="max-width:560px;margin-bottom:20px;">
         <div class="form-row">
-          <div class="field"><label>Месяц</label><input type="month" id="opiu-month"></div>
-          <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-save" onclick="buildOPIU()" style="width:100%;">Сформировать</button></div>
+          <div class="field">
+            <label>Период</label>
+            <select id="opiu-period">
+              <option value="2026">Весь 2026 (Январь — 14 Июня)</option>
+              <option value="2026-01">Январь 2026</option>
+              <option value="2026-02">Февраль 2026</option>
+              <option value="2026-03">Март 2026</option>
+              <option value="2026-04">Апрель 2026</option>
+              <option value="2026-05">Май 2026</option>
+              <option value="2026-06">Июнь 2026 (до 14-го)</option>
+            </select>
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button class="btn btn-save" onclick="buildOPIU()" style="width:100%;">&#128200; Сформировать</button>
+          </div>
+        </div>
+        <div id="admin-opiu-init" style="display:none;margin-top:8px;">
+          <button class="btn btn-clear" onclick="initSalesInSheets()" style="font-size:13px;width:100%;">&#8659; Загрузить данные продаж 1С в Google Sheets</button>
         </div>
       </div>
       <div id="opiu-result"></div>
@@ -435,9 +453,11 @@ const CATEGORY_MAP = {
   'компенсация':     { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'наемники':        { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'услуги':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
-  'шашу':            { dds: 'Операционная', opiu: 'Маркетинг' },
+  'шашу':            { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'кредит':          { dds: 'Финансовая',   opiu: '' },
   'шеф':             { dds: 'Финансовая',   opiu: '' },
+  'дастан':          { dds: 'Финансовая',   opiu: '' },
+  'еркин':           { dds: 'Финансовая',   opiu: '' },
   'ОС':              { dds: 'Инвестиционная', opiu: '' },
   'прочее':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
 };
@@ -492,7 +512,9 @@ function showPage(name, el) {
   if (name === 'journal') renderJournal();
   if (name === 'balances') renderBalances();
   if (name === 'dds') document.getElementById('dds-month').value = currentMonth();
-  if (name === 'opiu') document.getElementById('opiu-month').value = currentMonth();
+  if (name === 'opiu') {
+    document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
+  }
 }
 
 function currentMonth() {
@@ -747,36 +769,185 @@ function buildDDS() {
   document.getElementById('dds-result').innerHTML = html;
 }
 
-function buildOPIU() {
-  const month = document.getElementById('opiu-month').value;
-  if (!month) { showToast('Выберите месяц', 'error'); return; }
-  const data = allData.filter(r => r.date?.startsWith(month) && r.opiu);
-  const groups = {};
-  data.forEach(r => {
-    if (!r.opiu) return;
-    if (!groups[r.opiu]) groups[r.opiu] = [];
-    groups[r.opiu].push(r);
+async function buildOPIU() {
+  const period = document.getElementById('opiu-period').value;
+  const resultEl = document.getElementById('opiu-result');
+  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка данных...</div>';
+
+  // Load sales/COGS from Google Sheets
+  let salesRows = [];
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getSales');
+    const d = await r.json();
+    salesRows = d.sales || [];
+  } catch(e) {}
+
+  // Aggregate revenue and COGS for period
+  let revenue = 0, cogs = 0;
+  salesRows.forEach(s => {
+    if (s.month && s.month.startsWith(period)) {
+      revenue += +s.revenue || 0;
+      cogs += +s.cogs || 0;
+    }
   });
-  const income = allData.filter(r => r.date?.startsWith(month) && r.type === 'доход').reduce((s,r) => s+(+r.amount||0), 0);
-  const groupOrder = ['ФОТ','ПОСТОЯННЫЕ РАСХОДЫ','ПЕРЕМЕННЫЕ РАСХОДЫ','Коммерческие расходы','Маркетинг','Финансовые расходы'];
-  let totalExp = 0;
-  let html = '<div class="table-wrapper"><table><thead><tr><th style="width:50%">Статья ОПИУ</th><th>Сумма ₸</th></tr></thead><tbody>';
-  html += '<tr style="background:#f0fdf4"><td style="font-weight:700;color:#15803d;padding:12px 14px">ДОХОДЫ</td><td style="font-weight:700;color:#15803d;font-size:16px">' + fmt(income) + ' ₸</td></tr>';
-  html += '<tr style="background:#f8fafc"><td colspan="2" style="font-weight:700;color:#1e3a5f;padding:10px 14px">РАСХОДЫ</td></tr>';
-  groupOrder.forEach(g => {
-    if (!groups[g]) return;
-    const sum = groups[g].reduce((s,r) => s + (r.type==='расход'?+r.amount||0:0), 0);
-    totalExp += sum;
-    html += '<tr style="background:#f8fafc"><td style="font-weight:700;padding-left:14px">' + g + '</td><td style="font-weight:700;color:#dc2626">' + fmt(sum) + ' ₸</td></tr>';
-    groups[g].forEach(r => {
-      if (r.type === 'расход') html += '<tr><td style="padding-left:32px;font-size:12px;color:#64748b">' + r.name + '</td><td style="font-size:12px;color:#dc2626">' + fmt(r.amount) + ' ₸</td></tr>';
-    });
-  });
-  const profit = income - totalExp;
-  const margin = income > 0 ? ((profit/income)*100).toFixed(1) : 0;
-  html += '<tr style="background:#1e3a5f;color:white"><td style="font-weight:700;padding:12px 14px">ОПЕРАЦИОННАЯ ПРИБЫЛЬ</td><td style="font-weight:700;font-size:16px;color:' + (profit>=0?'#86efac':'#fca5a5') + '">' + fmt(profit) + ' ₸ (' + margin + '%)</td></tr>';
+
+  // Filter expense data for period
+  const expData = allData.filter(r => r.date && r.date.startsWith(period) && r.type === 'расход');
+
+  // Determine P&L group for each expense row
+  const getGroup = r => {
+    const opiu = r.opiu || '';
+    const cat = (r.category || '').toLowerCase();
+    if (opiu === 'ПЕРЕМЕННЫЕ РАСХОДЫ') return 'variable';
+    if (opiu === 'ПОСТОЯННЫЕ РАСХОДЫ') return 'fixed_rent';
+    if (opiu === 'ФОТ') return 'fixed_fot';
+    if (cat === 'ос') return 'fixed_os';
+    if (opiu === 'Коммерческие расходы' || opiu === 'Маркетинг') return 'commercial';
+    if (cat === 'шеф') return 'shef';
+    if (cat === 'дастан') return 'dastan';
+    if (cat === 'еркин') return 'erkin';
+    if (cat === 'кредит') return 'credit';
+    return null;
+  };
+
+  const g = { variable:0, fixed_rent:0, fixed_fot:0, fixed_os:0, commercial:0, shef:0, dastan:0, erkin:0, credit:0 };
+  expData.forEach(r => { const gr = getGroup(r); if (gr && gr in g) g[gr] += +r.amount || 0; });
+
+  // P&L calculations
+  const grossProfit    = revenue - cogs;
+  const marginalProfit = grossProfit - g.variable;
+  const fixedTotal     = g.fixed_rent + g.fixed_fot + g.fixed_os;
+  const opProfit       = marginalProfit - fixedTotal;
+  const ebit           = opProfit - g.commercial;
+  const ownerTotal     = g.shef + g.dastan + g.erkin;
+  const netProfit      = ebit - ownerTotal;
+
+  const pctStr = v => revenue > 0 ? (v / revenue * 100).toFixed(1) + '%' : '—';
+  const clr    = v => v >= 0 ? '#16a34a' : '#dc2626';
+  const fmtV   = v => fmt(Math.abs(v)) + ' ₸';
+
+  const secHdr = (title, bg = '#1e3a5f') =>
+    `<tr style="background:${bg}"><td colspan="3" style="font-weight:700;color:#fff;padding:10px 14px;font-size:13px">${title}</td></tr>`;
+
+  const dataRow = (label, value, indent = false, bold = false, note = '') =>
+    `<tr>
+      <td style="padding-left:${indent ? '28px' : '14px'};font-weight:${bold ? 700 : 400};${!value ? 'color:#94a3b8' : ''}">
+        ${label}${note ? `<span style="font-size:11px;color:#94a3b8;margin-left:8px">${note}</span>` : ''}
+      </td>
+      <td style="text-align:right;font-weight:${bold ? 700 : 500};color:${clr(value)}">${fmtV(value)}</td>
+      <td style="text-align:right;font-size:12px;color:#94a3b8">${pctStr(value)}</td>
+    </tr>`;
+
+  const totalRow = (label, value, bg, light = false) =>
+    `<tr style="background:${bg}">
+      <td style="padding:10px 14px;font-weight:700;color:${light ? '#fff' : '#fff'}">&#9658; ${label}</td>
+      <td style="text-align:right;padding:10px 14px;font-weight:700;font-size:15px;color:${value >= 0 ? '#86efac' : '#fca5a5'}">${fmtV(value)}</td>
+      <td style="text-align:right;padding:10px 14px;font-weight:600;color:${value >= 0 ? '#86efac' : '#fca5a5'}">${pctStr(value)}</td>
+    </tr>`;
+
+  const periodLabels = {
+    '2026':'Январь — 14 Июня 2026', '2026-01':'Январь 2026', '2026-02':'Февраль 2026',
+    '2026-03':'Март 2026', '2026-04':'Апрель 2026', '2026-05':'Май 2026', '2026-06':'Июнь 2026 (до 14-го)'
+  };
+
+  let html = `
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div>
+          <strong style="font-size:15px">ОПУ — ${periodLabels[period] || period}</strong>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px">ElectroMax · Источники: 1С Продажи + Журнал расходов</div>
+        </div>
+        <button class="btn btn-clear" onclick="exportOPIU('${period}')" style="font-size:12px;padding:6px 14px">Excel</button>
+      </div>
+      <table>
+        <thead><tr style="background:#f8fafc">
+          <th style="width:55%">Статья</th>
+          <th style="text-align:right">Сумма, ₸</th>
+          <th style="text-align:right">% Выручки</th>
+        </tr></thead>
+        <tbody>`;
+
+  // I
+  html += secHdr('I.  Выручка и Себестоимость');
+  html += dataRow('Выручка от продаж  [1С, W1–W24]', revenue, false, false, revenue ? '' : '⚠ нажмите «Загрузить данные продаж»');
+  html += dataRow('Себестоимость  [1С, частично W22–W24]', cogs, false, false, !cogs ? '⚠ данные только май–июнь' : '');
+  html += totalRow('ВАЛОВАЯ ПРИБЫЛЬ', grossProfit, '#1a7340');
+
+  // II
+  html += secHdr('II.  Переменные торговые расходы', '#2e5b9a');
+  html += dataRow('Комиссия маркетплейсов / Логистика / Упаковка', g.variable, true);
+  html += totalRow('МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', marginalProfit, '#1a7340');
+
+  // III
+  html += secHdr('III.  Постоянные расходы', '#2e5b9a');
+  html += dataRow('Аренда + Коммунальные платежи', g.fixed_rent, true);
+  html += dataRow('ФОТ (зарплата + авансы + налоги)', g.fixed_fot, true);
+  html += dataRow('Основные средства (ОС)', g.fixed_os, true);
+  html += dataRow('Итого постоянных', fixedTotal, false, true);
+  html += totalRow('ОПЕРАЦИОННАЯ ПРИБЫЛЬ', opProfit, '#1a7340');
+
+  // IV
+  html += secHdr('IV.  Коммерческие расходы', '#2e5b9a');
+  html += dataRow('Шашу / Авторасходы / Командировочные / Обед / Услуги / Прочие', g.commercial, true);
+  html += totalRow('EBIT  (до вывода собственников)', ebit, '#c25b00');
+
+  // V
+  html += secHdr('V.  Вывод собственника', '#2e5b9a');
+  html += dataRow('Шеф — Темирлан ага', g.shef, true);
+  html += dataRow('Дастан ага', g.dastan, true);
+  html += dataRow('Еркин', g.erkin, true);
+  html += dataRow('Итого вывод', ownerTotal, false, true);
+  html += totalRow('НЕРАСПРЕДЕЛЁННАЯ ПРИБЫЛЬ', netProfit, '#1e3a5f');
+
+  // СПРАВОЧНО
+  if (g.credit > 0) {
+    html += secHdr('СПРАВОЧНО: Кредиты (не в ОПУ)', '#555');
+    html += dataRow('Платежи по кредитам / займам', g.credit, true, false, 'не влияют на прибыль');
+  }
+
   html += '</tbody></table></div>';
-  document.getElementById('opiu-result').innerHTML = html;
+
+  if (!revenue) {
+    html = `<div class="card" style="background:#fef3c7;border:1px solid #f59e0b;margin-bottom:16px">
+      <div class="card-label" style="color:#92400e">&#9888; Нет данных о продажах в Google Sheets</div>
+      <div style="font-size:13px;color:#78350f;margin-top:6px">
+        Нажмите кнопку <b>«Загрузить данные продаж 1С»</b> выше (доступно администратору),
+        чтобы записать выручку и COGS в Google Sheets.
+      </div>
+    </div>` + html;
+  }
+
+  resultEl.innerHTML = html;
+}
+
+async function initSalesInSheets() {
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = 'Загружаю...';
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=initSales');
+    const d = await r.json();
+    if (d.success) {
+      showToast('Данные продаж загружены! (' + d.rows + ' месяцев)', 'success');
+    } else {
+      showToast('Ошибка: ' + (d.error || 'неизвестно'), 'error');
+    }
+  } catch(e) {
+    showToast('Ошибка соединения', 'error');
+  }
+  btn.disabled = false;
+  btn.innerHTML = '&#8659; Загрузить данные продаж 1С в Google Sheets';
+}
+
+function exportOPIU(period) {
+  if (typeof XLSX === 'undefined') { showToast('Библиотека Excel не загружена', 'error'); return; }
+  const tbl = document.querySelector('#opiu-result table');
+  if (!tbl) { showToast('Сначала сформируйте ОПУ', 'error'); return; }
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.table_to_sheet(tbl);
+  ws['!cols'] = [{wch:52},{wch:18},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws, 'ОПУ');
+  XLSX.writeFile(wb, 'ОПУ_ElectroMax_' + period + '.xlsx');
+  showToast('Excel файл скачан', 'success');
 }
 
 function buildDDSDaily() {
