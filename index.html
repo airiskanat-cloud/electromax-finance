@@ -1589,7 +1589,7 @@ async function confirmAndSave() {
   const msg = document.getElementById('upload-save-msg');
   msg.textContent = 'Сохранение...'; msg.style.color = '#64748b';
 
-  // Разворачиваем в массивы строк для Apps Script
+  // Разворачиваем в массивы строк
   const flatSales = [];
   Object.entries(_mergedData.sales).forEach(([week, {month, cities}]) => {
     Object.entries(cities).forEach(([city, revenue]) => {
@@ -1604,28 +1604,39 @@ async function confirmAndSave() {
     });
   });
 
+  // Отправляем батчами по 5 недель — URL не переполняется даже при больших файлах
+  const batchSave = async (action, rows) => {
+    // Группируем по неделям
+    const byWeek = {};
+    rows.forEach(r => { if (!byWeek[r.week]) byWeek[r.week] = []; byWeek[r.week].push(r); });
+    const weekKeys = Object.keys(byWeek).sort();
+    const savedWeeks = [];
+    const CHUNK = 5; // недель за один запрос
+
+    for (let i = 0; i < weekKeys.length; i += CHUNK) {
+      const chunk = weekKeys.slice(i, i + CHUNK).flatMap(wk => byWeek[wk]);
+      msg.textContent = `Сохранение... ${i + Math.min(CHUNK, weekKeys.length - i)}/${weekKeys.length} недель`;
+      const r = await fetch(`${SCRIPT_URL}?action=${action}&data=${encodeURIComponent(JSON.stringify(chunk))}`);
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error || 'Ошибка сервера');
+      savedWeeks.push(...(d.weeks || []));
+    }
+    return savedWeeks;
+  };
+
   try {
     let savedWeeks = [];
-
-    if (flatSales.length) {
-      const r = await fetch(`${SCRIPT_URL}?action=saveWeekSales&data=${encodeURIComponent(JSON.stringify(flatSales))}`);
-      const d = await r.json();
-      if (!d.success) { msg.textContent = '✗ Ошибка сохранения продаж: '+(d.error||''); msg.style.color='#dc2626'; return; }
-      savedWeeks = savedWeeks.concat(d.weeks||[]);
-    }
-
-    if (flatPurchases.length) {
-      const r = await fetch(`${SCRIPT_URL}?action=saveWeekPurchases&data=${encodeURIComponent(JSON.stringify(flatPurchases))}`);
-      const d = await r.json();
-      if (!d.success) { msg.textContent = '✗ Ошибка сохранения прихода: '+(d.error||''); msg.style.color='#dc2626'; return; }
-      savedWeeks = savedWeeks.concat(d.weeks||[]);
-    }
+    if (flatSales.length)     savedWeeks = savedWeeks.concat(await batchSave('saveWeekSales',     flatSales));
+    if (flatPurchases.length) savedWeeks = savedWeeks.concat(await batchSave('saveWeekPurchases', flatPurchases));
 
     const uniqueWeeks = [...new Set(savedWeeks)].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
     msg.textContent = `✓ Сохранено: ${uniqueWeeks}`;
     msg.style.color = '#16a34a';
     showToast('Данные 1С сохранены в Google Sheets!', 'success');
-  } catch(e) { msg.textContent = '✗ Ошибка соединения'; msg.style.color='#dc2626'; }
+  } catch(e) {
+    msg.textContent = '✗ Ошибка: ' + e.message;
+    msg.style.color = '#dc2626';
+  }
 }
 
 function toggleManualEntry() {
