@@ -1389,16 +1389,23 @@ function parse1CFile(file) {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
 
-        // Row 9 (index 8) is the actual header in 1С exports
-        const hdr = raw[8] || [];
-        const h0 = String(hdr[0]||'').toLowerCase();
-        let fileType = null;
-        if (h0.includes('реализ')) fileType = 'sales';
-        else if (h0.includes('приобрет')) fileType = 'purchase';
-        else { resolve({error:`Неизвестный формат (заголовок: "${hdr[0]||'пусто'}"). Ожидается файл Реализация или Приобретение из 1С.`, name: file.name}); return; }
+        // Find actual header row — search for 'Реализация' or 'Приобретение' in col[0]
+        let headerIdx = -1, fileType = null;
+        for (let i = 0; i < Math.min(raw.length, 25); i++) {
+          const h0 = String(raw[i]?.[0]||'').toLowerCase();
+          if (h0.includes('реализ'))  { headerIdx = i; fileType = 'sales';    break; }
+          if (h0.includes('приобрет')) { headerIdx = i; fileType = 'purchase'; break; }
+        }
+        if (headerIdx === -1) {
+          resolve({error:`Не найден заголовок таблицы в первых 25 строках. Проверь что это файл из 1С (Реализация или Приобретение).`, name: file.name}); return;
+        }
 
-        // Period from row 2 (index 1), column C (index 2)
-        const periodStr = String((raw[1]||[])[2]||'').replace('Период: ','');
+        // Find period string — search for 'Период:' in first few rows
+        let periodStr = '';
+        for (let i = 0; i < headerIdx; i++) {
+          const cell = String(raw[i]?.[2]||'');
+          if (cell.includes('Период:')) { periodStr = cell.replace('Период: ',''); break; }
+        }
 
         const parseMonth = s => {
           const m = String(s||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
@@ -1415,7 +1422,7 @@ function parse1CFile(file) {
         const byMonth = {}; // {month: {city: {revenue, cogs}}}
         let rows = 0;
 
-        for (let i = 9; i < raw.length; i++) {
+        for (let i = headerIdx + 1; i < raw.length; i++) {
           const r = raw[i] || [];
           if (!r[0]) continue;
           let mo, city, amount;
