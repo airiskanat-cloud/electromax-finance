@@ -133,6 +133,41 @@
   .loading { text-align: center; padding: 32px; color: #64748b; }
   .spinner { width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* ── KPI Cards ── */
+  .kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:10px;margin-bottom:20px}
+  .kpi-card{background:white;border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,.06);border-left:4px solid #2563eb}
+  .kpi-card.g{border-left-color:#16a34a}.kpi-card.t{border-left-color:#0d9488}
+  .kpi-card.o{border-left-color:#ea580c}.kpi-card.d{border-left-color:#1e3a5f}
+  .kpi-lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px}
+  .kpi-val{font-size:15px;font-weight:700;color:#1e3a5f;margin-top:4px}
+  .kpi-val.p{color:#16a34a}.kpi-val.n{color:#dc2626}
+  .kpi-sub{font-size:11px;color:#94a3b8;margin-top:2px}
+  /* ── Monthly Report Table ── */
+  .report-wrap{overflow-x:auto}
+  .rt{width:100%;min-width:820px;border-collapse:collapse;font-size:12px;font-family:Arial,sans-serif}
+  .rt th{padding:7px 10px;text-align:right;font-size:10px;color:#475569;font-weight:700;background:#f8fafc;border-bottom:2px solid #e2e8f0;white-space:nowrap;text-transform:uppercase;letter-spacing:.3px}
+  .rt th:first-child,.rt td:first-child{text-align:left;min-width:215px}
+  .rt th.tc{background:#dbeafe;color:#1e40af;border-bottom-color:#3b82f6}
+  .rt td{padding:5px 10px;text-align:right;border-bottom:1px solid #f1f5f9;white-space:nowrap;color:#374151}
+  .rt td.tc{background:#eff6ff;font-weight:700;color:#1e40af}
+  .rs-sec td{background:#1e3a5f!important;color:#fff!important;font-weight:700;padding:8px 10px;font-size:11px;border-bottom:none!important}
+  .rs-sub td{background:#2e5b9a!important;color:#fff!important;font-weight:600;font-size:11px;padding:6px 10px;border-bottom:none!important}
+  .rs-profit td{background:#1a7340!important;color:#fff!important;font-weight:700;font-size:12px;border-bottom:none!important}
+  .rs-profit td.tc{background:#145c33!important}
+  .rs-op td{background:#0d7a5f!important;color:#fff!important;font-weight:700;font-size:12px;border-bottom:none!important}
+  .rs-op td.tc{background:#0a6350!important}
+  .rs-pct td{background:#f0fdf4!important;color:#15803d!important;font-style:italic;font-size:11px}
+  .rs-pct td.tc{background:#dcfce7!important}
+  .rs-ebit td{background:#c25b00!important;color:#fff!important;font-weight:700;font-size:12px;border-bottom:none!important}
+  .rs-ebit td.tc{background:#9a4500!important}
+  .rs-net td{background:#1e3a5f!important;color:#fff!important;font-weight:700;font-size:13px;border-bottom:none!important}
+  .rs-net td.tc{background:#142a44!important}
+  .rs-fin td{background:#1a4a7a!important;color:#fff!important;font-weight:700;font-size:12px;border-bottom:none!important}
+  .rs-fin td.tc{background:#123660!important}
+  .rs-sub2 td{background:#eef2ff!important;font-weight:700;color:#1e3a5f!important}
+  .rs-sub2 td.tc{background:#dbeafe!important}
+  .rs-ref td{background:#f5f5f5!important;color:#888!important;font-style:italic}
+  .rs-data:hover td{background:#f0f4ff!important}
 </style>
 </head>
 <body>
@@ -172,6 +207,7 @@
     </nav>
     <div class="sidebar-footer">
       <div class="user-info" id="user-info">Вы вошли как: —</div>
+      <button class="btn-logout" onclick="refreshData()" style="margin-bottom:6px;background:rgba(37,99,235,0.3);color:#93c5fd">&#8635; Обновить данные</button>
       <button class="btn-logout" onclick="doLogout()">Выйти</button>
     </div>
   </div>
@@ -389,11 +425,9 @@
     </div>
     <div class="page" id="page-dds">
       <div class="page-title">ДДС — Движение денежных средств</div>
-      <div class="form-card" style="max-width:400px;margin-bottom:20px;">
-        <div class="form-row">
-          <div class="field"><label>Месяц</label><input type="month" id="dds-month"></div>
-          <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-save" onclick="buildDDS()" style="width:100%;">Сформировать</button></div>
-        </div>
+      <div class="form-card" style="max-width:520px;margin-bottom:20px;">
+        <div style="color:#64748b;font-size:13px;margin-bottom:12px">Отчёт по месяцам · Январь — 14 Июня 2026 · KZT · Косвенный метод (упрощённый)</div>
+        <button class="btn btn-save" onclick="buildDDS()">&#128200; Сформировать ДДС по месяцам</button>
       </div>
       <div id="dds-result"></div>
     </div>
@@ -511,7 +545,7 @@ function showPage(name, el) {
   if (el) el.classList.add('active');
   if (name === 'journal') renderJournal();
   if (name === 'balances') renderBalances();
-  if (name === 'dds') document.getElementById('dds-month').value = currentMonth();
+  if (name === 'dds') buildDDS();
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
@@ -528,6 +562,13 @@ async function loadData() {
     allData = d.data || [];
   } catch(e) { allData = []; }
   renderDashboard(); renderBalances();
+}
+
+async function refreshData() {
+  showToast('Обновляю данные...', 'success');
+  await loadData();
+  renderJournal();
+  showToast('Данные обновлены (' + allData.length + ' записей)', 'success');
 }
 
 function setTodayDate() {
@@ -738,43 +779,10 @@ function doReconcile() {
   document.getElementById('reconcile-result').innerHTML = html;
 }
 
-function buildDDS() {
-  const month = document.getElementById('dds-month').value;
-  if (!month) { showToast('Выберите месяц', 'error'); return; }
-  const data = allData.filter(r => r.date?.startsWith(month) && r.type !== 'перевод');
-  const blocks = { 'Операционная': {}, 'Инвестиционная': {}, 'Финансовая': {} };
-  data.forEach(r => {
-    const block = r.dds || 'Операционная';
-    if (!blocks[block]) blocks[block] = {};
-    if (!blocks[block][r.category]) blocks[block][r.category] = { in: 0, out: 0 };
-    if (r.type === 'доход') blocks[block][r.category].in += +r.amount||0;
-    else blocks[block][r.category].out += +r.amount||0;
-  });
-  let html = '<div class="table-wrapper"><table><thead><tr><th style="width:50%">Статья</th><th>Приход ₸</th><th>Расход ₸</th><th>Итого ₸</th></tr></thead><tbody>';
-  let totalIn = 0, totalOut = 0;
-  Object.entries(blocks).forEach(([block, cats]) => {
-    if (!Object.keys(cats).length) return;
-    html += '<tr style="background:#f0f4f8"><td colspan="4" style="font-weight:700;color:#1e3a5f;padding:12px 14px">' + block + ' деятельность</td></tr>';
-    let bIn = 0, bOut = 0;
-    Object.entries(cats).forEach(([cat, v]) => {
-      const net = v.in - v.out;
-      html += '<tr><td style="padding-left:28px">' + cat + '</td><td style="color:#16a34a">' + (v.in?fmt(v.in)+' ₸':'-') + '</td><td style="color:#dc2626">' + (v.out?fmt(v.out)+' ₸':'-') + '</td><td style="font-weight:600;color:' + (net>=0?'#16a34a':'#dc2626') + '">' + fmt(net) + ' ₸</td></tr>';
-      bIn += v.in; bOut += v.out;
-    });
-    html += '<tr style="background:#e8f0fe"><td style="font-weight:700;padding-left:14px">Итого ' + block + '</td><td style="font-weight:700;color:#16a34a">' + fmt(bIn) + ' ₸</td><td style="font-weight:700;color:#dc2626">' + fmt(bOut) + ' ₸</td><td style="font-weight:700;color:' + (bIn-bOut>=0?'#16a34a':'#dc2626') + '">' + fmt(bIn-bOut) + ' ₸</td></tr>';
-    totalIn += bIn; totalOut += bOut;
-  });
-  html += '<tr style="background:#1e3a5f;color:white"><td style="font-weight:700;padding:12px 14px">ЧИСТЫЙ ПОТОК ЗА МЕСЯЦ</td><td style="font-weight:700;color:#86efac">' + fmt(totalIn) + ' ₸</td><td style="font-weight:700;color:#fca5a5">' + fmt(totalOut) + ' ₸</td><td style="font-weight:700;font-size:16px;color:' + (totalIn-totalOut>=0?'#86efac':'#fca5a5') + '">' + fmt(totalIn-totalOut) + ' ₸</td></tr>';
-  html += '</tbody></table></div>';
-  document.getElementById('dds-result').innerHTML = html;
-}
+async function buildDDS() {
+  const resultEl = document.getElementById('dds-result');
+  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
-async function buildOPIU() {
-  const period = document.getElementById('opiu-period').value;
-  const resultEl = document.getElementById('opiu-result');
-  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка данных...</div>';
-
-  // Load sales/COGS from Google Sheets
   let salesRows = [];
   try {
     const r = await fetch(SCRIPT_URL + '?action=getSales');
@@ -782,138 +790,278 @@ async function buildOPIU() {
     salesRows = d.sales || [];
   } catch(e) {}
 
-  // Aggregate revenue and COGS for period
-  let revenue = 0, cogs = 0;
-  salesRows.forEach(s => {
-    if (s.month && s.month.startsWith(period)) {
-      revenue += +s.revenue || 0;
-      cogs += +s.cogs || 0;
-    }
+  const MONTHS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
+  const MLbl = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь*'};
+
+  const revM = {}, cogsM = {};
+  salesRows.forEach(s => { if(s.month){ revM[s.month]=+s.revenue||0; cogsM[s.month]=+s.cogs||0; } });
+
+  const catM = {};
+  allData.filter(r => r.type === 'расход').forEach(r => {
+    const m = r.date ? r.date.slice(0,7) : null;
+    if(!m) return;
+    if(!catM[m]) catM[m] = {};
+    const c = (r.category||'').toLowerCase();
+    catM[m][c] = (catM[m][c]||0) + (+r.amount||0);
   });
+  const C = (m,...cs) => cs.reduce((s,c) => s+(catM[m]?.[c]||0), 0);
 
-  // Filter expense data for period
-  const expData = allData.filter(r => r.date && r.date.startsWith(period) && r.type === 'расход');
-
-  // Determine P&L group for each expense row
-  const getGroup = r => {
-    const opiu = r.opiu || '';
-    const cat = (r.category || '').toLowerCase();
-    if (opiu === 'ПЕРЕМЕННЫЕ РАСХОДЫ') return 'variable';
-    if (opiu === 'ПОСТОЯННЫЕ РАСХОДЫ') return 'fixed_rent';
-    if (opiu === 'ФОТ') return 'fixed_fot';
-    if (cat === 'ос') return 'fixed_os';
-    if (opiu === 'Коммерческие расходы' || opiu === 'Маркетинг') return 'commercial';
-    if (cat === 'шеф') return 'shef';
-    if (cat === 'дастан') return 'dastan';
-    if (cat === 'еркин') return 'erkin';
-    if (cat === 'кредит') return 'credit';
-    return null;
+  const calc = m => {
+    const rev  = revM[m]||0;
+    const cogs = cogsM[m]||0;
+    const fot  = C(m,'зарплата','аванс','налоги','наемники');
+    const rent = C(m,'аренда','ком платежи');
+    const com  = C(m,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','прочее');
+    const other= C(m,'ос','упаковка','комиссия','логистика');
+    const opOut = cogs + fot + rent + com + other;
+    const opFlow = rev - opOut;
+    const shef = C(m,'шеф'), das = C(m,'дастан'), erk = C(m,'еркин');
+    const own  = shef + das + erk;
+    const cred = C(m,'кредит');
+    const finOut = own + cred;
+    const netFlow = opFlow - finOut;
+    return {rev,cogs,fot,rent,com,other,opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
   };
 
-  const g = { variable:0, fixed_rent:0, fixed_fot:0, fixed_os:0, commercial:0, shef:0, dastan:0, erkin:0, credit:0 };
-  expData.forEach(r => { const gr = getGroup(r); if (gr && gr in g) g[gr] += +r.amount || 0; });
+  const pm = {};
+  MONTHS.forEach(m => { pm[m] = calc(m); });
+  const tot = {};
+  Object.keys(calc(MONTHS[0])).forEach(k => { tot[k] = MONTHS.reduce((s,m) => s+(pm[m][k]||0), 0); });
 
-  // P&L calculations
-  const grossProfit    = revenue - cogs;
-  const marginalProfit = grossProfit - g.variable;
-  const fixedTotal     = g.fixed_rent + g.fixed_fot + g.fixed_os;
-  const opProfit       = marginalProfit - fixedTotal;
-  const ebit           = opProfit - g.commercial;
-  const ownerTotal     = g.shef + g.dastan + g.erkin;
-  const netProfit      = ebit - ownerTotal;
-
-  const pctStr = v => revenue > 0 ? (v / revenue * 100).toFixed(1) + '%' : '—';
-  const clr    = v => v >= 0 ? '#16a34a' : '#dc2626';
-  const fmtV   = v => fmt(Math.abs(v)) + ' ₸';
-
-  const secHdr = (title, bg = '#1e3a5f') =>
-    `<tr style="background:${bg}"><td colspan="3" style="font-weight:700;color:#fff;padding:10px 14px;font-size:13px">${title}</td></tr>`;
-
-  const dataRow = (label, value, indent = false, bold = false, note = '') =>
-    `<tr>
-      <td style="padding-left:${indent ? '28px' : '14px'};font-weight:${bold ? 700 : 400};${!value ? 'color:#94a3b8' : ''}">
-        ${label}${note ? `<span style="font-size:11px;color:#94a3b8;margin-left:8px">${note}</span>` : ''}
-      </td>
-      <td style="text-align:right;font-weight:${bold ? 700 : 500};color:${clr(value)}">${fmtV(value)}</td>
-      <td style="text-align:right;font-size:12px;color:#94a3b8">${pctStr(value)}</td>
-    </tr>`;
-
-  const totalRow = (label, value, bg, light = false) =>
-    `<tr style="background:${bg}">
-      <td style="padding:10px 14px;font-weight:700;color:${light ? '#fff' : '#fff'}">&#9658; ${label}</td>
-      <td style="text-align:right;padding:10px 14px;font-weight:700;font-size:15px;color:${value >= 0 ? '#86efac' : '#fca5a5'}">${fmtV(value)}</td>
-      <td style="text-align:right;padding:10px 14px;font-weight:600;color:${value >= 0 ? '#86efac' : '#fca5a5'}">${pctStr(value)}</td>
-    </tr>`;
-
-  const periodLabels = {
-    '2026':'Январь — 14 Июня 2026', '2026-01':'Январь 2026', '2026-02':'Февраль 2026',
-    '2026-03':'Март 2026', '2026-04':'Апрель 2026', '2026-05':'Май 2026', '2026-06':'Июнь 2026 (до 14-го)'
+  const NC = MONTHS.length + 2;
+  const hdr = (label, cls='rs-sec') => `<tr class="${cls}"><td colspan="${NC}">${label}</td></tr>`;
+  const dRow = (label, key, indent=false, negate=false) => {
+    const cells = MONTHS.map(m => {
+      const v = pm[m][key]||0;
+      return `<td>${v ? (negate && v>0 ? `(${fmt(v)})` : fmt(v)) : '—'}</td>`;
+    }).join('');
+    const tv = tot[key]||0;
+    return `<tr class="rs-data"><td style="${indent?'padding-left:22px':''}">${label}</td>${cells}<td class="tc">${tv ? (negate && tv>0 ? `(${fmt(tv)})` : fmt(tv)) : '—'}</td></tr>`;
+  };
+  const sumRow = (label, key, cls='rs-fin') => {
+    const cells = MONTHS.map(m => `<td>${fmt(pm[m][key]||0)}</td>`).join('');
+    return `<tr class="${cls}"><td><b>${label}</b></td>${cells}<td class="tc">${fmt(tot[key]||0)}</td></tr>`;
   };
 
-  let html = `
-    <div class="table-wrapper">
-      <div class="table-header">
-        <div>
-          <strong style="font-size:15px">ОПУ — ${periodLabels[period] || period}</strong>
-          <div style="font-size:11px;color:#94a3b8;margin-top:2px">ElectroMax · Источники: 1С Продажи + Журнал расходов</div>
-        </div>
-        <button class="btn btn-clear" onclick="exportOPIU('${period}')" style="font-size:12px;padding:6px 14px">Excel</button>
-      </div>
-      <table>
-        <thead><tr style="background:#f8fafc">
-          <th style="width:55%">Статья</th>
-          <th style="text-align:right">Сумма, ₸</th>
-          <th style="text-align:right">% Выручки</th>
-        </tr></thead>
-        <tbody>`;
+  const fmtK = v => {
+    const n = +v||0;
+    if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+' млрд ₸';
+    if(Math.abs(n)>=1e6) return Math.round(n/1e6)+' млн ₸';
+    return fmt(n)+' ₸';
+  };
+  const kpiCard = (lbl, val, cls) =>
+    `<div class="kpi-card ${cls}"><div class="kpi-lbl">${lbl}</div><div class="kpi-val ${val>=0?'p':'n'}">${fmtK(val)}</div></div>`;
 
-  // I
-  html += secHdr('I.  Выручка и Себестоимость');
-  html += dataRow('Выручка от продаж  [1С, W1–W24]', revenue, false, false, revenue ? '' : '⚠ нажмите «Загрузить данные продаж»');
-  html += dataRow('Себестоимость  [1С, частично W22–W24]', cogs, false, false, !cogs ? '⚠ данные только май–июнь' : '');
-  html += totalRow('ВАЛОВАЯ ПРИБЫЛЬ', grossProfit, '#1a7340');
+  let html = `<div class="kpi-strip">
+    ${kpiCard('Поступления (Выручка)', tot.rev, '')}
+    ${kpiCard('Операционный поток', tot.opFlow, tot.opFlow>=0?'g':'o')}
+    ${kpiCard('Вывод собственников', tot.own, 'd')}
+    ${kpiCard('Погашение кредитов', tot.cred, 'd')}
+    ${kpiCard('НЕТТО изменение ДС', tot.netFlow, tot.netFlow>=0?'g':'o')}
+  </div>`;
 
-  // II
-  html += secHdr('II.  Переменные торговые расходы', '#2e5b9a');
-  html += dataRow('Комиссия маркетплейсов / Логистика / Упаковка', g.variable, true);
-  html += totalRow('МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', marginalProfit, '#1a7340');
+  html += `<div class="table-wrapper report-wrap">
+    <div class="table-header">
+      <strong>ДДС — Январь — 14 Июня 2026</strong>
+      <span style="font-size:12px;color:#64748b">Косвенный метод (упрощённый) · KZT</span>
+    </div>
+    <table class="rt">
+      <thead>
+        <tr>
+          <th>Статья</th>
+          ${MONTHS.map(m=>`<th>${MLbl[m]}</th>`).join('')}
+          <th class="tc">ИТОГО H1 2026</th>
+        </tr>
+      </thead>
+      <tbody>`;
 
-  // III
-  html += secHdr('III.  Постоянные расходы', '#2e5b9a');
-  html += dataRow('Аренда + Коммунальные платежи', g.fixed_rent, true);
-  html += dataRow('ФОТ (зарплата + авансы + налоги)', g.fixed_fot, true);
-  html += dataRow('Основные средства (ОС)', g.fixed_os, true);
-  html += dataRow('Итого постоянных', fixedTotal, false, true);
-  html += totalRow('ОПЕРАЦИОННАЯ ПРИБЫЛЬ', opProfit, '#1a7340');
+  html += hdr('ПОСТУПЛЕНИЯ ОТ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ');
+  html += dRow('Выручка от реализации товаров  [1С, W1–W24]', 'rev');
+  html += sumRow('ИТОГО ПОСТУПЛЕНИЯ', 'rev', 'rs-sub2');
 
-  // IV
-  html += secHdr('IV.  Коммерческие расходы', '#2e5b9a');
-  html += dataRow('Шашу / Авторасходы / Командировочные / Обед / Услуги / Прочие', g.commercial, true);
-  html += totalRow('EBIT  (до вывода собственников)', ebit, '#c25b00');
+  html += hdr('ВЫПЛАТЫ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ', 'rs-sub');
+  html += dRow('(-) Поставщикам — закупки товаров  [1С, частично]', 'cogs', true, true);
+  html += dRow('(-) ФОТ + Налоги с зарплаты + Наёмники', 'fot', true, true);
+  html += dRow('(-) Аренда и коммунальные', 'rent', true, true);
+  html += dRow('(-) Коммерческие (шашу, авторасх., команд., маркетинг, проч.)', 'com', true, true);
+  html += dRow('(-) Прочие операц. (ОС, упаковка, логистика, комиссии)', 'other', true, true);
+  html += sumRow('ИТОГО ВЫПЛАТЫ ОПЕРАЦИОННЫЕ', 'opOut', 'rs-sub2');
+  html += sumRow('ОПЕРАЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК', 'opFlow', 'rs-op');
 
-  // V
-  html += secHdr('V.  Вывод собственника', '#2e5b9a');
-  html += dataRow('Шеф — Темирлан ага', g.shef, true);
-  html += dataRow('Дастан ага', g.dastan, true);
-  html += dataRow('Еркин', g.erkin, true);
-  html += dataRow('Итого вывод', ownerTotal, false, true);
-  html += totalRow('НЕРАСПРЕДЕЛЁННАЯ ПРИБЫЛЬ', netProfit, '#1e3a5f');
+  html += hdr('ФИНАНСОВАЯ ДЕЯТЕЛЬНОСТЬ', 'rs-sub');
+  html += dRow('(-) Вывод собственника — Шеф (Темирлан ага)', 'shef', true, true);
+  html += dRow('(-) Вывод собственника — Дастан ага', 'das', true, true);
+  html += dRow('(-) Вывод собственника — Еркин', 'erk', true, true);
+  html += dRow('(-) Погашение / комиссии по кредитам', 'cred', true, true);
+  html += sumRow('ИТОГО ФИНАНСОВЫЕ ВЫПЛАТЫ', 'finOut', 'rs-sub2');
+  html += sumRow('НЕТТО ИЗМЕНЕНИЕ ДЕНЕЖНЫХ СРЕДСТВ', 'netFlow', 'rs-net');
 
-  // СПРАВОЧНО
-  if (g.credit > 0) {
-    html += secHdr('СПРАВОЧНО: Кредиты (не в ОПУ)', '#555');
-    html += dataRow('Платежи по кредитам / займам', g.credit, true, false, 'не влияют на прибыль');
+  html += '</tbody></table></div>';
+  resultEl.innerHTML = html;
+}
+
+async function buildOPIU() {
+  const period = document.getElementById('opiu-period').value;
+  const resultEl = document.getElementById('opiu-result');
+  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+
+  let salesRows = [];
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getSales');
+    const d = await r.json();
+    salesRows = d.sales || [];
+  } catch(e) {}
+
+  const MONTHS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
+  const MLbl = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь*'};
+  const cols  = period === '2026' ? MONTHS : MONTHS.filter(m => m === period);
+  const multi = cols.length > 1;
+
+  const revM = {}, cogsM = {};
+  salesRows.forEach(s => { if(s.month){ revM[s.month]=+s.revenue||0; cogsM[s.month]=+s.cogs||0; } });
+
+  const catM = {};
+  allData.filter(r => r.type==='расход').forEach(r => {
+    const m = r.date ? r.date.slice(0,7) : null;
+    if(!m) return;
+    if(!catM[m]) catM[m] = {};
+    const c = (r.category||'').toLowerCase();
+    catM[m][c] = (catM[m][c]||0) + (+r.amount||0);
+  });
+  const C = (m,...cs) => cs.reduce((s,c) => s+(catM[m]?.[c]||0), 0);
+
+  const calc = m => {
+    const rev=revM[m]||0, cogs=cogsM[m]||0, gp=rev-cogs;
+    const kom=C(m,'комиссия'), log_=C(m,'логистика'), upk=C(m,'упаковка'), varE=kom+log_+upk, mp=gp-varE;
+    const rent=C(m,'аренда','ком платежи'), fot=C(m,'зарплата','аванс'), tax=C(m,'налоги'), os_=C(m,'ос');
+    const fix=rent+fot+tax+os_, op=mp-fix;
+    const com=C(m,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','наемники','прочее');
+    const ebit=op-com;
+    const shef=C(m,'шеф'), das=C(m,'дастан'), erk=C(m,'еркин'), own=shef+das+erk, net=ebit-own;
+    const cred=C(m,'кредит');
+    return {rev,cogs,gp,kom,log:log_,upk,varE,mp,rent,fot,tax,os:os_,fix,op,com,ebit,shef,das,erk,own,net,cred};
+  };
+
+  const pm = {};
+  cols.forEach(m => { pm[m] = calc(m); });
+  const tot = {};
+  Object.keys(calc(cols[0])).forEach(k => { tot[k] = cols.reduce((s,m) => s+(pm[m][k]||0), 0); });
+
+  const NC  = 1 + cols.length + (multi ? 1 : 0);
+  const pctS = (v,b) => b ? (v/b*100).toFixed(1)+'%' : '—';
+  const fmtK = v => {
+    const n = +v||0;
+    if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+' млрд ₸';
+    if(Math.abs(n)>=1e6) return Math.round(n/1e6)+' млн ₸';
+    return fmt(n)+' ₸';
+  };
+
+  // KPI cards
+  const kpiCard = (lbl, val, cls, sub) =>
+    `<div class="kpi-card ${cls}">
+      <div class="kpi-lbl">${lbl}</div>
+      <div class="kpi-val ${val>=0?'p':'n'}">${fmtK(val)}</div>
+      ${sub ? `<div class="kpi-sub">${sub} · <b>${pctS(val,tot.rev)}</b></div>` : ''}
+    </div>`;
+
+  let html = `<div class="kpi-strip">
+    ${kpiCard('Выручка H1 2026', tot.rev, '', '')}
+    ${kpiCard('Валовая прибыль', tot.gp, 'g', 'от выручки')}
+    ${kpiCard('Маргинальная прибыль', tot.mp, 'g', 'от выручки')}
+    ${kpiCard('Операционная прибыль', tot.op, 't', 'от выручки')}
+    ${kpiCard('EBIT', tot.ebit, 'o', 'до вывода')}
+    ${kpiCard('Нераспред. прибыль', tot.net, 'd', 'чистая')}
+  </div>`;
+
+  // Table helpers
+  const hdr = (label, cls='rs-sec') => `<tr class="${cls}"><td colspan="${NC}">${label}</td></tr>`;
+  const dRow = (label, key, indent=false, neg=false) => {
+    const cells = cols.map(m => {
+      const v = pm[m][key]||0;
+      return `<td>${v ? (neg && v>0 ? `(${fmt(v)})` : fmt(v)) : '—'}</td>`;
+    }).join('');
+    const tc = multi ? (() => { const tv=tot[key]||0; return `<td class="tc">${tv ? (neg && tv>0 ? `(${fmt(tv)})` : fmt(tv)) : '—'}</td>`; })() : '';
+    return `<tr class="rs-data"><td style="${indent?'padding-left:22px':''}">${label}</td>${cells}${tc}</tr>`;
+  };
+  const profRow = (label, key, cls='rs-profit') => {
+    const cells = cols.map(m => `<td>${fmt(pm[m][key]||0)}</td>`).join('');
+    const tc = multi ? `<td class="tc">${fmt(tot[key]||0)}</td>` : '';
+    return `<tr class="${cls}"><td><b>${label}</b></td>${cells}${tc}</tr>`;
+  };
+  const pctRow = (label, numKey) => {
+    const cells = cols.map(m => `<td>${pctS(pm[m][numKey]||0, pm[m].rev||0)}</td>`).join('');
+    const tc = multi ? `<td class="tc">${pctS(tot[numKey]||0, tot.rev||0)}</td>` : '';
+    return `<tr class="rs-pct"><td style="padding-left:16px"><i>${label}</i></td>${cells}${tc}</tr>`;
+  };
+  const periodLbl = multi ? 'Январь — 14 Июня 2026' : (MLbl[period]||period)+' 2026';
+
+  html += `<div class="table-wrapper report-wrap">
+    <div class="table-header">
+      <strong>ОПУ — ${periodLbl}</strong>
+      <button class="btn btn-clear" onclick="exportOPIU('${period}')" style="font-size:12px;padding:5px 12px">Excel ↓</button>
+    </div>
+    <table class="rt">
+      <thead>
+        <tr>
+          <th>Статья / Показатель</th>
+          ${cols.map(m=>`<th>${MLbl[m]}</th>`).join('')}
+          ${multi?'<th class="tc">ИТОГО H1 2026</th>':''}
+        </tr>
+        <tr>
+          <th style="color:#94a3b8;font-size:10px">ед. KZT</th>
+          ${cols.map(()=>'<th style="color:#94a3b8;font-size:10px">KZT</th>').join('')}
+          ${multi?'<th class="tc" style="color:#1e40af;font-size:10px">KZT</th>':''}
+        </tr>
+      </thead>
+      <tbody>`;
+
+  // I. ВЫРУЧКА И СЕБЕСТОИМОСТЬ
+  html += hdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
+  html += dRow('Выручка (нетто)  [1С Продажи, W1–W24]', 'rev');
+  html += dRow('(-) Себестоимость  [1С Приход, W22–W24 — частично]', 'cogs', false, true);
+  html += profRow('▶  ВАЛОВАЯ ПРИБЫЛЬ', 'gp');
+  html += pctRow('Валовая маржа %', 'gp');
+
+  // II. ПЕРЕМЕННЫЕ
+  html += hdr('II.  ПЕРЕМЕННЫЕ ТОРГОВЫЕ РАСХОДЫ  →  МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', 'rs-sub');
+  html += dRow('(-) Банковские комиссии и сборы', 'kom', true, true);
+  html += dRow('(-) Логистика (доставка)', 'log', true, true);
+  html += dRow('(-) Упаковочные материалы', 'upk', true, true);
+  html += profRow('▶  МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', 'mp');
+  html += pctRow('Маржинальность %', 'mp');
+
+  // III. ПОСТОЯННЫЕ
+  html += hdr('III.  ПОСТОЯННЫЕ РАСХОДЫ  →  ОПЕРАЦИОННАЯ ПРИБЫЛЬ', 'rs-sub');
+  html += dRow('(-) Аренда и коммунальные платежи', 'rent', true, true);
+  html += dRow('(-) ФОТ (зарплата + авансы)', 'fot', true, true);
+  html += dRow('(-) Налоги и социальные взносы', 'tax', true, true);
+  html += dRow('(-) ОС / Лизинг', 'os', true, true);
+  html += profRow('▶  ОПЕРАЦИОННАЯ ПРИБЫЛЬ', 'op', 'rs-op');
+  html += pctRow('Операционная маржа %', 'op');
+
+  // IV. КОММЕРЧЕСКИЕ
+  html += hdr('IV.  КОММЕРЧЕСКИЕ РАСХОДЫ  →  EBIT (прибыль до вывода собственников)', 'rs-sub');
+  html += dRow('(-) Шашу / Бонусы / Маркетинг / Авторасходы / Командировоч. / Проч.', 'com', true, true);
+  html += profRow('▶  EBIT  (прибыль до вывода)', 'ebit', 'rs-ebit');
+
+  // V. ВЫВОД СОБСТВЕННИКА
+  html += hdr('V.  ВЫВОД СОБСТВЕННИКА', 'rs-sub');
+  html += dRow('(-) Шеф — Темирлан ага', 'shef', true, true);
+  html += dRow('(-) Дастан ага', 'das', true, true);
+  html += dRow('(-) Еркин', 'erk', true, true);
+  html += profRow('▶  НЕРАСПРЕДЕЛЁННАЯ ПРИБЫЛЬ', 'net', 'rs-net');
+
+  if (tot.cred > 0) {
+    html += hdr('СПРАВОЧНО: Платежи по кредитам (не входят в ОПУ)', 'rs-ref');
+    html += dRow('Кредиты / займы', 'cred', true);
   }
 
   html += '</tbody></table></div>';
 
-  if (!revenue) {
-    html = `<div class="card" style="background:#fef3c7;border:1px solid #f59e0b;margin-bottom:16px">
-      <div class="card-label" style="color:#92400e">&#9888; Нет данных о продажах в Google Sheets</div>
-      <div style="font-size:13px;color:#78350f;margin-top:6px">
-        Нажмите кнопку <b>«Загрузить данные продаж 1С»</b> выше (доступно администратору),
-        чтобы записать выручку и COGS в Google Sheets.
-      </div>
+  if (!tot.rev) {
+    html = `<div class="card" style="background:#fef3c7;border:1px solid #f59e0b;margin-bottom:16px;padding:16px">
+      <div style="font-weight:700;color:#92400e">⚠ Нет данных о продажах в Google Sheets</div>
+      <div style="font-size:13px;color:#78350f;margin-top:4px">Нажмите <b>«Загрузить данные продаж 1С»</b> выше (только для администратора)</div>
     </div>` + html;
   }
 
