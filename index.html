@@ -531,7 +531,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwzvoxkv1zg2tWLT_bV2E1d1Jv0b2NxxFnE9oKuKxiU9cnYtTXz8ZqCfpECgUuwXS9pJg/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby63QkadH9M2muchCotJKPzD3mj9SXPmq_sjBes1_oB7nxn1NhYyByUZr_kIBwVTfsAhg/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -747,16 +747,24 @@ async function buildDashboard() {
   const CITIES = ['Алматы','Астана','Шымкент'];
   const CITY_CLR = { 'Алматы':'#2563eb','Астана':'#0d9488','Шымкент':'#f59e0b' };
 
-  // Load sales from Продажи sheet
-  let salesRows = [];
+  // Load 1С data: weekly sales + purchases → aggregate by month
+  const revM = {}, cogsM = {}, revCity = {}; // revCity: { city: { month: amount } }
   try {
-    const r = await fetch(SCRIPT_URL + '?action=getSales');
+    const r = await fetch(SCRIPT_URL + '?action=get1CData');
     const d = await r.json();
-    salesRows = d.sales || [];
+    (d.sales||[]).forEach(s => {
+      const mo = String(s.month||'');
+      if (!mo) return;
+      revM[mo] = (revM[mo]||0) + (+s.revenue||0);
+      const city = s.city||'Прочее';
+      if (!revCity[city]) revCity[city] = {};
+      revCity[city][mo] = (revCity[city][mo]||0) + (+s.revenue||0);
+    });
+    (d.purchases||[]).forEach(s => {
+      const mo = String(s.month||'');
+      if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
+    });
   } catch(e) {}
-
-  const revM = {}, cogsM = {};
-  salesRows.forEach(s => { if(s.month){ revM[s.month]=+s.revenue||0; cogsM[s.month]=+s.cogs||0; } });
 
   // Expense aggregation: by month×category and by city×category
   const catM = {}, cityExp = {};
@@ -1084,18 +1092,22 @@ async function buildDDS() {
   const resultEl = document.getElementById('dds-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
-  let salesRows = [];
-  try {
-    const r = await fetch(SCRIPT_URL + '?action=getSales');
-    const d = await r.json();
-    salesRows = d.sales || [];
-  } catch(e) {}
-
   const MONTHS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
-  const MLbl = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь*'};
+  const MLbl = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь'};
 
   const revM = {}, cogsM = {};
-  salesRows.forEach(s => { if(s.month){ revM[s.month]=+s.revenue||0; cogsM[s.month]=+s.cogs||0; } });
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=get1CData');
+    const d = await r.json();
+    (d.sales||[]).forEach(s => {
+      const mo = String(s.month||'');
+      if (mo) revM[mo] = (revM[mo]||0) + (+s.revenue||0);
+    });
+    (d.purchases||[]).forEach(s => {
+      const mo = String(s.month||'');
+      if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
+    });
+  } catch(e) {}
 
   const catM = {};
   allData.filter(r => r.type === 'расход').forEach(r => {
@@ -1177,11 +1189,11 @@ async function buildDDS() {
       <tbody>`;
 
   html += hdr('ПОСТУПЛЕНИЯ ОТ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ');
-  html += dRow('Выручка от реализации товаров  [1С, W1–W24]', 'rev');
+  html += dRow('Выручка от реализации товаров  [1С, Продажи]', 'rev');
   html += sumRow('ИТОГО ПОСТУПЛЕНИЯ', 'rev', 'rs-sub2');
 
   html += hdr('ВЫПЛАТЫ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ', 'rs-sub');
-  html += dRow('(-) Поставщикам — закупки товаров  [1С, частично]', 'cogs', true, true);
+  html += dRow('(-) Поставщикам — закупки товаров  [1С, Приход]', 'cogs', true, true);
   html += dRow('(-) ФОТ + Налоги с зарплаты + Наёмники', 'fot', true, true);
   html += dRow('(-) Аренда и коммунальные', 'rent', true, true);
   html += dRow('(-) Коммерческие (шашу, авторасх., команд., маркетинг, проч.)', 'com', true, true);
@@ -1206,20 +1218,24 @@ async function buildOPIU() {
   const resultEl = document.getElementById('opiu-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
-  let salesRows = [];
-  try {
-    const r = await fetch(SCRIPT_URL + '?action=getSales');
-    const d = await r.json();
-    salesRows = d.sales || [];
-  } catch(e) {}
-
   const MONTHS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
-  const MLbl = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь*'};
+  const MLbl = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь'};
   const cols  = period === '2026' ? MONTHS : MONTHS.filter(m => m === period);
   const multi = cols.length > 1;
 
   const revM = {}, cogsM = {};
-  salesRows.forEach(s => { if(s.month){ revM[s.month]=+s.revenue||0; cogsM[s.month]=+s.cogs||0; } });
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=get1CData');
+    const d = await r.json();
+    (d.sales||[]).forEach(s => {
+      const mo = String(s.month||'');
+      if (mo) revM[mo] = (revM[mo]||0) + (+s.revenue||0);
+    });
+    (d.purchases||[]).forEach(s => {
+      const mo = String(s.month||'');
+      if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
+    });
+  } catch(e) {}
 
   const catM = {};
   allData.filter(r => r.type==='расход').forEach(r => {
@@ -1318,8 +1334,8 @@ async function buildOPIU() {
 
   // I. ВЫРУЧКА И СЕБЕСТОИМОСТЬ
   html += hdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
-  html += dRow('Выручка (нетто)  [1С Продажи, W1–W24]', 'rev');
-  html += dRow('(-) Себестоимость  [1С Приход, W22–W24 — частично]', 'cogs', false, true);
+  html += dRow('Выручка (нетто)  [1С Продажи]', 'rev');
+  html += dRow('(-) Себестоимость  [1С Приход]', 'cogs', false, true);
   html += profRow('▶  ВАЛОВАЯ ПРИБЫЛЬ', 'gp');
   html += pctRow('Валовая маржа %', 'gp');
 
@@ -1379,7 +1395,7 @@ function handleFileDrop(event) {
   if (files.length) processUploadedFiles(files);
 }
 
-// Dedicated 1С file parser — knows exact structure (row 9=header, data from row 10)
+// Dedicated 1С file parser — groups by ISO week × city
 function parse1CFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1393,23 +1409,32 @@ function parse1CFile(file) {
         let headerIdx = -1, fileType = null;
         for (let i = 0; i < Math.min(raw.length, 25); i++) {
           const h0 = String(raw[i]?.[0]||'').toLowerCase();
-          if (h0.includes('реализ'))  { headerIdx = i; fileType = 'sales';    break; }
+          if (h0.includes('реализ'))   { headerIdx = i; fileType = 'sales';    break; }
           if (h0.includes('приобрет')) { headerIdx = i; fileType = 'purchase'; break; }
         }
         if (headerIdx === -1) {
-          resolve({error:`Не найден заголовок таблицы в первых 25 строках. Проверь что это файл из 1С (Реализация или Приобретение).`, name: file.name}); return;
+          resolve({error:`Не найден заголовок таблицы в первых 25 строках. Проверь что это файл из 1С.`, name: file.name}); return;
         }
 
-        // Find period string — search for 'Период:' in first few rows
+        // Find period string
         let periodStr = '';
         for (let i = 0; i < headerIdx; i++) {
           const cell = String(raw[i]?.[2]||'');
           if (cell.includes('Период:')) { periodStr = cell.replace('Период: ',''); break; }
         }
 
-        const parseMonth = s => {
+        // Helpers
+        const parse1CDate = s => {
           const m = String(s||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
-          return m ? `${m[3]}-${m[2]}` : null;
+          return m ? new Date(+m[3], +m[2]-1, +m[1]) : null;
+        };
+        const getISOWeek = d => {
+          const u = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+          const day = u.getUTCDay() || 7;
+          u.setUTCDate(u.getUTCDate() + 4 - day);
+          const y = u.getUTCFullYear();
+          const wn = Math.ceil((((u - new Date(Date.UTC(y,0,1))) / 86400000) + 1) / 7);
+          return `${y}-W${String(wn).padStart(2,'0')}`;
         };
         const getCity = s => {
           const u = String(s||'').toUpperCase();
@@ -1419,33 +1444,36 @@ function parse1CFile(file) {
           return 'Прочее';
         };
 
-        const byMonth = {}; // {month: {city: {revenue, cogs}}}
-        let rows = 0;
+        // byWeek: { '2026-W23': { month:'2026-06', cities:{ 'Алматы': amount } } }
+        const byWeek = {};
+        let rowCount = 0;
 
         for (let i = headerIdx + 1; i < raw.length; i++) {
           const r = raw[i] || [];
           if (!r[0]) continue;
-          let mo, city, amount;
+          let date, city, amount;
           if (fileType === 'sales') {
-            // col[0]=дата "DD.MM.YYYY HH:MM:SS", col[7]=склад, col[11]=qty, col[12]=цена
-            mo = parseMonth(r[0]);
-            city = getCity(r[7]);
+            // col[0]=дата "DD.MM.YYYY HH:MM:SS", col[7]=склад, col[11]=кол-во, col[12]=цена
+            date   = parse1CDate(r[0]);
+            city   = getCity(r[7]);
             amount = (parseFloat(r[11])||0) * (parseFloat(r[12])||0);
-            if (amount < 100) continue; // skip internal transfers (цена=1)
+            if (amount < 100) continue; // пропуск внутренних перемещений (цена=1)
           } else {
-            // col[0]=документ "... от DD.MM.YYYY ...", col[8]=склад, col[12]=qty, col[13]=цена
-            mo = parseMonth(r[0]);
-            city = getCity(r[8]);
+            // col[0]=документ "... от DD.MM.YYYY ...", col[8]=склад, col[12]=кол-во, col[13]=цена
+            date   = parse1CDate(r[0]);
+            city   = getCity(r[8]);
             amount = (parseFloat(r[12])||0) * (parseFloat(r[13])||0);
           }
-          if (!mo || amount <= 0) continue;
-          if (!byMonth[mo]) byMonth[mo] = {};
-          if (!byMonth[mo][city]) byMonth[mo][city] = {revenue:0, cogs:0};
-          if (fileType === 'sales') byMonth[mo][city].revenue += amount;
-          else byMonth[mo][city].cogs += amount;
-          rows++;
+          if (!date || amount <= 0) continue;
+
+          const week  = getISOWeek(date);
+          const month = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
+          if (!byWeek[week]) byWeek[week] = { month, cities: {} };
+          byWeek[week].cities[city] = (byWeek[week].cities[city] || 0) + amount;
+          rowCount++;
         }
-        resolve({fileType, periodStr, byMonth, rows, name: file.name});
+
+        resolve({ fileType, periodStr, byWeek, rows: rowCount, name: file.name });
       } catch(err) { reject(err); }
     };
     reader.onerror = reject;
@@ -1464,75 +1492,92 @@ async function processUploadedFiles(files) {
     catch(e) { results.push({error: e.message, name: file.name}); }
   }
 
-  // Merge all into _mergedData
-  _mergedData = {};
+  // Раздельное объединение: продажи и приход по неделям
+  // { '2026-W23': { month:'2026-06', cities:{ 'Алматы': amount } } }
+  _mergedData = { sales: {}, purchases: {} };
   results.filter(r => !r.error).forEach(r => {
-    Object.entries(r.byMonth).forEach(([mo, cities]) => {
-      if (!_mergedData[mo]) _mergedData[mo] = {};
-      Object.entries(cities).forEach(([city, vals]) => {
-        if (!_mergedData[mo][city]) _mergedData[mo][city] = {revenue:0, cogs:0};
-        _mergedData[mo][city].revenue += vals.revenue;
-        _mergedData[mo][city].cogs    += vals.cogs;
+    const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
+    Object.entries(r.byWeek).forEach(([wk, {month, cities}]) => {
+      if (!target[wk]) target[wk] = { month, cities: {} };
+      Object.entries(cities).forEach(([city, amt]) => {
+        target[wk].cities[city] = (target[wk].cities[city] || 0) + amt;
       });
     });
   });
 
   const fM = v => v >= 1e6 ? (v/1e6).toFixed(1)+' млн' : Math.round(v/1e3)+' тыс';
+  const weekLabel = wk => {
+    // '2026-W23' → 'W23 (2026)'
+    const m = wk.match(/(\d{4})-W(\d+)/);
+    return m ? `W${m[2]}` : wk;
+  };
 
-  // File cards
+  // Карточки файлов
   let html = '<div style="margin-top:14px">';
   results.forEach(r => {
     if (r.error) {
       html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:12px"><b>❌ ${r.name}</b>: ${r.error}</div>`;
     } else {
-      const lbl = r.fileType==='sales' ? '📊 Продажи' : '📦 Приход (Себестоимость)';
-      const totRev  = Object.values(r.byMonth).flatMap(c=>Object.values(c)).reduce((s,v)=>s+v.revenue,0);
-      const totCogs = Object.values(r.byMonth).flatMap(c=>Object.values(c)).reduce((s,v)=>s+v.cogs,0);
+      const lbl = r.fileType === 'sales' ? '📊 Продажи' : '📦 Приход (Себестоимость)';
+      const total = Object.values(r.byWeek).reduce((s,{cities}) => s + Object.values(cities).reduce((a,b)=>a+b,0), 0);
+      const weeks = Object.keys(r.byWeek).sort().map(weekLabel).join(', ');
       html += `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <b style="color:#14532d;font-size:13px">${lbl} · ${r.name}</b>
           <span style="color:#16a34a">✓ ${r.rows} строк</span>
         </div>
         <div style="font-size:11px;color:#166534;margin-top:4px">
-          ${r.periodStr}
-          ${totRev>0 ? ` · Выручка: <b>${fM(totRev)} ₸</b>` : ''}
-          ${totCogs>0 ? ` · Себест.: <b>${fM(totCogs)} ₸</b>` : ''}
+          ${r.periodStr} · Недели: <b>${weeks}</b>
+          · Итого: <b>${fM(total)} ₸</b>
         </div>
       </div>`;
     }
   });
 
-  // Monthly summary table
-  const months = Object.keys(_mergedData).sort();
-  if (months.length) {
-    html += `<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin:14px 0 8px">📅 Сводка по месяцам (все файлы):</div>
+  // Сводная таблица по неделям — Продажи
+  const buildWeekTable = (weekData, amtKey, amtLabel, colorCls) => {
+    const weeks = Object.keys(weekData).sort();
+    if (!weeks.length) return '';
+    let t = `<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin:14px 0 6px">${amtLabel} по неделям:</div>
     <div class="report-wrap"><table style="border-collapse:collapse;font-size:12px;width:100%">
     <thead><tr style="background:#1e3a5f;color:white">
+      <th style="padding:7px 10px;text-align:left">Неделя</th>
       <th style="padding:7px 10px;text-align:left">Месяц</th>
-      <th style="padding:7px 10px;text-align:right">Выручка</th>
-      <th style="padding:7px 10px;text-align:right">📍 Алматы</th>
-      <th style="padding:7px 10px;text-align:right">📍 Астана</th>
-      <th style="padding:7px 10px;text-align:right">📍 Шымкент</th>
-      <th style="padding:7px 10px;text-align:right">Себест.</th>
+      <th style="padding:7px 10px;text-align:right">Алматы</th>
+      <th style="padding:7px 10px;text-align:right">Астана</th>
+      <th style="padding:7px 10px;text-align:right">Шымкент</th>
+      <th style="padding:7px 10px;text-align:right">Итого</th>
     </tr></thead><tbody>`;
-    months.forEach((mo, idx) => {
-      const c = _mergedData[mo];
-      const totRev  = Object.values(c).reduce((s,v)=>s+v.revenue,0);
-      const totCogs = Object.values(c).reduce((s,v)=>s+v.cogs,0);
-      const alm = c['Алматы']?.revenue||0, ast = c['Астана']?.revenue||0, shy = c['Шымкент']?.revenue||0;
-      html += `<tr style="background:${idx%2?'white':'#f8fafc'}">
-        <td style="padding:6px 10px;font-weight:600;color:#1e3a5f">${mo}</td>
-        <td style="padding:6px 10px;text-align:right;color:#16a34a;font-weight:700">${totRev>0?fM(totRev)+' ₸':'—'}</td>
-        <td style="padding:6px 10px;text-align:right">${alm>0?fM(alm):'—'}</td>
-        <td style="padding:6px 10px;text-align:right">${ast>0?fM(ast):'—'}</td>
-        <td style="padding:6px 10px;text-align:right">${shy>0?fM(shy):'—'}</td>
-        <td style="padding:6px 10px;text-align:right;color:#dc2626">${totCogs>0?fM(totCogs)+' ₸':'—'}</td>
+    weeks.forEach((wk, idx) => {
+      const {month, cities} = weekData[wk];
+      const alm = cities['Алматы']||0, ast = cities['Астана']||0, shy = cities['Шымкент']||0;
+      const tot = alm + ast + shy;
+      t += `<tr style="background:${idx%2?'white':'#f8fafc'}">
+        <td style="padding:6px 10px;font-weight:700;color:#1e3a5f">${weekLabel(wk)}</td>
+        <td style="padding:6px 10px;color:#64748b">${month}</td>
+        <td style="padding:6px 10px;text-align:right">${alm>0?fM(alm)+' ₸':'—'}</td>
+        <td style="padding:6px 10px;text-align:right">${ast>0?fM(ast)+' ₸':'—'}</td>
+        <td style="padding:6px 10px;text-align:right">${shy>0?fM(shy)+' ₸':'—'}</td>
+        <td style="padding:6px 10px;text-align:right;font-weight:700;color:${colorCls}">${tot>0?fM(tot)+' ₸':'—'}</td>
       </tr>`;
     });
-    html += `</tbody></table></div>
-    <div style="display:flex;align-items:center;gap:14px;margin-top:14px">
-      <button class="btn btn-save" onclick="confirmAndSave()" style="width:auto">⬇ Сохранить в Google Sheets</button>
+    t += `</tbody></table></div>`;
+    return t;
+  };
+
+  const hasSales = Object.keys(_mergedData.sales).length > 0;
+  const hasPurch = Object.keys(_mergedData.purchases).length > 0;
+
+  if (hasSales) html += buildWeekTable(_mergedData.sales,     'revenue', '📊 Продажи (выручка)', '#16a34a');
+  if (hasPurch) html += buildWeekTable(_mergedData.purchases, 'cogs',    '📦 Приход (себестоимость)', '#dc2626');
+
+  if (hasSales || hasPurch) {
+    html += `<div style="display:flex;align-items:center;gap:14px;margin-top:16px">
+      <button class="btn btn-save" onclick="confirmAndSave()" style="width:auto">⬆ Добавить в Google Sheets</button>
       <div id="upload-save-msg" style="font-size:13px"></div>
+    </div>
+    <div style="font-size:11px;color:#64748b;margin-top:6px">
+      ℹ️ Если эта неделя уже загружена — данные заменятся. Остальные недели не затронутся.
     </div>`;
   }
 
@@ -1544,28 +1589,42 @@ async function confirmAndSave() {
   const msg = document.getElementById('upload-save-msg');
   msg.textContent = 'Сохранение...'; msg.style.color = '#64748b';
 
-  const CITIES = ['Алматы','Астана','Шымкент'];
-  const sales = Object.entries(_mergedData).sort(([a],[b])=>a.localeCompare(b)).map(([month,cities]) => {
-    const rev  = Object.values(cities).reduce((s,v)=>s+v.revenue,0);
-    const cogs = Object.values(cities).reduce((s,v)=>s+v.cogs,0);
-    const row = {month, revenue:Math.round(rev), cogs:Math.round(cogs)};
-    CITIES.forEach(c => {
-      const key = c==='Алматы'?'almaty':c==='Астана'?'astana':'shymkent';
-      row[`rev_${key}`]  = Math.round(cities[c]?.revenue||0);
-      row[`cogs_${key}`] = Math.round(cities[c]?.cogs||0);
+  // Разворачиваем в массивы строк для Apps Script
+  const flatSales = [];
+  Object.entries(_mergedData.sales).forEach(([week, {month, cities}]) => {
+    Object.entries(cities).forEach(([city, revenue]) => {
+      flatSales.push({ week, month, city, revenue: Math.round(revenue), source: 'загрузка 1С' });
     });
-    return row;
+  });
+
+  const flatPurchases = [];
+  Object.entries(_mergedData.purchases).forEach(([week, {month, cities}]) => {
+    Object.entries(cities).forEach(([city, cogs]) => {
+      flatPurchases.push({ week, month, city, cogs: Math.round(cogs), source: 'загрузка 1С' });
+    });
   });
 
   try {
-    const params = new URLSearchParams({action:'saveSales', data: JSON.stringify(sales)});
-    const r = await fetch(`${SCRIPT_URL}?${params}`);
-    const d = await r.json();
-    if (d.success) {
-      msg.textContent = `✓ Сохранено ${sales.length} месяцев + разбивка по городам`;
-      msg.style.color = '#16a34a';
-      showToast('Данные из файлов 1С сохранены!', 'success');
-    } else { msg.textContent = '✗ '+(d.error||'Ошибка'); msg.style.color='#dc2626'; }
+    let savedWeeks = [];
+
+    if (flatSales.length) {
+      const r = await fetch(`${SCRIPT_URL}?action=saveWeekSales&data=${encodeURIComponent(JSON.stringify(flatSales))}`);
+      const d = await r.json();
+      if (!d.success) { msg.textContent = '✗ Ошибка сохранения продаж: '+(d.error||''); msg.style.color='#dc2626'; return; }
+      savedWeeks = savedWeeks.concat(d.weeks||[]);
+    }
+
+    if (flatPurchases.length) {
+      const r = await fetch(`${SCRIPT_URL}?action=saveWeekPurchases&data=${encodeURIComponent(JSON.stringify(flatPurchases))}`);
+      const d = await r.json();
+      if (!d.success) { msg.textContent = '✗ Ошибка сохранения прихода: '+(d.error||''); msg.style.color='#dc2626'; return; }
+      savedWeeks = savedWeeks.concat(d.weeks||[]);
+    }
+
+    const uniqueWeeks = [...new Set(savedWeeks)].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
+    msg.textContent = `✓ Сохранено: ${uniqueWeeks}`;
+    msg.style.color = '#16a34a';
+    showToast('Данные 1С сохранены в Google Sheets!', 'success');
   } catch(e) { msg.textContent = '✗ Ошибка соединения'; msg.style.color='#dc2626'; }
 }
 
@@ -1591,13 +1650,7 @@ const SALES_MONTHS = [
 async function initSalesForm() {
   const wrap = document.getElementById('sales-form-wrap');
   if (!wrap) return;
-  // Try to load existing data from Продажи sheet
-  let existing = {};
-  try {
-    const r = await fetch(SCRIPT_URL + '?action=getSales');
-    const d = await r.json();
-    (d.sales||[]).forEach(s => { existing[s.month] = s; });
-  } catch(e) {}
+  const existing = {};
   const inp = (id, val) =>
     `<input type="number" id="${id}" value="${val||''}" placeholder="0"
       style="width:160px;text-align:right;border:1px solid #e2e8f0;border-radius:6px;
