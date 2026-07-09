@@ -531,7 +531,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwZIpS8AfuLtOYeivUqBLh4dDW-YGVIqxG4JWz3r68LjKQmW4nHnH0M38UUlxvMpqWwfw/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwzvoxkv1zg2tWLT_bV2E1d1Jv0b2NxxFnE9oKuKxiU9cnYtTXz8ZqCfpECgUuwXS9pJg/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -1395,7 +1395,7 @@ function parse1CFile(file) {
         let fileType = null;
         if (h0.includes('реализ')) fileType = 'sales';
         else if (h0.includes('приобрет')) fileType = 'purchase';
-        else { resolve({error:'Неизвестный формат. Ожидается файл Реализация или Приобретение из 1С.'}); return; }
+        else { resolve({error:`Неизвестный формат (заголовок: "${hdr[0]||'пусто'}"). Ожидается файл Реализация или Приобретение из 1С.`, name: file.name}); return; }
 
         // Period from row 2 (index 1), column C (index 2)
         const periodStr = String((raw[1]||[])[2]||'').replace('Период: ','');
