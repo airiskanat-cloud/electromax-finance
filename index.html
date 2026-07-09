@@ -220,20 +220,68 @@
     </div>
     <div class="page" id="page-load">
       <div class="page-title">Загрузка данных</div>
+
+      <!-- ── FILE UPLOAD ── -->
       <div class="card" style="margin-bottom:16px">
-        <div class="card-label">📊 Данные продаж 1С (Выручка + Себестоимость)</div>
-        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Введи или скопируй из 1С выручку и себестоимость по каждому месяцу. После нажатия «Сохранить» данные запишутся в Google Sheets и появятся на дашборде.</p>
-        <div id="sales-form-wrap"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
-        <div style="margin-top:14px;display:flex;align-items:center;gap:14px">
-          <button class="btn btn-save" onclick="saveSalesData()" style="width:auto">💾 Сохранить в Google Sheets</button>
-          <div id="sales-save-msg" style="font-size:13px;color:#16a34a"></div>
+        <div class="card-label">📂 Файлы продаж из 1С (Excel)</div>
+        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Загрузи Excel-файлы из 1С — файлы продаж (выручка) и/или файлы прихода (себестоимость). Можно выбрать сразу несколько файлов за разные недели.</p>
+        <label id="drop-zone" style="display:block;border:2px dashed #c7d2fe;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#f0f4ff;transition:background .2s"
+          ondragover="event.preventDefault();this.style.background='#dbeafe'"
+          ondragleave="this.style.background='#f0f4ff'"
+          ondrop="handleFileDrop(event)">
+          <input type="file" id="upload-input" accept=".xlsx,.xls" multiple style="display:none" onchange="processUploadedFiles(Array.from(this.files))">
+          <div style="font-size:36px;margin-bottom:10px">📊</div>
+          <div style="font-weight:700;color:#1e3a5f;font-size:15px">Нажми или перетащи файлы сюда</div>
+          <div style="font-size:12px;color:#94a3b8;margin-top:6px">.xlsx, .xls — можно несколько файлов за разные периоды</div>
+        </label>
+        <div id="upload-preview"></div>
+        <div id="upload-mapping" style="display:none;margin-top:18px;padding-top:16px;border-top:1px solid #f1f5f9">
+          <div style="font-weight:700;color:#1e3a5f;font-size:13px;margin-bottom:12px">🗂 Укажи какие колонки использовать:</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+            <div>
+              <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px">📅 Дата / Период</div>
+              <select id="map-date" style="width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:7px 8px;font-size:12px;font-family:inherit"></select>
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px">💰 Выручка (сумма)</div>
+              <select id="map-rev" style="width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:7px 8px;font-size:12px;font-family:inherit"></select>
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px">📦 Себестоимость</div>
+              <select id="map-cogs" style="width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:7px 8px;font-size:12px;font-family:inherit"></select>
+            </div>
+          </div>
+          <div id="upload-summary"></div>
+          <div style="display:flex;align-items:center;gap:14px;margin-top:12px">
+            <button class="btn btn-save" onclick="confirmAndSave()" style="width:auto">⬇ Сохранить в Google Sheets</button>
+            <div id="upload-save-msg" style="font-size:13px"></div>
+          </div>
         </div>
       </div>
+
+      <!-- ── MANUAL ENTRY (collapsed) ── -->
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleManualEntry()">
+          <div class="card-label" style="margin:0">✏️ Или ввести данные вручную</div>
+          <span id="manual-toggle-icon" style="font-size:14px;color:#94a3b8">▼</span>
+        </div>
+        <div id="manual-entry-section" style="display:none;margin-top:14px">
+          <div id="sales-form-wrap"></div>
+          <div style="margin-top:14px;display:flex;align-items:center;gap:14px">
+            <button class="btn btn-save" onclick="saveSalesData()" style="width:auto">💾 Сохранить в Google Sheets</button>
+            <div id="sales-save-msg" style="font-size:13px;color:#16a34a"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── REFRESH JOURNAL ── -->
       <div class="card" style="margin-bottom:16px">
         <div class="card-label">↻ Обновить данные Журнала расходов</div>
         <div style="font-size:13px;color:#64748b;margin:6px 0 10px">Перечитывает все расходы из Google Sheets без выхода из системы.</div>
         <button class="btn" style="background:#f0f4ff;color:#1e3a5f;border:1px solid #c7d2fe;width:auto" onclick="refreshData()">↻ Обновить данные расходов</button>
       </div>
+
+      <!-- ── INFO ── -->
       <div class="card" style="background:#f0fdf4;border-color:#bbf7d0">
         <div style="font-weight:700;color:#15803d;margin-bottom:8px">ℹ Структура данных в Google Sheets</div>
         <div style="font-size:13px;color:#166534;line-height:1.8">
@@ -568,7 +616,6 @@ function showPage(name, el) {
   if (name === 'balances') renderBalances();
   if (name === 'dds') buildDDS();
   if (name === 'dashboard') buildDashboard();
-  if (name === 'load') initSalesForm();
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
@@ -1322,6 +1369,175 @@ async function buildOPIU() {
   resultEl.innerHTML = html;
 }
 
+// ── FILE UPLOAD ─────────────────────────────────────
+let _uploadedData = {}; // {filename: {sheetName, headers, rows}}
+let _uploadHeaders = [];
+
+function handleFileDrop(event) {
+  event.preventDefault();
+  document.getElementById('drop-zone').style.background = '#f0f4ff';
+  const files = Array.from(event.dataTransfer.files).filter(f => /\.xlsx?$/i.test(f.name));
+  if (files.length) processUploadedFiles(files);
+}
+
+async function processUploadedFiles(files) {
+  const preview  = document.getElementById('upload-preview');
+  const mapping  = document.getElementById('upload-mapping');
+  preview.innerHTML  = '<div style="margin-top:12px"><div class="loading"><div class="spinner"></div>Читаю файлы...</div></div>';
+  mapping.style.display = 'none';
+  _uploadedData = {};
+
+  for (const file of files) {
+    try { _uploadedData[file.name] = await readExcelFile(file); }
+    catch(e) { console.error('Ошибка чтения', file.name, e); }
+  }
+
+  const allH = new Set();
+  Object.values(_uploadedData).forEach(d => d.headers.forEach(h => h && allH.add(h)));
+  _uploadHeaders = [...allH];
+
+  // File list
+  let html = '<div style="margin-top:14px">';
+  Object.entries(_uploadedData).forEach(([name, data]) => {
+    html += `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#f8fafc;border-radius:8px;margin-bottom:6px">
+      <span style="font-size:18px">📄</span>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;color:#1e3a5f">${name}</div>
+        <div style="font-size:11px;color:#64748b">${data.rows.length} строк · Лист: «${data.sheetName}»</div>
+      </div>
+      <span style="color:#16a34a;font-size:18px">✓</span>
+    </div>`;
+  });
+
+  // Preview table (first file)
+  const first = Object.values(_uploadedData)[0];
+  if (first && first.headers.length) {
+    html += `<div style="font-size:12px;color:#64748b;margin:10px 0 4px">Предпросмотр (первые строки):</div>
+    <div class="report-wrap"><table style="border-collapse:collapse;font-size:11px">
+      <thead><tr style="background:#f8fafc">` +
+      first.headers.map(h=>`<th style="padding:5px 8px;border:1px solid #e2e8f0;font-weight:700;color:#1e3a5f;white-space:nowrap">${h||'—'}</th>`).join('') +
+      `</tr></thead><tbody>` +
+      first.rows.slice(0,5).map(r=>'<tr>'+first.headers.map((_,ci)=>
+        `<td style="padding:4px 8px;border:1px solid #f1f5f9;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis">${r[ci]??''}</td>`).join('')+'</tr>').join('') +
+      `</tbody></table></div>`;
+  }
+  html += '</div>';
+  preview.innerHTML = html;
+
+  // Fill selects
+  const optBlank = '<option value="">— не выбрано —</option>';
+  ['map-date','map-rev','map-cogs'].forEach(id => {
+    document.getElementById(id).innerHTML = optBlank +
+      _uploadHeaders.map((h,i)=>`<option value="${i}">${h}</option>`).join('');
+  });
+
+  // Auto-detect columns
+  const find = kws => { const i = _uploadHeaders.findIndex(h => kws.some(k => h.toLowerCase().includes(k))); return i>=0 ? String(i) : ''; };
+  document.getElementById('map-date').value  = find(['дата','период','месяц','date','month','time']);
+  document.getElementById('map-rev').value   = find(['выручка','сумма','revenue','оборот','реализ','продаж']);
+  document.getElementById('map-cogs').value  = find(['себест','cogs','cost','себестоимость']);
+
+  mapping.style.display = 'block';
+}
+
+function readExcelFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array', cellDates:true, raw:false});
+        const sheetName = wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
+        const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:false});
+
+        // Find header row — first row with 2+ non-empty cells
+        let hr = 0;
+        for (let i = 0; i < Math.min(raw.length, 15); i++) {
+          if ((raw[i]||[]).filter(c => c !== null && c !== '').length >= 2) { hr = i; break; }
+        }
+        const headers = (raw[hr]||[]).map(h => String(h||'').trim());
+        const rows = raw.slice(hr+1).filter(r => r && r.some(c => c !== null && c !== ''));
+        resolve({sheetName, headers, rows});
+      } catch(err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function confirmAndSave() {
+  const dateIdx = parseInt(document.getElementById('map-date').value);
+  const revIdx  = parseInt(document.getElementById('map-rev').value);
+  const cogsVal = document.getElementById('map-cogs').value;
+  const cogsIdx = cogsVal !== '' ? parseInt(cogsVal) : -1;
+
+  if (isNaN(dateIdx) || isNaN(revIdx)) { showToast('Выбери колонки «Дата» и «Выручка»','error'); return; }
+
+  const msg = document.getElementById('upload-save-msg');
+  msg.textContent = 'Обрабатываю...'; msg.style.color = '#64748b';
+
+  const byMonth = {};
+  Object.values(_uploadedData).forEach(file => {
+    file.rows.forEach(row => {
+      const raw = row[dateIdx]; let mo = null;
+      if (raw instanceof Date) {
+        mo = raw.getFullYear()+'-'+String(raw.getMonth()+1).padStart(2,'0');
+      } else if (typeof raw === 'string') {
+        const m1 = raw.match(/(\d{2})\.(\d{2})\.(\d{4})/); if (m1) mo = m1[3]+'-'+m1[2];
+        const m2 = raw.match(/(\d{4})-(\d{2})/);           if (m2) mo = m2[1]+'-'+m2[2];
+        const m3 = raw.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); if (m3) mo = m3[3]+'-'+m3[1].padStart(2,'0');
+      }
+      if (!mo) return;
+      if (!byMonth[mo]) byMonth[mo] = {revenue:0, cogs:0};
+      byMonth[mo].revenue += parseFloat(String(row[revIdx]||'').replace(/[^\d.-]/g,''))||0;
+      if (cogsIdx>=0) byMonth[mo].cogs += parseFloat(String(row[cogsIdx]||'').replace(/[^\d.-]/g,''))||0;
+    });
+  });
+
+  const sales = Object.entries(byMonth).sort(([a],[b])=>a.localeCompare(b))
+    .map(([month,v]) => ({month, revenue:Math.round(v.revenue), cogs:Math.round(v.cogs)}));
+
+  if (!sales.length) {
+    msg.textContent = '✗ Не удалось распознать даты. Проверь колонку «Дата».';
+    msg.style.color = '#dc2626'; return;
+  }
+
+  const fK = v => Math.abs(v)>=1e6 ? Math.round(v/1e6)+' млн ₸' : Math.round(v/1e3)+' тыс ₸';
+  let sumH = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px;margin-bottom:12px"><b style="color:#14532d;font-size:12px">Итоги по файлам:</b><div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px">';
+  sales.forEach(s => {
+    sumH += `<div style="background:white;border:1px solid #d1fae5;border-radius:6px;padding:6px 10px;font-size:12px">
+      <b style="color:#1e3a5f">${s.month}</b><br>
+      <span style="color:#16a34a">Выр: ${fK(s.revenue)}</span>${s.cogs?`<br><span style="color:#64748b">С/с: ${fK(s.cogs)}</span>`:''}
+    </div>`;
+  });
+  document.getElementById('upload-summary').innerHTML = sumH + '</div></div>';
+
+  try {
+    const params = new URLSearchParams({action:'saveSales', data: JSON.stringify(sales)});
+    const r = await fetch(`${SCRIPT_URL}?${params}`);
+    const d = await r.json();
+    if (d.success) {
+      msg.textContent = `✓ Сохранено ${sales.length} месяцев в Google Sheets`;
+      msg.style.color = '#16a34a';
+      showToast('Данные из файлов сохранены!', 'success');
+    } else {
+      msg.textContent = '✗ ' + (d.error||'Ошибка'); msg.style.color = '#dc2626';
+    }
+  } catch(e) {
+    msg.textContent = '✗ Ошибка соединения'; msg.style.color = '#dc2626';
+  }
+}
+
+function toggleManualEntry() {
+  const sec = document.getElementById('manual-entry-section');
+  const ico = document.getElementById('manual-toggle-icon');
+  const open = sec.style.display === 'none';
+  sec.style.display = open ? 'block' : 'none';
+  ico.textContent = open ? '▲' : '▼';
+  if (open) initSalesForm();
+}
+
+// ── MANUAL ENTRY ─────────────────────────────────────
 const SALES_MONTHS = [
   {month:'2026-01',label:'Январь 2026'},
   {month:'2026-02',label:'Февраль 2026'},
