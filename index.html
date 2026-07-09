@@ -567,7 +567,8 @@ async function saveOperation() {
   const btn = document.getElementById('btn-save');
   btn.disabled = true; btn.textContent = 'Сохранение...';
   try {
-    await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'addRow', data: row }) });
+    const params = new URLSearchParams({ action: 'addRow', data: JSON.stringify(row) });
+    await fetch(`${SCRIPT_URL}?${params}`);
   } catch(e) { /* данные отправлены */ }
   allData.push({ ...row, id: Date.now() });
   showToast('Операция сохранена!', 'success');
@@ -652,7 +653,8 @@ function buildTable(data, withActions) {
 async function deleteRow(id) {
   if (!confirm('Удалить операцию?')) return;
   allData = allData.filter(r => r.id !== id);
-  fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'deleteRow', id }) });
+  const delParams = new URLSearchParams({ action: 'deleteRow', id: String(id) });
+  fetch(`${SCRIPT_URL}?${delParams}`);
   renderJournal(); renderDashboard(); renderBalances();
   showToast('Операция удалена', 'success');
 }
