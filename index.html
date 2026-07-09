@@ -222,12 +222,16 @@
       <div class="page-title">Загрузка данных</div>
       <div class="card" style="margin-bottom:16px">
         <div class="card-label">📊 Данные продаж 1С (Выручка + Себестоимость)</div>
-        <div style="font-size:13px;color:#64748b;margin:8px 0 14px">Записывает месячные данные 1С в Google Sheets (выручка W1–W24, себестоимость W22–W24). Достаточно сделать один раз — данные сохраняются.</div>
-        <button class="btn btn-save" onclick="initSalesInSheets()" style="width:auto">⬇ Загрузить данные продаж 1С → Google Sheets</button>
+        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Введи или скопируй из 1С выручку и себестоимость по каждому месяцу. После нажатия «Сохранить» данные запишутся в Google Sheets и появятся на дашборде.</p>
+        <div id="sales-form-wrap"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
+        <div style="margin-top:14px;display:flex;align-items:center;gap:14px">
+          <button class="btn btn-save" onclick="saveSalesData()" style="width:auto">💾 Сохранить в Google Sheets</button>
+          <div id="sales-save-msg" style="font-size:13px;color:#16a34a"></div>
+        </div>
       </div>
       <div class="card" style="margin-bottom:16px">
         <div class="card-label">↻ Обновить данные Журнала расходов</div>
-        <div style="font-size:13px;color:#64748b;margin:8px 0 14px">Перечитывает все расходы из Google Sheets без выхода из системы.</div>
+        <div style="font-size:13px;color:#64748b;margin:6px 0 10px">Перечитывает все расходы из Google Sheets без выхода из системы.</div>
         <button class="btn" style="background:#f0f4ff;color:#1e3a5f;border:1px solid #c7d2fe;width:auto" onclick="refreshData()">↻ Обновить данные расходов</button>
       </div>
       <div class="card" style="background:#f0fdf4;border-color:#bbf7d0">
@@ -564,6 +568,7 @@ function showPage(name, el) {
   if (name === 'balances') renderBalances();
   if (name === 'dds') buildDDS();
   if (name === 'dashboard') buildDashboard();
+  if (name === 'load') initSalesForm();
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
@@ -1315,6 +1320,76 @@ async function buildOPIU() {
   }
 
   resultEl.innerHTML = html;
+}
+
+const SALES_MONTHS = [
+  {month:'2026-01',label:'Январь 2026'},
+  {month:'2026-02',label:'Февраль 2026'},
+  {month:'2026-03',label:'Март 2026'},
+  {month:'2026-04',label:'Апрель 2026'},
+  {month:'2026-05',label:'Май 2026'},
+  {month:'2026-06',label:'Июнь 2026'}
+];
+
+async function initSalesForm() {
+  const wrap = document.getElementById('sales-form-wrap');
+  if (!wrap) return;
+  // Try to load existing data from Продажи sheet
+  let existing = {};
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getSales');
+    const d = await r.json();
+    (d.sales||[]).forEach(s => { existing[s.month] = s; });
+  } catch(e) {}
+  const inp = (id, val) =>
+    `<input type="number" id="${id}" value="${val||''}" placeholder="0"
+      style="width:160px;text-align:right;border:1px solid #e2e8f0;border-radius:6px;
+             padding:7px 10px;font-size:13px;font-family:inherit;outline:none"
+      onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#e2e8f0'">`;
+  let html = `<div class="report-wrap"><table style="width:100%;border-collapse:collapse">
+    <thead><tr style="background:#f8fafc">
+      <th style="text-align:left;padding:10px 14px;color:#1e3a5f;font-size:12px;font-weight:700;border-bottom:2px solid #e2e8f0">Месяц</th>
+      <th style="text-align:right;padding:10px 14px;color:#1e3a5f;font-size:12px;font-weight:700;border-bottom:2px solid #e2e8f0">Выручка (₸)</th>
+      <th style="text-align:right;padding:10px 14px;color:#1e3a5f;font-size:12px;font-weight:700;border-bottom:2px solid #e2e8f0">Себестоимость (₸)</th>
+    </tr></thead><tbody>`;
+  SALES_MONTHS.forEach((m,i) => {
+    const ex = existing[m.month]||{};
+    html += `<tr style="${i%2===0?'background:#fafbfc':'background:white'}">
+      <td style="padding:9px 14px;font-size:13px;font-weight:600;color:#1e3a5f">${m.label}</td>
+      <td style="padding:6px 14px;text-align:right">${inp('rev-'+i, ex.revenue)}</td>
+      <td style="padding:6px 14px;text-align:right">${inp('cogs-'+i, ex.cogs)}</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div>`;
+  wrap.innerHTML = html;
+}
+
+async function saveSalesData() {
+  const msg = document.getElementById('sales-save-msg');
+  msg.textContent = 'Сохранение...';
+  msg.style.color = '#64748b';
+  const sales = SALES_MONTHS.map((m,i) => ({
+    month: m.month,
+    revenue: parseFloat(document.getElementById('rev-'+i).value)||0,
+    cogs:    parseFloat(document.getElementById('cogs-'+i).value)||0
+  }));
+  try {
+    const params = new URLSearchParams({action:'saveSales', data: JSON.stringify(sales)});
+    const r = await fetch(`${SCRIPT_URL}?${params}`);
+    const d = await r.json();
+    if (d.success) {
+      msg.textContent = '✓ Сохранено в Google Sheets';
+      msg.style.color = '#16a34a';
+      showToast('Данные продаж сохранены!', 'success');
+    } else {
+      msg.textContent = '✗ ' + (d.error||'Ошибка');
+      msg.style.color = '#dc2626';
+    }
+  } catch(e) {
+    msg.textContent = '✗ Ошибка соединения';
+    msg.style.color = '#dc2626';
+    showToast('Ошибка соединения с Google Sheets', 'error');
+  }
 }
 
 async function initSalesInSheets() {
