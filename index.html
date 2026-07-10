@@ -323,6 +323,8 @@
               <option value="канц товары">Канц. товары</option>
               <option value="обед">Обед / питание</option>
               <option value="компенсация">Компенсация</option>
+              <option value="kaspi бонусы">Kaspi бонусы клиентам</option>
+              <option value="маркетинг">Маркетинг и реклама</option>
               <option value="наемники">Наёмники</option>
               <option value="услуги">Услуги</option>
               <option value="шашу">Шашу (реклама)</option>
@@ -552,7 +554,9 @@ const CATEGORY_MAP = {
   'канц товары':     { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'обед':            { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'компенсация':     { dds: 'Операционная', opiu: 'Коммерческие расходы' },
-  'наемники':        { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'kaspi бонусы':    { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'маркетинг':       { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'наемники':        { dds: 'Операционная', opiu: 'ФОТ' },
   'услуги':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'шашу':            { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'кредит':          { dds: 'Финансовая',   opiu: '' },
@@ -785,9 +789,9 @@ async function buildDashboard() {
     const rev=revM[mo]||0, cogs=cogsM[mo]||0, gp=rev-cogs;
     const varE=C(mo,'комиссия','логистика','упаковка');
     const mp=gp-varE;
-    const fix=C(mo,'аренда','ком платежи','зарплата','аванс','налоги','ос');
+    const fix=C(mo,'аренда','ком платежи','зарплата','аванс','наемники','налоги','ос');
     const op=mp-fix;
-    const com=C(mo,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','наемники','прочее');
+    const com=C(mo,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','kaspi бонусы','маркетинг','прочее');
     const ebit=op-com;
     const own=C(mo,'шеф','дастан','еркин');
     const net=ebit-own;
@@ -1088,6 +1092,15 @@ function doReconcile() {
   document.getElementById('reconcile-result').innerHTML = html;
 }
 
+function toggleGrp(cls, el) {
+  const rows = document.querySelectorAll('.grp-'+cls);
+  if (!rows.length) return;
+  const hidden = rows[0].style.display === 'none';
+  rows.forEach(r => r.style.display = hidden ? 'table-row' : 'none');
+  const icon = el.querySelector('.grp-ic');
+  if (icon) icon.textContent = hidden ? '▾' : '▸';
+}
+
 async function buildDDS() {
   const resultEl = document.getElementById('dds-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
@@ -1122,10 +1135,16 @@ async function buildDDS() {
   const calc = m => {
     const rev  = revM[m]||0;
     const cogs = cogsM[m]||0;
-    const fot  = C(m,'зарплата','аванс','налоги','наемники');
-    const rent = C(m,'аренда','ком платежи');
-    const com  = C(m,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','прочее');
-    const other= C(m,'ос','упаковка','комиссия','логистика');
+    const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fotNaem=C(m,'наемники'), fotTax=C(m,'налоги');
+    const fot  = fotZp+fotAv+fotNaem+fotTax;
+    const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rent=rentA+rentB;
+    const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
+          cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
+          cKanc=C(m,'канц товары','конц товары'), cOther=C(m,'прочее'),
+          cKasp=C(m,'kaspi бонусы'), cMark=C(m,'маркетинг');
+    const com  = cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cOther+cKasp+cMark;
+    const oOs=C(m,'ос'), oUpk=C(m,'упаковка'), oLog=C(m,'логистика'), oKom=C(m,'комиссия');
+    const other= oOs+oUpk+oLog+oKom;
     const opOut = cogs + fot + rent + com + other;
     const opFlow = rev - opOut;
     const shef = C(m,'шеф'), das = C(m,'дастан'), erk = C(m,'еркин');
@@ -1133,7 +1152,10 @@ async function buildDDS() {
     const cred = C(m,'кредит');
     const finOut = own + cred;
     const netFlow = opFlow - finOut;
-    return {rev,cogs,fot,rent,com,other,opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
+    return {rev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rent,
+            cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cOther,cKasp,cMark,com,
+            oOs,oUpk,oLog,oKom,other,
+            opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
   };
 
   const pm = {};
@@ -1150,6 +1172,22 @@ async function buildDDS() {
     }).join('');
     const tv = tot[key]||0;
     return `<tr class="rs-data"><td style="${indent?'padding-left:22px':''}">${label}</td>${cells}<td class="tc">${tv ? (negate && tv>0 ? `(${fmt(tv)})` : fmt(tv)) : '—'}</td></tr>`;
+  };
+  const grpRow = (label, key, cls) => {
+    const cells = MONTHS.map(m => {
+      const v = pm[m][key]||0;
+      return `<td>${v ? fmt(v)==='0' ? '—' : `(${fmt(v)})` : '—'}</td>`;
+    }).join('');
+    const tv = tot[key]||0;
+    return `<tr class="rs-data" style="cursor:pointer" onclick="toggleGrp('${cls}',this)"><td style="padding-left:22px"><span class="grp-ic" style="display:inline-block;width:13px;color:#94a3b8">▸</span>${label}</td>${cells}<td class="tc">${tv?`(${fmt(tv)})`:'—'}</td></tr>`;
+  };
+  const subRow = (label, key, cls) => {
+    const cells = MONTHS.map(m => {
+      const v = pm[m][key]||0;
+      return `<td>${v ? `(${fmt(v)})` : '—'}</td>`;
+    }).join('');
+    const tv = tot[key]||0;
+    return `<tr class="rs-data grp-${cls}" style="display:none"><td style="padding-left:36px;color:#64748b;font-size:11.5px">${label}</td>${cells}<td class="tc" style="color:#94a3b8">${tv?`(${fmt(tv)})`:'—'}</td></tr>`;
   };
   const sumRow = (label, key, cls='rs-fin') => {
     const cells = MONTHS.map(m => `<td>${fmt(pm[m][key]||0)}</td>`).join('');
@@ -1194,10 +1232,30 @@ async function buildDDS() {
 
   html += hdr('ВЫПЛАТЫ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ', 'rs-sub');
   html += dRow('(-) Поставщикам — закупки товаров  [1С, Приход]', 'cogs', true, true);
-  html += dRow('(-) ФОТ + Налоги с зарплаты + Наёмники', 'fot', true, true);
-  html += dRow('(-) Аренда и коммунальные', 'rent', true, true);
-  html += dRow('(-) Коммерческие (шашу, авторасх., команд., маркетинг, проч.)', 'com', true, true);
-  html += dRow('(-) Прочие операц. (ОС, упаковка, логистика, комиссии)', 'other', true, true);
+  html += grpRow('(-) ФОТ + Налоги с зарплаты + Наёмники', 'fot', 'dds-fot');
+  html += subRow('Зарплата', 'fotZp', 'dds-fot');
+  html += subRow('Авансы', 'fotAv', 'dds-fot');
+  html += subRow('Наёмники', 'fotNaem', 'dds-fot');
+  html += subRow('Налоги с ФОТ', 'fotTax', 'dds-fot');
+  html += grpRow('(-) Аренда и коммунальные', 'rent', 'dds-rent');
+  html += subRow('Аренда', 'rentA', 'dds-rent');
+  html += subRow('Коммунальные платежи', 'rentB', 'dds-rent');
+  html += grpRow('(-) Коммерческие расходы', 'com', 'dds-com');
+  html += subRow('Шашу — бонусы ретейлерам', 'cShashu', 'dds-com');
+  html += subRow('Kaspi бонусы клиентам', 'cKasp', 'dds-com');
+  html += subRow('Маркетинг и реклама', 'cMark', 'dds-com');
+  html += subRow('Командировочные', 'cKom', 'dds-com');
+  html += subRow('Авторасходы', 'cAvto', 'dds-com');
+  html += subRow('Обед / питание', 'cObed', 'dds-com');
+  html += subRow('Услуги', 'cUsl', 'dds-com');
+  html += subRow('Компенсация', 'cKomp', 'dds-com');
+  html += subRow('Канц. товары', 'cKanc', 'dds-com');
+  html += subRow('Прочее', 'cOther', 'dds-com');
+  html += grpRow('(-) Прочие операционные', 'other', 'dds-other');
+  html += subRow('ОС / Лизинг', 'oOs', 'dds-other');
+  html += subRow('Упаковочные материалы', 'oUpk', 'dds-other');
+  html += subRow('Логистика', 'oLog', 'dds-other');
+  html += subRow('Банковские комиссии', 'oKom', 'dds-other');
   html += sumRow('ИТОГО ВЫПЛАТЫ ОПЕРАЦИОННЫЕ', 'opOut', 'rs-sub2');
   html += sumRow('ОПЕРАЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК', 'opFlow', 'rs-op');
 
@@ -1250,13 +1308,21 @@ async function buildOPIU() {
   const calc = m => {
     const rev=revM[m]||0, cogs=cogsM[m]||0, gp=rev-cogs;
     const kom=C(m,'комиссия'), log_=C(m,'логистика'), upk=C(m,'упаковка'), varE=kom+log_+upk, mp=gp-varE;
-    const rent=C(m,'аренда','ком платежи'), fot=C(m,'зарплата','аванс'), tax=C(m,'налоги'), os_=C(m,'ос');
-    const fix=rent+fot+tax+os_, op=mp-fix;
-    const com=C(m,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','наемники','прочее');
-    const ebit=op-com;
+    const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rent=rentA+rentB;
+    const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fot=fotZp+fotAv;
+    const naem=C(m,'наемники'), tax=C(m,'налоги'), os_=C(m,'ос');
+    const fix=rent+fot+naem+tax+os_, op=mp-fix;
+    const kasp=C(m,'kaspi бонусы'), mark=C(m,'маркетинг');
+    const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
+          cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
+          cKanc=C(m,'канц товары','конц товары'), cOther=C(m,'прочее');
+    const com=cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cOther;
+    const comTotal=com+kasp+mark;
+    const ebit=op-comTotal;
     const shef=C(m,'шеф'), das=C(m,'дастан'), erk=C(m,'еркин'), own=shef+das+erk, net=ebit-own;
     const cred=C(m,'кредит');
-    return {rev,cogs,gp,kom,log:log_,upk,varE,mp,rent,fot,tax,os:os_,fix,op,com,ebit,shef,das,erk,own,net,cred};
+    return {rev,cogs,gp,kom,log:log_,upk,varE,mp,rentA,rentB,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
+            kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred};
   };
 
   const pm = {};
@@ -1299,6 +1365,22 @@ async function buildOPIU() {
     }).join('');
     const tc = multi ? (() => { const tv=tot[key]||0; return `<td class="tc">${tv ? (neg && tv>0 ? `(${fmt(tv)})` : fmt(tv)) : '—'}</td>`; })() : '';
     return `<tr class="rs-data"><td style="${indent?'padding-left:22px':''}">${label}</td>${cells}${tc}</tr>`;
+  };
+  const grpRow = (label, key, cls) => {
+    const cells = cols.map(m => {
+      const v = pm[m][key]||0;
+      return `<td>${v ? `(${fmt(v)})` : '—'}</td>`;
+    }).join('');
+    const tc = multi ? (() => { const tv=tot[key]||0; return `<td class="tc">${tv?`(${fmt(tv)})`:'—'}</td>`; })() : '';
+    return `<tr class="rs-data" style="cursor:pointer" onclick="toggleGrp('${cls}',this)"><td style="padding-left:22px"><span class="grp-ic" style="display:inline-block;width:13px;color:#94a3b8">▸</span>${label}</td>${cells}${tc}</tr>`;
+  };
+  const subRow = (label, key, cls) => {
+    const cells = cols.map(m => {
+      const v = pm[m][key]||0;
+      return `<td>${v ? `(${fmt(v)})` : '—'}</td>`;
+    }).join('');
+    const tc = multi ? (() => { const tv=tot[key]||0; return `<td class="tc" style="color:#94a3b8">${tv?`(${fmt(tv)})`:'—'}</td>`; })() : '';
+    return `<tr class="rs-data grp-${cls}" style="display:none"><td style="padding-left:36px;color:#64748b;font-size:11.5px">${label}</td>${cells}${tc}</tr>`;
   };
   const profRow = (label, key, cls='rs-profit') => {
     const cells = cols.map(m => `<td>${fmt(pm[m][key]||0)}</td>`).join('');
@@ -1349,8 +1431,13 @@ async function buildOPIU() {
 
   // III. ПОСТОЯННЫЕ
   html += hdr('III.  ПОСТОЯННЫЕ РАСХОДЫ  →  ОПЕРАЦИОННАЯ ПРИБЫЛЬ', 'rs-sub');
-  html += dRow('(-) Аренда и коммунальные платежи', 'rent', true, true);
-  html += dRow('(-) ФОТ (зарплата + авансы)', 'fot', true, true);
+  html += grpRow('(-) Аренда и коммунальные платежи', 'rent', 'opiu-rent');
+  html += subRow('Аренда', 'rentA', 'opiu-rent');
+  html += subRow('Коммунальные платежи', 'rentB', 'opiu-rent');
+  html += grpRow('(-) ФОТ (зарплата + авансы)', 'fot', 'opiu-fot');
+  html += subRow('Зарплата', 'fotZp', 'opiu-fot');
+  html += subRow('Авансы', 'fotAv', 'opiu-fot');
+  html += dRow('(-) Наёмники', 'naem', true, true);
   html += dRow('(-) Налоги и социальные взносы', 'tax', true, true);
   html += dRow('(-) ОС / Лизинг', 'os', true, true);
   html += profRow('▶  ОПЕРАЦИОННАЯ ПРИБЫЛЬ', 'op', 'rs-op');
@@ -1358,7 +1445,17 @@ async function buildOPIU() {
 
   // IV. КОММЕРЧЕСКИЕ
   html += hdr('IV.  КОММЕРЧЕСКИЕ РАСХОДЫ  →  EBIT (прибыль до вывода собственников)', 'rs-sub');
-  html += dRow('(-) Шашу / Бонусы / Маркетинг / Авторасходы / Командировоч. / Проч.', 'com', true, true);
+  html += grpRow('(-) Шашу / Командировочные / Авторасходы / Проч.', 'com', 'opiu-com');
+  html += subRow('Шашу — бонусы ретейлерам', 'cShashu', 'opiu-com');
+  html += subRow('Командировочные расходы', 'cKom', 'opiu-com');
+  html += subRow('Авторасходы', 'cAvto', 'opiu-com');
+  html += subRow('Обед / питание', 'cObed', 'opiu-com');
+  html += subRow('Услуги', 'cUsl', 'opiu-com');
+  html += subRow('Компенсация', 'cKomp', 'opiu-com');
+  html += subRow('Канц. товары', 'cKanc', 'opiu-com');
+  html += subRow('Прочее', 'cOther', 'opiu-com');
+  html += dRow('(-) Kaspi бонусы клиентам', 'kasp', true, true);
+  html += dRow('(-) Маркетинг и реклама', 'mark', true, true);
   html += profRow('▶  EBIT  (прибыль до вывода)', 'ebit', 'rs-ebit');
 
   // V. ВЫВОД СОБСТВЕННИКА
