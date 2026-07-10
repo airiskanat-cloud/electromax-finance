@@ -325,6 +325,7 @@
               <option value="компенсация">Компенсация</option>
               <option value="бонусы">Бонусы клиентам</option>
               <option value="маркетинг">Маркетинг и реклама</option>
+              <option value="уборка">Уборка</option>
               <option value="наемники">Наёмники</option>
               <option value="услуги">Услуги</option>
               <option value="шашу">Шашу (реклама)</option>
@@ -556,6 +557,7 @@ const CATEGORY_MAP = {
   'компенсация':     { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'бонусы':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'маркетинг':       { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'уборка':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'наемники':        { dds: 'Операционная', opiu: 'ФОТ' },
   'услуги':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'шашу':            { dds: 'Операционная', opiu: 'Коммерческие расходы' },
@@ -1140,9 +1142,9 @@ async function buildDDS() {
     const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rent=rentA+rentB;
     const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
           cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
-          cKanc=C(m,'канц товары','конц товары'), cOther=C(m,'прочее'),
+          cKanc=C(m,'канц товары','конц товары'), cUborka=C(m,'уборка'), cOther=C(m,'прочее'),
           cKasp=C(m,'бонусы'), cMark=C(m,'маркетинг');
-    const com  = cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cOther+cKasp+cMark;
+    const com  = cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther+cKasp+cMark;
     const oOs=C(m,'ос'), oUpk=C(m,'упаковка'), oLog=C(m,'логистика'), oKom=C(m,'комиссия');
     const other= oOs+oUpk+oLog+oKom;
     const opOut = cogs + fot + rent + com + other;
@@ -1153,7 +1155,7 @@ async function buildDDS() {
     const finOut = own + cred;
     const netFlow = opFlow - finOut;
     return {rev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rent,
-            cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cOther,cKasp,cMark,com,
+            cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,cKasp,cMark,com,
             oOs,oUpk,oLog,oKom,other,
             opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
   };
@@ -1250,6 +1252,7 @@ async function buildDDS() {
   html += subRow('Услуги', 'cUsl', 'dds-com');
   html += subRow('Компенсация', 'cKomp', 'dds-com');
   html += subRow('Канц. товары', 'cKanc', 'dds-com');
+  html += subRow('Уборка', 'cUborka', 'dds-com');
   html += subRow('Прочее', 'cOther', 'dds-com');
   html += grpRow('(-) Прочие операционные', 'other', 'dds-other');
   html += subRow('ОС / Лизинг', 'oOs', 'dds-other');
@@ -1315,14 +1318,14 @@ async function buildOPIU() {
     const kasp=C(m,'бонусы'), mark=C(m,'маркетинг');
     const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
           cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
-          cKanc=C(m,'канц товары','конц товары'), cOther=C(m,'прочее');
-    const com=cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cOther;
+          cKanc=C(m,'канц товары','конц товары'), cUborka=C(m,'уборка'), cOther=C(m,'прочее');
+    const com=cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther;
     const comTotal=com+kasp+mark;
     const ebit=op-comTotal;
     const shef=C(m,'шеф'), das=C(m,'дастан'), erk=C(m,'еркин'), own=shef+das+erk, net=ebit-own;
     const cred=C(m,'кредит');
     return {rev,cogs,gp,kom,log:log_,upk,varE,mp,rentA,rentB,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
-            kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred};
+            kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred};
   };
 
   const pm = {};
@@ -1453,6 +1456,7 @@ async function buildOPIU() {
   html += subRow('Услуги', 'cUsl', 'opiu-com');
   html += subRow('Компенсация', 'cKomp', 'opiu-com');
   html += subRow('Канц. товары', 'cKanc', 'opiu-com');
+  html += subRow('Уборка', 'cUborka', 'opiu-com');
   html += subRow('Прочее', 'cOther', 'opiu-com');
   html += dRow('(-) Бонусы клиентам', 'kasp', true, true);
   html += dRow('(-) Маркетинг и реклама', 'mark', true, true);
