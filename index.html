@@ -1569,8 +1569,12 @@ function parse1CFile(file) {
 
           const week  = getISOWeek(date);
           const month = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
-          if (!byWeek[week]) byWeek[week] = { month, cities: {} };
-          byWeek[week].cities[city] = (byWeek[week].cities[city] || 0) + amount;
+          // ВАЖНО: ключ = неделя+месяц. Если неделя пересекает границу месяца,
+          // её выручка корректно делится между двумя месяцами по фактической дате каждой строки
+          // (раньше весь период недели ошибочно относился к месяцу первой встреченной строки).
+          const key = week + '|' + month;
+          if (!byWeek[key]) byWeek[key] = { week, month, cities: {} };
+          byWeek[key].cities[city] = (byWeek[key].cities[city] || 0) + amount;
           rowCount++;
         }
 
@@ -1598,10 +1602,10 @@ async function processUploadedFiles(files) {
   _mergedData = { sales: {}, purchases: {} };
   results.filter(r => !r.error).forEach(r => {
     const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
-    Object.entries(r.byWeek).forEach(([wk, {month, cities}]) => {
-      if (!target[wk]) target[wk] = { month, cities: {} };
+    Object.entries(r.byWeek).forEach(([key, {week, month, cities}]) => {
+      if (!target[key]) target[key] = { week, month, cities: {} };
       Object.entries(cities).forEach(([city, amt]) => {
-        target[wk].cities[city] = (target[wk].cities[city] || 0) + amt;
+        target[key].cities[city] = (target[key].cities[city] || 0) + amt;
       });
     });
   });
@@ -1621,7 +1625,7 @@ async function processUploadedFiles(files) {
     } else {
       const lbl = r.fileType === 'sales' ? '📊 Продажи' : '📦 Приход (Себестоимость)';
       const total = Object.values(r.byWeek).reduce((s,{cities}) => s + Object.values(cities).reduce((a,b)=>a+b,0), 0);
-      const weeks = Object.keys(r.byWeek).sort().map(weekLabel).join(', ');
+      const weeks = [...new Set(Object.keys(r.byWeek).map(weekLabel))].sort().join(', ');
       html += `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <b style="color:#14532d;font-size:13px">${lbl} · ${r.name}</b>
@@ -1692,14 +1696,14 @@ async function confirmAndSave() {
 
   // Разворачиваем в массивы строк
   const flatSales = [];
-  Object.entries(_mergedData.sales).forEach(([week, {month, cities}]) => {
+  Object.entries(_mergedData.sales).forEach(([key, {week, month, cities}]) => {
     Object.entries(cities).forEach(([city, revenue]) => {
       flatSales.push({ week, month, city, revenue: Math.round(revenue), source: 'загрузка 1С' });
     });
   });
 
   const flatPurchases = [];
-  Object.entries(_mergedData.purchases).forEach(([week, {month, cities}]) => {
+  Object.entries(_mergedData.purchases).forEach(([key, {week, month, cities}]) => {
     Object.entries(cities).forEach(([city, cogs]) => {
       flatPurchases.push({ week, month, city, cogs: Math.round(cogs), source: 'загрузка 1С' });
     });
