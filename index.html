@@ -323,7 +323,7 @@
               <option value="канц товары">Канц. товары</option>
               <option value="обед">Обед / питание</option>
               <option value="компенсация">Компенсация</option>
-              <option value="kaspi бонусы">Kaspi бонусы клиентам</option>
+              <option value="бонусы">Бонусы клиентам</option>
               <option value="маркетинг">Маркетинг и реклама</option>
               <option value="наемники">Наёмники</option>
               <option value="услуги">Услуги</option>
@@ -554,7 +554,7 @@ const CATEGORY_MAP = {
   'канц товары':     { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'обед':            { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'компенсация':     { dds: 'Операционная', opiu: 'Коммерческие расходы' },
-  'kaspi бонусы':    { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'бонусы':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'маркетинг':       { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'наемники':        { dds: 'Операционная', opiu: 'ФОТ' },
   'услуги':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
@@ -791,7 +791,7 @@ async function buildDashboard() {
     const mp=gp-varE;
     const fix=C(mo,'аренда','ком платежи','зарплата','аванс','наемники','налоги','ос');
     const op=mp-fix;
-    const com=C(mo,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','kaspi бонусы','маркетинг','прочее');
+    const com=C(mo,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','бонусы','маркетинг','прочее');
     const ebit=op-com;
     const own=C(mo,'шеф','дастан','еркин');
     const net=ebit-own;
@@ -1141,7 +1141,7 @@ async function buildDDS() {
     const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
           cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
           cKanc=C(m,'канц товары','конц товары'), cOther=C(m,'прочее'),
-          cKasp=C(m,'kaspi бонусы'), cMark=C(m,'маркетинг');
+          cKasp=C(m,'бонусы'), cMark=C(m,'маркетинг');
     const com  = cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cOther+cKasp+cMark;
     const oOs=C(m,'ос'), oUpk=C(m,'упаковка'), oLog=C(m,'логистика'), oKom=C(m,'комиссия');
     const other= oOs+oUpk+oLog+oKom;
@@ -1242,7 +1242,7 @@ async function buildDDS() {
   html += subRow('Коммунальные платежи', 'rentB', 'dds-rent');
   html += grpRow('(-) Коммерческие расходы', 'com', 'dds-com');
   html += subRow('Шашу — бонусы ретейлерам', 'cShashu', 'dds-com');
-  html += subRow('Kaspi бонусы клиентам', 'cKasp', 'dds-com');
+  html += subRow('Бонусы клиентам', 'cKasp', 'dds-com');
   html += subRow('Маркетинг и реклама', 'cMark', 'dds-com');
   html += subRow('Командировочные', 'cKom', 'dds-com');
   html += subRow('Авторасходы', 'cAvto', 'dds-com');
@@ -1312,7 +1312,7 @@ async function buildOPIU() {
     const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fot=fotZp+fotAv;
     const naem=C(m,'наемники'), tax=C(m,'налоги'), os_=C(m,'ос');
     const fix=rent+fot+naem+tax+os_, op=mp-fix;
-    const kasp=C(m,'kaspi бонусы'), mark=C(m,'маркетинг');
+    const kasp=C(m,'бонусы'), mark=C(m,'маркетинг');
     const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
           cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
           cKanc=C(m,'канц товары','конц товары'), cOther=C(m,'прочее');
@@ -1454,7 +1454,7 @@ async function buildOPIU() {
   html += subRow('Компенсация', 'cKomp', 'opiu-com');
   html += subRow('Канц. товары', 'cKanc', 'opiu-com');
   html += subRow('Прочее', 'cOther', 'opiu-com');
-  html += dRow('(-) Kaspi бонусы клиентам', 'kasp', true, true);
+  html += dRow('(-) Бонусы клиентам', 'kasp', true, true);
   html += dRow('(-) Маркетинг и реклама', 'mark', true, true);
   html += profRow('▶  EBIT  (прибыль до вывода)', 'ebit', 'rs-ebit');
 
