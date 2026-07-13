@@ -116,6 +116,7 @@
   .badge { padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; }
   .badge-expense { background: #fef2f2; color: #dc2626; }
   .badge-income { background: #f0fdf4; color: #16a34a; }
+  .badge-transfer { background: #f5f3ff; color: #7c3aed; }
   .badge-transfer { background: #eef2ff; color: #6366f1; }
   .amount-expense { color: #dc2626; font-weight: 600; }
   .amount-income { color: #16a34a; font-weight: 600; }
@@ -215,7 +216,7 @@
   </div>
   <div class="main">
     <div class="page active" id="page-dashboard">
-      <div class="page-title">Финансовое табло — ElectroMax H1 2026</div>
+      <div class="page-title">Финансовое табло — ElectroMax</div>
       <div id="dashboard-content"><div class="loading"><div class="spinner"></div>Загрузка дашборда...</div></div>
     </div>
     <div class="page" id="page-load">
@@ -400,6 +401,44 @@
             <input type="text" id="f-kaspi-holder-other" placeholder="Введите имя">
           </div>
         </div>
+        <div class="form-row" id="field-to-account-row" style="display:none">
+          <div class="field">
+            <label>Счёт получателя <span class="required">*</span></label>
+            <select id="f-to-account" onchange="toggleToAccountOther()">
+              <option value="">— Выберите счёт —</option>
+              <option value="ТОО Phonehouse">ТОО Phonehouse</option>
+              <option value="ТОО СТД">ТОО СТД</option>
+              <option value="ТОО Elektro">ТОО Elektro</option>
+              <option value="ТОО Technovision Holding">ТОО Technovision Holding</option>
+              <option value="ТОО Technovision">ТОО Technovision</option>
+              <option value="БЦК Phonehouse">БЦК Phonehouse</option>
+              <option value="БЦК СТД">БЦК СТД</option>
+              <option value="БЦК Elektro">БЦК Elektro</option>
+              <option value="БЦК Technovision Holding">БЦК Technovision Holding</option>
+              <option value="Счёт Халык СТД">Счёт Халык СТД</option>
+              <option value="Счёт Жусан СТД">Счёт Жусан СТД</option>
+              <option value="Счёт Форте СТД">Счёт Форте СТД</option>
+              <option value="ИП АМДК">ИП АМДК</option>
+              <option value="Касса нал Алматы">Касса нал Алматы</option>
+              <option value="Касса нал Астана">Касса нал Астана</option>
+              <option value="Касса нал Шымкент">Касса нал Шымкент</option>
+              <option value="Каспи — Темирлан">Каспи — Темирлан</option>
+              <option value="Каспи — Актоты">Каспи — Актоты</option>
+              <option value="Каспи — Дастан">Каспи — Дастан</option>
+              <option value="Каспи — Аружан">Каспи — Аружан</option>
+              <option value="Каспи — Аббас">Каспи — Аббас</option>
+              <option value="Каспи — Алихан">Каспи — Алихан</option>
+              <option value="Каспи — Айсултан">Каспи — Айсултан</option>
+              <option value="Каспи — Аяжан">Каспи — Аяжан</option>
+              <option value="Каспи — Камран">Каспи — Камран</option>
+              <option value="Другой">Другой (не из списка)</option>
+            </select>
+          </div>
+          <div class="field" id="field-to-account-other" style="display:none">
+            <label>Название счёта / кому</label>
+            <input type="text" id="f-to-account-other" placeholder="Например: Беглан">
+          </div>
+        </div>
         <div class="form-row triple">
           <div class="field">
             <label>Город</label>
@@ -526,13 +565,7 @@
           <div class="field">
             <label>Период</label>
             <select id="opiu-period">
-              <option value="2026">Весь 2026 (Январь — 14 Июня)</option>
-              <option value="2026-01">Январь 2026</option>
-              <option value="2026-02">Февраль 2026</option>
-              <option value="2026-03">Март 2026</option>
-              <option value="2026-04">Апрель 2026</option>
-              <option value="2026-05">Май 2026</option>
-              <option value="2026-06">Июнь 2026 (до 14-го)</option>
+              <option value="all">Весь период</option>
             </select>
           </div>
           <div class="field" style="display:flex;align-items:flex-end;">
@@ -666,36 +699,148 @@ async function loadData() {
     const d2 = await r2.json();
     openingBalances = d2.items || [];
   } catch(e) { openingBalances = []; }
+  await refreshMonthPickers();
   buildDashboard(); renderBalances();
 }
 
-// Остаток СТРОГО ДО указанной даты (date < beforeDate), по строкам allData,
-// прошедшим matchFn(row) => bool. Если заведены НачальныеОстатки и
-// beforeDate позже даты старта — берём их за базу и досчитываем только
-// движения после даты старта. Иначе — считаем всю историю, как раньше.
-function balanceBefore(beforeDate, matchFn) {
-  if (openingBalances.length && beforeDate > OPENING_BASE_DATE) {
-    const seed = openingBalances.filter(matchFn).reduce((s,o)=>s+(+o.balance||0),0);
-    const extra = allData.filter(r => r.type!=='перевод' && r.date > OPENING_BASE_DATE && r.date < beforeDate && matchFn(r))
-      .reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
-    return seed + extra;
+// Полный список известных счетов приложения — используется, чтобы отличить
+// "внутренний" перевод (между двумя своими счетами, нейтрален для общего
+// итога) от "внешнего" (получатель не из списка — деньги реально ушли).
+const KNOWN_ACCOUNTS = [
+  'ТОО Phonehouse','ТОО СТД','ТОО Elektro','ТОО Technovision Holding','ТОО Technovision',
+  'БЦК Phonehouse','БЦК СТД','БЦК Elektro','БЦК Technovision Holding',
+  'Счёт Халык СТД','Счёт Жусан СТД','Счёт Форте СТД','ИП АМДК',
+  'Касса нал Алматы','Касса нал Астана','Касса нал Шымкент',
+  'Каспи — Темирлан','Каспи — Актоты','Каспи — Дастан','Каспи — Аружан',
+  'Каспи — Аббас','Каспи — Алихан','Каспи — Айсултан','Каспи — Аяжан','Каспи — Камран'
+];
+
+// Подписанная сумма движения одной строки Журнала с точки зрения:
+//  mode='account' — конкретного счёта target (движение по нему одному)
+//  mode='city'    — конкретного города target (переводы в разрезе городов не участвуют)
+//  mode='total'   — компании в целом (перевод между двумя своими счетами = 0,
+//                    перевод без известного получателя = деньги ушли, минус)
+function movementAmount(row, mode, target) {
+  const amt = +row.amount || 0;
+  if (mode === 'account') {
+    if (row.type === 'доход')  return row.account === target ? amt : 0;
+    if (row.type === 'расход') return row.account === target ? -amt : 0;
+    if (row.type === 'перевод') {
+      let v = 0;
+      if (row.account === target) v -= amt;
+      if (row.to_account === target) v += amt;
+      return v;
+    }
+    return 0;
   }
-  return allData.filter(r => r.type!=='перевод' && r.date < beforeDate && matchFn(r))
-    .reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+  if (mode === 'city') {
+    if (row.type === 'доход')  return row.city === target ? amt : 0;
+    if (row.type === 'расход') return row.city === target ? -amt : 0;
+    return 0;
+  }
+  // total
+  if (row.type === 'доход')  return amt;
+  if (row.type === 'расход') return -amt;
+  if (row.type === 'перевод') {
+    const internal = row.to_account && KNOWN_ACCOUNTS.includes(row.to_account);
+    return internal ? 0 : -amt;
+  }
+  return 0;
 }
 
-// Остаток ВКЛЮЧАЯ указанную дату (date <= throughDate) — та же логика.
-function balanceThrough(throughDate, matchFn) {
-  if (openingBalances.length && throughDate >= OPENING_BASE_DATE) {
-    const seed = openingBalances.filter(matchFn).reduce((s,o)=>s+(+o.balance||0),0);
-    const extra = allData.filter(r => r.type!=='перевод' && r.date > OPENING_BASE_DATE && r.date <= throughDate && matchFn(r))
-      .reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
-    return seed + extra;
+// Разбивка приход/расход по набору строк (для конкретного счёта/итога) —
+// с учётом переводов через movementAmount.
+function flowSplit(rows, mode, target) {
+  let inn = 0, out = 0;
+  rows.forEach(r => {
+    const v = movementAmount(r, mode, target);
+    if (v > 0) inn += v; else out += -v;
+  });
+  return { in: inn, out: out };
+}
+
+function seedSum(mode, target) {
+  if (!openingBalances.length) return 0;
+  const test = mode === 'account' ? (o => o.account === target)
+             : mode === 'city'    ? (o => o.city === target)
+             : (() => true);
+  return openingBalances.filter(test).reduce((s,o)=>s+(+o.balance||0),0);
+}
+
+// Остаток СТРОГО ДО указанной даты. Если заведены НачальныеОстатки и
+// beforeDate позже даты старта — берём их за базу и досчитываем только
+// движения после даты старта. Иначе — считаем всю историю, как раньше.
+function balanceBefore(beforeDate, mode, target) {
+  if (openingBalances.length && beforeDate > OPENING_BASE_DATE) {
+    const extra = allData.filter(r => r.date > OPENING_BASE_DATE && r.date < beforeDate)
+      .reduce((s,r)=>s+movementAmount(r, mode, target),0);
+    return seedSum(mode, target) + extra;
   }
-  return allData.filter(r => r.type!=='перевод' && r.date <= throughDate && matchFn(r))
-    .reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+  return allData.filter(r => r.date < beforeDate)
+    .reduce((s,r)=>s+movementAmount(r, mode, target),0);
+}
+
+// Остаток ВКЛЮЧАЯ указанную дату — та же логика.
+function balanceThrough(throughDate, mode, target) {
+  if (openingBalances.length && throughDate >= OPENING_BASE_DATE) {
+    const extra = allData.filter(r => r.date > OPENING_BASE_DATE && r.date <= throughDate)
+      .reduce((s,r)=>s+movementAmount(r, mode, target),0);
+    return seedSum(mode, target) + extra;
+  }
+  return allData.filter(r => r.date <= throughDate)
+    .reduce((s,r)=>s+movementAmount(r, mode, target),0);
 }
 const BALANCE_TODAY_SENTINEL = '9999-12-31';
+
+// ── ДИНАМИЧЕСКИЕ МЕСЯЦЫ ─────────────────────────────
+// Раньше список месяцев был захардкожен (Январь—Июнь 2026), из-за чего
+// новые месяцы (Июль и далее) не появлялись в ОПИУ/ДДС/Дашборде без правки
+// кода. Теперь месяцы определяются автоматически по реальным данным —
+// 1С (выручка/себестоимость) и Журнал (любые операции).
+const RU_MONTH_FULL  = {'01':'Январь','02':'Февраль','03':'Март','04':'Апрель','05':'Май','06':'Июнь','07':'Июль','08':'Август','09':'Сентябрь','10':'Октябрь','11':'Ноябрь','12':'Декабрь'};
+const RU_MONTH_SHORT = {'01':'Янв','02':'Фев','03':'Мар','04':'Апр','05':'Май','06':'Июн','07':'Июл','08':'Авг','09':'Сен','10':'Окт','11':'Ноя','12':'Дек'};
+function monthLabel(m, short) {
+  const mo = String(m||'').slice(5,7), y = String(m||'').slice(0,4);
+  const name = short ? RU_MONTH_SHORT[mo] : RU_MONTH_FULL[mo];
+  return name ? (short ? name : name + ' ' + y) : m;
+}
+// Возвращает отсортированный список месяцев 'YYYY-MM', по которым есть хоть
+// какие-то данные — 1С (revM/cogsM, передаются при наличии) и/или Журнал.
+function getAvailableMonths(revM, cogsM) {
+  const set = new Set();
+  Object.keys(revM||{}).forEach(m => set.add(m));
+  Object.keys(cogsM||{}).forEach(m => set.add(m));
+  allData.forEach(r => { if (r.date && r.date.length >= 7) set.add(r.date.slice(0,7)); });
+  const arr = [...set].filter(Boolean).sort();
+  return arr.length ? arr : ['2026-01']; // страховка от пустого списка
+}
+// Синхронизирует period-select ОПИУ и month-picker ДДС Месяц с реально
+// доступными месяцами. Вызывается после каждой загрузки данных.
+async function refreshMonthPickers() {
+  let revM = {}, cogsM = {};
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=get1CData');
+    const d = await r.json();
+    (d.sales||[]).forEach(s => { if (s.month) revM[s.month] = 1; });
+    (d.purchases||[]).forEach(s => { if (s.month) cogsM[s.month] = 1; });
+  } catch(e) {}
+  const months = getAvailableMonths(revM, cogsM);
+  const sel = document.getElementById('opiu-period');
+  if (sel) {
+    const prev = sel.value;
+    sel.innerHTML = '<option value="all">Весь период (' + monthLabel(months[0]) + ' — ' + monthLabel(months[months.length-1]) + ')</option>' +
+      months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+    sel.value = (prev && (prev === 'all' || months.includes(prev))) ? prev : 'all';
+  }
+  const picker = document.getElementById('dds-month-pick');
+  if (picker) {
+    picker.min = months[0];
+    picker.max = months[months.length-1];
+    if (!picker.value || picker.value < months[0] || picker.value > months[months.length-1]) {
+      picker.value = months[months.length-1];
+    }
+  }
+}
 
 async function refreshData() {
   showToast('Обновляю данные...', 'success');
@@ -713,6 +858,12 @@ function setType(t) {
   document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
   const map = { расход:'expense', доход:'income', перевод:'transfer' };
   document.querySelector('.type-btn.' + map[t]).classList.add('active');
+  document.getElementById('field-to-account-row').style.display = t === 'перевод' ? 'grid' : 'none';
+}
+
+function toggleToAccountOther() {
+  const v = document.getElementById('f-to-account').value;
+  document.getElementById('field-to-account-other').style.display = v === 'Другой' ? 'block' : 'none';
 }
 
 function toggleAccountFields() {
@@ -765,10 +916,19 @@ async function saveOperation() {
       account = phys;
     }
   }
+  const opType = document.getElementById('f-type').value;
+  let toAccount = '';
+  if (opType === 'перевод') {
+    toAccount = document.getElementById('f-to-account').value;
+    if (toAccount === 'Другой') toAccount = document.getElementById('f-to-account-other').value.trim();
+    if (!toAccount) { showToast('Выберите счёт получателя', 'error'); return; }
+    if (toAccount === account) { showToast('Счёт получателя совпадает со счётом-источником', 'error'); return; }
+  }
   const m = CATEGORY_MAP[category] || { dds: 'Операционная', opiu: '' };
   const row = {
-    date, type: document.getElementById('f-type').value,
+    date, type: opType,
     category, name, amount: parseFloat(amount), account,
+    to_account: toAccount,
     city: document.getElementById('f-city').value,
     responsible: document.getElementById('f-responsible').value,
     dds: m.dds, opiu: m.opiu,
@@ -820,8 +980,6 @@ async function buildDashboard() {
   _dc.forEach(c => { try { c.destroy(); } catch(e){} });
   _dc = [];
 
-  const MONTHS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
-  const MLBL   = ['Янв','Фев','Мар','Апр','Май','Июн'];
   const CITIES = ['Алматы','Астана','Шымкент'];
   const CITY_CLR = { 'Алматы':'#2563eb','Астана':'#0d9488','Шымкент':'#f59e0b' };
 
@@ -843,6 +1001,9 @@ async function buildDashboard() {
       if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
     });
   } catch(e) {}
+
+  const MONTHS = getAvailableMonths(revM, cogsM);
+  const MLBL   = MONTHS.map(m => monthLabel(m, true));
 
   // Expense aggregation: by month×category and by city×category
   const catM = {}, cityExp = {};
@@ -926,7 +1087,7 @@ async function buildDashboard() {
     </div>`;
 
   html += `<div class="kpi-strip">
-    ${card('Выручка H1 2026', tot.rev, noSales?'o':'', noSales?'⚠ нет данных 1С':'Январь — Июнь')}
+    ${card('Выручка за период', tot.rev, noSales?'o':'', noSales?'⚠ нет данных 1С':(monthLabel(MONTHS[0],true)+' — '+monthLabel(MONTHS[MONTHS.length-1],true)))}
     ${card('Валовая прибыль', tot.gp, 'g', pctOf(tot.gp,tot.rev)+' от выручки')}
     ${card('Операционная прибыль', tot.op, 't', pctOf(tot.op,tot.rev)+' от выручки')}
     ${card('EBIT (до вывода)', tot.ebit, tot.ebit>=0?'g':'o', pctOf(tot.ebit,tot.rev)+' от выручки')}
@@ -1118,9 +1279,8 @@ function renderBalances() {
   let html = '<div class="cards-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">';
   let total = 0;
   accounts.forEach(acc => {
-    const bal = balanceThrough(BALANCE_TODAY_SENTINEL, r => r.account === acc);
-    const inc = allData.filter(r=>r.account===acc&&r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
-    const exp = allData.filter(r=>r.account===acc&&r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+    const bal = balanceThrough(BALANCE_TODAY_SENTINEL, 'account', acc);
+    const { in: inc, out: exp } = flowSplit(allData, 'account', acc);
     total += bal;
     html += '<div class="card"><div class="card-label" style="font-size:11px">' + acc + '</div>' +
       '<div class="card-value ' + (bal>=0?'green':'red') + '" style="font-size:20px">' + fmt(bal) + ' ₸</div>' +
@@ -1182,9 +1342,6 @@ async function buildDDS() {
   const resultEl = document.getElementById('dds-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
-  const MONTHS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
-  const MLbl = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь'};
-
   const revM = {}, cogsM = {};
   try {
     const r = await fetch(SCRIPT_URL + '?action=get1CData');
@@ -1198,6 +1355,9 @@ async function buildDDS() {
       if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
     });
   } catch(e) {}
+
+  const MONTHS = getAvailableMonths(revM, cogsM);
+  const MLbl = {}; MONTHS.forEach(m => { MLbl[m] = RU_MONTH_FULL[m.slice(5,7)] || m; });
 
   const catM = {};
   allData.filter(r => r.type === 'расход').forEach(r => {
@@ -1290,7 +1450,7 @@ async function buildDDS() {
 
   html += `<div class="table-wrapper report-wrap">
     <div class="table-header">
-      <strong>ДДС — Январь — 14 Июня 2026</strong>
+      <strong>ДДС — ${monthLabel(MONTHS[0])} — ${monthLabel(MONTHS[MONTHS.length-1])}</strong>
       <span style="font-size:12px;color:#64748b">Косвенный метод (упрощённый) · KZT</span>
     </div>
     <table class="rt">
@@ -1298,7 +1458,7 @@ async function buildDDS() {
         <tr>
           <th>Статья</th>
           ${MONTHS.map(m=>`<th>${MLbl[m]}</th>`).join('')}
-          <th class="tc">ИТОГО H1 2026</th>
+          <th class="tc">ИТОГО</th>
         </tr>
       </thead>
       <tbody>`;
@@ -1354,11 +1514,6 @@ async function buildOPIU() {
   const resultEl = document.getElementById('opiu-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
-  const MONTHS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
-  const MLbl = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь'};
-  const cols  = period === '2026' ? MONTHS : MONTHS.filter(m => m === period);
-  const multi = cols.length > 1;
-
   const revM = {}, cogsM = {};
   try {
     const r = await fetch(SCRIPT_URL + '?action=get1CData');
@@ -1372,6 +1527,11 @@ async function buildOPIU() {
       if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
     });
   } catch(e) {}
+
+  const MONTHS = getAvailableMonths(revM, cogsM);
+  const MLbl = {}; MONTHS.forEach(m => { MLbl[m] = RU_MONTH_FULL[m.slice(5,7)] || m; });
+  const cols  = (period === 'all' || !period) ? MONTHS : MONTHS.filter(m => m === period);
+  const multi = cols.length > 1;
 
   const catM = {};
   allData.filter(r => r.type==='расход').forEach(r => {
@@ -1426,7 +1586,7 @@ async function buildOPIU() {
     </div>`;
 
   let html = `<div class="kpi-strip">
-    ${kpiCard('Выручка H1 2026', tot.rev, '', '')}
+    ${kpiCard('Выручка за период', tot.rev, '', '')}
     ${kpiCard('Валовая прибыль', tot.gp, 'g', 'от выручки')}
     ${kpiCard('Маргинальная прибыль', tot.mp, 'g', 'от выручки')}
     ${kpiCard('Операционная прибыль', tot.op, 't', 'от выручки')}
@@ -1470,7 +1630,7 @@ async function buildOPIU() {
     const tc = multi ? `<td class="tc">${pctS(tot[numKey]||0, tot.rev||0)}</td>` : '';
     return `<tr class="rs-pct"><td style="padding-left:16px"><i>${label}</i></td>${cells}${tc}</tr>`;
   };
-  const periodLbl = multi ? 'Январь — 14 Июня 2026' : (MLbl[period]||period)+' 2026';
+  const periodLbl = multi ? (monthLabel(cols[0]) + ' — ' + monthLabel(cols[cols.length-1])) : monthLabel(period);
 
   html += `<div class="table-wrapper report-wrap">
     <div class="table-header">
@@ -1482,7 +1642,7 @@ async function buildOPIU() {
         <tr>
           <th>Статья / Показатель</th>
           ${cols.map(m=>`<th>${MLbl[m]}</th>`).join('')}
-          ${multi?'<th class="tc">ИТОГО H1 2026</th>':''}
+          ${multi?'<th class="tc">ИТОГО</th>':''}
         </tr>
         <tr>
           <th style="color:#94a3b8;font-size:10px">ед. KZT</th>
@@ -1937,7 +2097,7 @@ function buildDDSDaily() {
   if (!date) { showToast('Выберите дату', 'error'); return; }
   _ddsDailyCharts.forEach(c => { try { c.destroy(); } catch(e){} });
   _ddsDailyCharts = [];
-  const today = allData.filter(r => r.date === date && r.type !== 'перевод');
+  const today = allData.filter(r => r.date === date);
   const accounts = [...new Set([
     ...allData.map(r => r.account).filter(Boolean),
     ...openingBalances.map(o => o.account).filter(Boolean)
@@ -1947,9 +2107,8 @@ function buildDDSDaily() {
   const byAcc = {};
   let totalOpen=0, totalIn=0, totalOut=0;
   accounts.forEach(acc => {
-    const open = balanceBefore(date, r => r.account === acc);
-    const dayIn = today.filter(r=>r.account===acc&&r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
-    const dayOut = today.filter(r=>r.account===acc&&r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+    const open = balanceBefore(date, 'account', acc);
+    const { in: dayIn, out: dayOut } = flowSplit(today, 'account', acc);
     const close = open + dayIn - dayOut;
     byAcc[acc] = {open, dayIn, dayOut, close};
     totalOpen+=open; totalIn+=dayIn; totalOut+=dayOut;
@@ -2027,10 +2186,12 @@ function buildDDSDaily() {
     html += '<table><thead><tr><th>Тип</th><th>Счёт</th><th>Категория</th><th>Название</th><th>Сумма</th><th>Ответственный</th><th>ДДС блок</th></tr></thead><tbody>';
     today.sort((a,b)=>a.account>b.account?1:-1).forEach(r => {
       const isInc = r.type === 'доход';
-      html += '<tr><td><span class="badge badge-' + (isInc?'income':'expense') + '">' + r.type + '</span></td>' +
-        '<td style="font-size:12px">' + (r.account||'—') + '</td>' +
+      const isTransfer = r.type === 'перевод';
+      const acctLabel = isTransfer ? (r.account||'—') + ' → ' + (r.to_account||'?') : (r.account||'—');
+      html += '<tr><td><span class="badge badge-' + (isInc?'income':isTransfer?'transfer':'expense') + '">' + r.type + '</span></td>' +
+        '<td style="font-size:12px">' + acctLabel + '</td>' +
         '<td>' + (r.category||'—') + '</td><td>' + (r.name||'—') + '</td>' +
-        '<td style="font-weight:600;color:' + (isInc?'#16a34a':'#dc2626') + '">' + (isInc?'+':'−') + fmt(r.amount) + ' ₸</td>' +
+        '<td style="font-weight:600;color:' + (isInc?'#16a34a':isTransfer?'#7c3aed':'#dc2626') + '">' + (isInc?'+':isTransfer?'⇄':'−') + fmt(r.amount) + ' ₸</td>' +
         '<td>' + (r.responsible||'—') + '</td>' +
         '<td><span class="tag dds" style="font-size:11px">' + (r.dds||'—') + '</span></td></tr>';
     });
@@ -2085,7 +2246,7 @@ function cityDashboardBlock(month) {
   const stats = {};
   DDS_CITIES.forEach(city => {
     const within = allData.filter(r => r.type !== 'перевод' && r.city === city && r.date >= monthStart && r.date <= monthEnd);
-    const opening = balanceBefore(monthStart, r => r.city === city);
+    const opening = balanceBefore(monthStart, 'city', city);
     const inc = within.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
     const out = within.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
     stats[city] = { opening, inc, out, closing: opening + inc - out };
@@ -2124,20 +2285,19 @@ function buildDDSMonthDash() {
   const monthStart = month + '-01';
   const monthEnd = month + '-' + String(daysInMo).padStart(2,'0');
 
-  const relevant = allData.filter(r => r.type !== 'перевод');
-  const within = relevant.filter(r => r.date >= monthStart && r.date <= monthEnd);
+  const within = allData.filter(r => r.date >= monthStart && r.date <= monthEnd);
 
-  const opening = balanceBefore(monthStart, () => true);
-  const monthIn = within.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
-  const monthOut = within.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+  const opening = balanceBefore(monthStart, 'total', null);
+  const { in: monthIn, out: monthOut } = flowSplit(within, 'total', null);
   const closing = opening + monthIn - monthOut;
-  const currentTotal = balanceThrough(BALANCE_TODAY_SENTINEL, () => true);
+  const currentTotal = balanceThrough(BALANCE_TODAY_SENTINEL, 'total', null);
 
   const dayIn = {}, dayOut = {};
   within.forEach(r => {
     const d = +r.date.slice(8,10);
-    if (r.type==='доход') dayIn[d]=(dayIn[d]||0)+(+r.amount||0);
-    else if (r.type==='расход') dayOut[d]=(dayOut[d]||0)+(+r.amount||0);
+    const v = movementAmount(r, 'total', null);
+    if (v > 0) dayIn[d] = (dayIn[d]||0) + v;
+    else if (v < 0) dayOut[d] = (dayOut[d]||0) + (-v);
   });
   const days = Array.from({length:daysInMo}, (_,i)=>i+1);
   const hasData = within.length > 0 || opening !== 0;
