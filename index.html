@@ -767,28 +767,67 @@ function seedSum(mode, target) {
   return openingBalances.filter(test).reduce((s,o)=>s+(+o.balance||0),0);
 }
 
-// Остаток СТРОГО ДО указанной даты. Если заведены НачальныеОстатки и
-// beforeDate позже даты старта — берём их за базу и досчитываем только
-// движения после даты старта. Иначе — считаем всю историю, как раньше.
-function balanceBefore(beforeDate, mode, target) {
-  if (openingBalances.length && beforeDate > OPENING_BASE_DATE) {
-    const extra = allData.filter(r => r.date > OPENING_BASE_DATE && r.date < beforeDate)
-      .reduce((s,r)=>s+movementAmount(r, mode, target),0);
-    return seedSum(mode, target) + extra;
+// Засеян ли КОНКРЕТНЫЙ счёт/город начальным остатком (а не просто "есть ли
+// хоть один сид где-то"). Это важно: если сидированы только 20 канонических
+// счетов, все остальные (старые "счета"-имена вроде "Бека", "Дастан" и т.п.
+// из истории Журнала) должны по-прежнему считаться по всей истории — иначе
+// их данные до 30.06 просто пропадают из виду.
+function isSeededAccount(acc) { return openingBalances.some(o => o.account === acc); }
+function isSeededCity(city)   { return openingBalances.some(o => o.city === city); }
+
+// Общая логика остатка "на дату" (cmpDate — компаратор даты строки, задаёт
+// строго-до или включительно). Для каждого конкретного счёта/города решение
+// "брать сид + движения после даты старта" или "всю историю" принимается
+// ОТДЕЛЬНО, а не по общему флагу "сиды где-то заведены".
+function balanceGeneric(cmpDate, mode, target) {
+  if (mode === 'account') {
+    let sum = isSeededAccount(target) ? seedSum('account', target) : 0;
+    const counts = (accName, rowDate) => cmpDate(rowDate) && (isSeededAccount(accName) ? rowDate > OPENING_BASE_DATE : true);
+    allData.forEach(r => {
+      const amt = +r.amount || 0;
+      if (r.type === 'доход' && r.account === target && counts(target, r.date)) sum += amt;
+      else if (r.type === 'расход' && r.account === target && counts(target, r.date)) sum -= amt;
+      else if (r.type === 'перевод') {
+        if (r.account === target && counts(target, r.date)) sum -= amt;
+        if (r.to_account === target && counts(target, r.date)) sum += amt;
+      }
+    });
+    return sum;
   }
-  return allData.filter(r => r.date < beforeDate)
-    .reduce((s,r)=>s+movementAmount(r, mode, target),0);
+  if (mode === 'city') {
+    let sum = seedSum('city', target);
+    const counts = rowDate => cmpDate(rowDate) && (isSeededCity(target) ? rowDate > OPENING_BASE_DATE : true);
+    allData.forEach(r => {
+      if (r.city !== target) return;
+      const amt = +r.amount || 0;
+      if (r.type === 'доход' && counts(r.date)) sum += amt;
+      else if (r.type === 'расход' && counts(r.date)) sum -= amt;
+    });
+    return sum;
+  }
+  // total — по компании в целом: засеянные счета дают сид + движения после
+  // даты старта, незасеянные — всю свою историю, как раньше.
+  let sum = openingBalances.reduce((s,o) => s + (+o.balance||0), 0);
+  const counts = (accName, rowDate) => cmpDate(rowDate) && (isSeededAccount(accName) ? rowDate > OPENING_BASE_DATE : true);
+  allData.forEach(r => {
+    const amt = +r.amount || 0;
+    if (r.type === 'доход' && counts(r.account, r.date)) sum += amt;
+    else if (r.type === 'расход' && counts(r.account, r.date)) sum -= amt;
+    else if (r.type === 'перевод') {
+      if (counts(r.account, r.date)) sum -= amt;
+      if (r.to_account && KNOWN_ACCOUNTS.includes(r.to_account) && counts(r.to_account, r.date)) sum += amt;
+    }
+  });
+  return sum;
 }
 
-// Остаток ВКЛЮЧАЯ указанную дату — та же логика.
+// Остаток СТРОГО ДО указанной даты.
+function balanceBefore(beforeDate, mode, target) {
+  return balanceGeneric(d => d < beforeDate, mode, target);
+}
+// Остаток ВКЛЮЧАЯ указанную дату.
 function balanceThrough(throughDate, mode, target) {
-  if (openingBalances.length && throughDate >= OPENING_BASE_DATE) {
-    const extra = allData.filter(r => r.date > OPENING_BASE_DATE && r.date <= throughDate)
-      .reduce((s,r)=>s+movementAmount(r, mode, target),0);
-    return seedSum(mode, target) + extra;
-  }
-  return allData.filter(r => r.date <= throughDate)
-    .reduce((s,r)=>s+movementAmount(r, mode, target),0);
+  return balanceGeneric(d => d <= throughDate, mode, target);
 }
 const BALANCE_TODAY_SENTINEL = '9999-12-31';
 
