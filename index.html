@@ -313,6 +313,7 @@
               <option value="">— Выберите —</option>
               <option value="продажи">💰 Продажи (доход)</option>
               <option value="остаток">⚙️ Остаток на начало (корректировка счёта)</option>
+              <option value="закуп">📦 Закуп товара у поставщика</option>
               <option value="аренда">Аренда</option>
               <option value="ком платежи">Коммунальные платежи</option>
               <option value="командировочные">Командировочные</option>
@@ -438,6 +439,19 @@
           <div class="field" id="field-to-account-other" style="display:none">
             <label>Название счёта / кому</label>
             <input type="text" id="f-to-account-other" placeholder="Например: Беглан">
+          </div>
+        </div>
+        <div class="form-row" id="field-supplier-row" style="display:none">
+          <div class="field">
+            <label>Поставщик <span class="required">*</span></label>
+            <select id="f-supplier" onchange="toggleSupplierOther()">
+              <option value="">— Выберите поставщика —</option>
+              <option value="Другой">Другой (нет в списке)</option>
+            </select>
+          </div>
+          <div class="field" id="field-supplier-other" style="display:none">
+            <label>Название поставщика</label>
+            <input type="text" id="f-supplier-other" placeholder="Впишите название">
           </div>
         </div>
         <div class="form-row triple">
@@ -587,7 +601,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxdvM0JE5TE1DhuEyemUQhIx5wT748ca4ZbPRIDnSo3NyeybczJqgpXQS-KneuqOmmMrw/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxN4LQV1zOAWWVt9RykDmSeVdiSJzJmNW4plq17nK34rjc7_ExGQoHeRkWNISEXdWeXAA/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -597,6 +611,7 @@ let _dc = []; // Chart.js instances for dashboard
 const CATEGORY_MAP = {
   'остаток':         { dds: 'Остаток на начало', opiu: '' },
   'продажи':         { dds: 'Операционная', opiu: '' },
+  'закуп':           { dds: 'Операционная', opiu: '' },
   'аренда':          { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'ком платежи':     { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'командировочные': { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
@@ -689,6 +704,7 @@ function currentMonth() {
 
 const OPENING_BASE_DATE = '2026-06-30';
 let openingBalances = []; // [{account, city, balance}] — заполняется вручную в Google Sheets
+let suppliers = []; // [name, ...] — заполняется вручную в листе «Поставщики»
 
 async function loadData() {
   try {
@@ -701,8 +717,14 @@ async function loadData() {
     const d2 = await r2.json();
     openingBalances = d2.items || [];
   } catch(e) { openingBalances = []; }
+  try {
+    const r3 = await fetch(SCRIPT_URL + '?action=getSuppliers');
+    const d3 = await r3.json();
+    suppliers = d3.items || [];
+  } catch(e) { suppliers = []; }
   await refreshMonthPickers();
   refreshAccountLists();
+  refreshSupplierList();
   buildDashboard(); renderBalances();
 }
 
@@ -929,6 +951,20 @@ function refreshAccountLists() {
     '<option value="">— Выберите счёт —</option>');
 }
 
+// Список поставщиков для категории «Закуп товара» — из листа «Поставщики».
+// Новый поставщик добавляется в лист (одна строка) и сам появляется здесь —
+// код менять не нужно, так же как со счетами (см. refreshAccountLists).
+function refreshSupplierList() {
+  const el = document.getElementById('f-supplier');
+  if (!el) return;
+  const prev = el.value;
+  const names = [...suppliers].sort();
+  el.innerHTML = '<option value="">— Выберите поставщика —</option>' +
+    names.map(s => `<option value="${s}">${s}</option>`).join('') +
+    '<option value="Другой">Другой (нет в списке)</option>';
+  if ([...el.options].some(o => o.value === prev)) el.value = prev;
+}
+
 async function refreshData() {
   showToast('Обновляю данные...', 'success');
   await loadData();
@@ -951,6 +987,11 @@ function setType(t) {
 function toggleToAccountOther() {
   const v = document.getElementById('f-to-account').value;
   document.getElementById('field-to-account-other').style.display = v === 'Другой' ? 'block' : 'none';
+}
+
+function toggleSupplierOther() {
+  const v = document.getElementById('f-supplier').value;
+  document.getElementById('field-supplier-other').style.display = v === 'Другой' ? 'block' : 'none';
 }
 
 function toggleAccountFields() {
@@ -977,9 +1018,20 @@ function updateTags() {
   const cat = document.getElementById('f-category').value;
   const m = CATEGORY_MAP[cat];
   const el = document.getElementById('auto-tags');
-  if (!m) { el.innerHTML = ''; return; }
-  el.innerHTML = '<span class="tag dds">ДДС: ' + m.dds + '</span>' +
-    (m.opiu ? '<span class="tag opiu">ОПИУ: ' + m.opiu + '</span>' : '<span class="tag no-opiu">Не входит в ОПИУ</span>');
+  if (!m) { el.innerHTML = ''; }
+  else {
+    const noOpiuNote = cat === 'закуп' ? 'Не входит в ОПИУ (себестоимость уже учтена через 1С)' : 'Не входит в ОПИУ';
+    el.innerHTML = '<span class="tag dds">ДДС: ' + m.dds + '</span>' +
+      (m.opiu ? '<span class="tag opiu">ОПИУ: ' + m.opiu + '</span>' : '<span class="tag no-opiu">' + noOpiuNote + '</span>');
+  }
+  const supRow = document.getElementById('field-supplier-row');
+  if (supRow) {
+    supRow.style.display = cat === 'закуп' ? 'grid' : 'none';
+    if (cat !== 'закуп') {
+      document.getElementById('f-supplier').value = '';
+      document.getElementById('field-supplier-other').style.display = 'none';
+    }
+  }
 }
 
 async function saveOperation() {
@@ -1011,11 +1063,18 @@ async function saveOperation() {
     if (!toAccount) { showToast('Выберите счёт получателя', 'error'); return; }
     if (toAccount === account) { showToast('Счёт получателя совпадает со счётом-источником', 'error'); return; }
   }
+  let supplier = '';
+  if (category === 'закуп') {
+    supplier = document.getElementById('f-supplier').value;
+    if (supplier === 'Другой') supplier = document.getElementById('f-supplier-other').value.trim();
+    if (!supplier) { showToast('Выберите поставщика', 'error'); return; }
+  }
   const m = CATEGORY_MAP[category] || { dds: 'Операционная', opiu: '' };
   const row = {
     date, type: opType,
     category, name, amount: parseFloat(amount), account,
     to_account: toAccount,
+    supplier,
     city: document.getElementById('f-city').value,
     responsible: document.getElementById('f-responsible').value,
     dds: m.dds, opiu: m.opiu,
@@ -1038,6 +1097,9 @@ function clearForm() {
   ['f-amount','f-name','f-notes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('f-category').value = '';
   document.getElementById('auto-tags').innerHTML = '';
+  document.getElementById('field-supplier-row').style.display = 'none';
+  document.getElementById('f-supplier').value = '';
+  document.getElementById('field-supplier-other').style.display = 'none';
   setType('расход');
   setTodayDate();
 }
