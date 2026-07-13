@@ -310,6 +310,7 @@
             <label>Категория <span class="required">*</span></label>
             <select id="f-category" onchange="updateTags()">
               <option value="">— Выберите —</option>
+              <option value="остаток">⚙️ Остаток на начало (корректировка счёта)</option>
               <option value="аренда">Аренда</option>
               <option value="ком платежи">Коммунальные платежи</option>
               <option value="командировочные">Командировочные</option>
@@ -371,22 +372,33 @@
             <label>Физический счёт <span class="required">*</span></label>
             <select id="f-physical-account" onchange="toggleKaspi()">
               <option value="Касса нал Алматы">Касса нал Алматы</option>
-              <option value="Каспи голд">Каспи голд</option>
+              <option value="Касса нал Астана">Касса нал Астана</option>
+              <option value="Касса нал Шымкент">Касса нал Шымкент</option>
+              <option value="Каспи голд">Kaspi Gold</option>
             </select>
           </div>
         </div>
         <div class="form-row" id="field-kaspi-row" style="display:none">
           <div class="field">
-            <label>Держатель Каспи голд</label>
-            <select id="f-kaspi-holder">
-              <option value="">— Выберите —</option>
+            <label>Чей Gold <span class="required">*</span></label>
+            <select id="f-kaspi-holder" onchange="toggleKaspiOther()">
+              <option value="">— Выберите держателя —</option>
               <option value="Темирлан">Темирлан</option>
               <option value="Актоты">Актоты</option>
               <option value="Дастан">Дастан</option>
               <option value="Аружан">Аружан</option>
+              <option value="Аббас">Аббас</option>
+              <option value="Алихан">Алихан</option>
+              <option value="Айсултан">Айсултан</option>
+              <option value="Аяжан">Аяжан</option>
+              <option value="Камран">Камран</option>
+              <option value="Другой">Другой Gold (впишу вручную)</option>
             </select>
           </div>
-          <div class="field"></div>
+          <div class="field" id="field-kaspi-other" style="display:none">
+            <label>Имя держателя</label>
+            <input type="text" id="f-kaspi-holder-other" placeholder="Введите имя">
+          </div>
         </div>
         <div class="form-row triple">
           <div class="field">
@@ -494,9 +506,16 @@
     </div>
     <div class="page" id="page-dds">
       <div class="page-title">ДДС — Движение денежных средств</div>
+      <div class="form-card" style="max-width:560px;margin-bottom:20px;">
+        <div class="form-row">
+          <div class="field"><label>Месяц для дашборда</label><input type="month" id="dds-month-pick" min="2026-01" max="2026-06" value="2026-06" onchange="buildDDSMonthDash()"></div>
+          <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-save" onclick="buildDDSMonthDash()" style="width:100%;">Показать месяц</button></div>
+        </div>
+      </div>
+      <div id="dds-month-dash"></div>
       <div class="form-card" style="max-width:520px;margin-bottom:20px;">
-        <div style="color:#64748b;font-size:13px;margin-bottom:12px">Отчёт по месяцам · Январь — 14 Июня 2026 · KZT · Косвенный метод (упрощённый)</div>
-        <button class="btn btn-save" onclick="buildDDS()">&#128200; Сформировать ДДС по месяцам</button>
+        <div style="color:#64748b;font-size:13px;margin-bottom:12px">Полная таблица по месяцам · Январь — 14 Июня 2026 · KZT · Косвенный метод (упрощённый)</div>
+        <button class="btn btn-save" onclick="buildDDS()">&#128200; Сформировать ДДС по месяцам (таблица)</button>
       </div>
       <div id="dds-result"></div>
     </div>
@@ -542,6 +561,7 @@ let allData = [];
 let _dc = []; // Chart.js instances for dashboard
 
 const CATEGORY_MAP = {
+  'остаток':         { dds: 'Остаток на начало', opiu: '' },
   'аренда':          { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'ком платежи':     { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'командировочные': { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
@@ -620,7 +640,8 @@ function showPage(name, el) {
   if (el) el.classList.add('active');
   if (name === 'journal') renderJournal();
   if (name === 'balances') renderBalances();
-  if (name === 'dds') buildDDS();
+  if (name === 'dds-daily') buildDDSDaily();
+  if (name === 'dds') buildDDSMonthDash();
   if (name === 'dashboard') buildDashboard();
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
@@ -668,6 +689,14 @@ function toggleAccountFields() {
 function toggleKaspi() {
   const v = document.getElementById('f-physical-account').value;
   document.getElementById('field-kaspi-row').style.display = v === 'Каспи голд' ? 'grid' : 'none';
+  if (v !== 'Каспи голд') {
+    document.getElementById('f-kaspi-holder').value = '';
+    document.getElementById('field-kaspi-other').style.display = 'none';
+  }
+}
+function toggleKaspiOther() {
+  const v = document.getElementById('f-kaspi-holder').value;
+  document.getElementById('field-kaspi-other').style.display = v === 'Другой' ? 'block' : 'none';
 }
 
 function updateTags() {
@@ -691,7 +720,14 @@ async function saveOperation() {
     account = document.getElementById('f-legal-account').value;
   } else {
     const phys = document.getElementById('f-physical-account').value;
-    account = phys === 'Каспи голд' ? 'Каспи — ' + document.getElementById('f-kaspi-holder').value : phys;
+    if (phys === 'Каспи голд') {
+      let holder = document.getElementById('f-kaspi-holder').value;
+      if (holder === 'Другой') holder = document.getElementById('f-kaspi-holder-other').value.trim();
+      if (!holder) { showToast('Выберите чей Gold', 'error'); return; }
+      account = 'Каспи — ' + holder;
+    } else {
+      account = phys;
+    }
   }
   const m = CATEGORY_MAP[category] || { dds: 'Операционная', opiu: '' };
   const row = {
@@ -1848,34 +1884,105 @@ function exportOPIU(period) {
   showToast('Excel файл скачан', 'success');
 }
 
+function acctGroup(acc) {
+  if (!acc) return 'Прочее';
+  if (acc.startsWith('Каспи')) return 'Kaspi Gold';
+  if (acc.startsWith('Касса нал')) return 'Касса (нал)';
+  return 'Юр. счета';
+}
+const GROUP_CLR = { 'Юр. счета':'#2563eb', 'Касса (нал)':'#f59e0b', 'Kaspi Gold':'#8b5cf6', 'Прочее':'#94a3b8' };
+let _ddsDailyCharts = [];
+
 function buildDDSDaily() {
   const date = document.getElementById('dds-daily-date').value;
   if (!date) { showToast('Выберите дату', 'error'); return; }
+  _ddsDailyCharts.forEach(c => { try { c.destroy(); } catch(e){} });
+  _ddsDailyCharts = [];
   const before = allData.filter(r => r.date < date && r.type !== 'перевод');
   const today = allData.filter(r => r.date === date && r.type !== 'перевод');
   const accounts = [...new Set(allData.map(r => r.account).filter(Boolean))].sort();
   if (!accounts.length) { document.getElementById('dds-daily-result').innerHTML = '<div class="empty-state"><div class="emoji">&#128235;</div>Нет данных</div>'; return; }
-  let html = '<div style="font-size:14px;color:#64748b;margin-bottom:12px;">Дата: <strong>' + fmtDate(date) + '</strong></div>';
-  html += '<div class="table-wrapper" style="margin-bottom:20px;"><div class="table-header"><strong>Остатки по счетам на ' + fmtDate(date) + '</strong></div>';
-  html += '<table><thead><tr><th>Счёт</th><th>Нач. остаток</th><th style="color:#16a34a">+ Приход</th><th style="color:#dc2626">− Расход</th><th>Кон. остаток</th></tr></thead><tbody>';
+
+  const byAcc = {};
   let totalOpen=0, totalIn=0, totalOut=0;
   accounts.forEach(acc => {
     const open = before.filter(r=>r.account===acc).reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
     const dayIn = today.filter(r=>r.account===acc&&r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
     const dayOut = today.filter(r=>r.account===acc&&r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
     const close = open + dayIn - dayOut;
-    if (open===0&&dayIn===0&&dayOut===0) return;
+    byAcc[acc] = {open, dayIn, dayOut, close};
     totalOpen+=open; totalIn+=dayIn; totalOut+=dayOut;
-    html += '<tr><td style="font-weight:600">' + acc + '</td><td>' + fmt(open) + ' ₸</td>' +
+  });
+  const totalClose = totalOpen + totalIn - totalOut;
+
+  // Group totals (closing balance) by Юр.счета / Касса / Kaspi Gold
+  const groupTot = {};
+  accounts.forEach(acc => {
+    const g = acctGroup(acc);
+    groupTot[g] = (groupTot[g]||0) + byAcc[acc].close;
+  });
+  const groups = Object.keys(groupTot).filter(g => Math.abs(groupTot[g])>0.01);
+
+  const fK = v => {
+    const n=+v||0;
+    if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+' млрд ₸';
+    if(Math.abs(n)>=1e6) return (n/1e6).toFixed(1)+' млн ₸';
+    if(Math.abs(n)>=1e3) return Math.round(n/1e3)+' тыс ₸';
+    return fmt(n)+' ₸';
+  };
+  const kpi = (lbl, val, cls) => `<div class="kpi-card ${cls}"><div class="kpi-lbl">${lbl}</div><div class="kpi-val ${val>=0?'p':'n'}">${fK(val)}</div></div>`;
+
+  let html = '<div style="font-size:14px;color:#64748b;margin-bottom:14px;">Дата: <strong>' + fmtDate(date) + '</strong></div>';
+
+  // Headline balance
+  html += `<div class="card" style="padding:20px 24px;margin-bottom:16px;background:linear-gradient(135deg,#1e3a5f,#2563eb);border:none">
+    <div style="color:#93c5fd;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Общий остаток на кассах и счетах</div>
+    <div style="color:white;font-size:32px;font-weight:700;margin-top:6px">${fK(totalClose)}</div>
+  </div>`;
+
+  // 4 flow KPIs
+  html += `<div class="kpi-strip">
+    ${kpi('Сальдо на начало дня', totalOpen, '')}
+    ${kpi('Приход за день', totalIn, 'g')}
+    ${kpi('Расход за день', -totalOut, 'o')}
+    ${kpi('Сальдо на конец дня', totalClose, totalClose>=0?'g':'o')}
+  </div>`;
+
+  // Group charts: where the money is
+  html += `<div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-bottom:16px">
+    <div class="card" style="padding:18px">
+      <div style="font-weight:700;color:#1e3a5f;margin-bottom:12px;font-size:13px">💰 Где сейчас деньги — по группам</div>
+      <canvas id="ch-dds-daily-grp" height="150"></canvas>
+    </div>
+    <div class="card" style="padding:18px">
+      <div style="font-weight:700;color:#1e3a5f;margin-bottom:12px;font-size:13px">🥧 Распределение по группам</div>
+      <canvas id="ch-dds-daily-pie" height="150"></canvas>
+    </div>
+  </div>`;
+
+  // Collapsible details
+  html += `<div class="card" style="padding:0;overflow:hidden">
+    <div style="padding:14px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="toggleDailyDetails()">
+      <strong style="font-size:13px;color:#1e3a5f">Детально по счетам и операциям</strong>
+      <span id="daily-detail-ic" style="color:#94a3b8">▾ Показать</span>
+    </div>
+    <div id="daily-detail-body" style="display:none">`;
+
+  html += '<div class="table-wrapper" style="margin:0;border-radius:0"><div class="table-header"><strong>Остатки по счетам на ' + fmtDate(date) + '</strong></div>';
+  html += '<table><thead><tr><th>Счёт</th><th>Группа</th><th>Нач. остаток</th><th style="color:#16a34a">+ Приход</th><th style="color:#dc2626">− Расход</th><th>Кон. остаток</th></tr></thead><tbody>';
+  accounts.forEach(acc => {
+    const {open,dayIn,dayOut,close} = byAcc[acc];
+    if (open===0&&dayIn===0&&dayOut===0) return;
+    html += '<tr><td style="font-weight:600">' + acc + '</td><td style="font-size:11px;color:#64748b">' + acctGroup(acc) + '</td><td>' + fmt(open) + ' ₸</td>' +
       '<td style="color:#16a34a">' + (dayIn?'+'+fmt(dayIn)+' ₸':'—') + '</td>' +
       '<td style="color:#dc2626">' + (dayOut?'−'+fmt(dayOut)+' ₸':'—') + '</td>' +
       '<td style="font-weight:700;color:' + (close>=0?'#16a34a':'#dc2626') + '">' + fmt(close) + ' ₸</td></tr>';
   });
-  const totalClose = totalOpen + totalIn - totalOut;
-  html += '<tr style="background:#1e3a5f;color:white"><td style="font-weight:700">ИТОГО</td><td style="font-weight:700">' + fmt(totalOpen) + ' ₸</td><td style="font-weight:700;color:#86efac">+' + fmt(totalIn) + ' ₸</td><td style="font-weight:700;color:#fca5a5">−' + fmt(totalOut) + ' ₸</td><td style="font-weight:700;font-size:15px;color:' + (totalClose>=0?'#86efac':'#fca5a5') + '">' + fmt(totalClose) + ' ₸</td></tr>';
+  html += '<tr style="background:#1e3a5f;color:white"><td style="font-weight:700">ИТОГО</td><td></td><td style="font-weight:700">' + fmt(totalOpen) + ' ₸</td><td style="font-weight:700;color:#86efac">+' + fmt(totalIn) + ' ₸</td><td style="font-weight:700;color:#fca5a5">−' + fmt(totalOut) + ' ₸</td><td style="font-weight:700;font-size:15px;color:' + (totalClose>=0?'#86efac':'#fca5a5') + '">' + fmt(totalClose) + ' ₸</td></tr>';
   html += '</tbody></table></div>';
+
   if (today.length) {
-    html += '<div class="table-wrapper"><div class="table-header"><strong>Операции за ' + fmtDate(date) + ' (' + today.length + ' шт.)</strong></div>';
+    html += '<div class="table-wrapper" style="margin:0;border-radius:0"><div class="table-header"><strong>Операции за ' + fmtDate(date) + ' (' + today.length + ' шт.)</strong></div>';
     html += '<table><thead><tr><th>Тип</th><th>Счёт</th><th>Категория</th><th>Название</th><th>Сумма</th><th>Ответственный</th><th>ДДС блок</th></tr></thead><tbody>';
     today.sort((a,b)=>a.account>b.account?1:-1).forEach(r => {
       const isInc = r.type === 'доход';
@@ -1888,9 +1995,183 @@ function buildDDSDaily() {
     });
     html += '</tbody></table></div>';
   } else {
-    html += '<div class="card" style="text-align:center;color:#94a3b8">За эту дату операций не найдено</div>';
+    html += '<div class="card" style="text-align:center;color:#94a3b8;margin:0;border-radius:0">За эту дату операций не найдено</div>';
   }
+  html += '</div></div>';
+
   document.getElementById('dds-daily-result').innerHTML = html;
+
+  if (typeof Chart !== 'undefined' && groups.length) {
+    _ddsDailyCharts.push(new Chart(document.getElementById('ch-dds-daily-grp'), {
+      type: 'bar',
+      data: { labels: groups, datasets: [{ label:'Остаток', data: groups.map(g=>Math.round(groupTot[g])), backgroundColor: groups.map(g=>GROUP_CLR[g]||'#94a3b8'), borderRadius:6 }] },
+      options: { indexAxis:'y', responsive:true, plugins:{legend:{display:false}}, scales:{x:{ticks:{callback:v=>fK(v)}}} }
+    }));
+    _ddsDailyCharts.push(new Chart(document.getElementById('ch-dds-daily-pie'), {
+      type: 'doughnut',
+      data: { labels: groups, datasets: [{ data: groups.map(g=>Math.round(Math.abs(groupTot[g]))), backgroundColor: groups.map(g=>GROUP_CLR[g]||'#94a3b8'), hoverOffset:8 }] },
+      options: { responsive:true, plugins:{legend:{position:'bottom',labels:{boxWidth:10}}} }
+    }));
+  }
+}
+
+function toggleDailyDetails() {
+  const body = document.getElementById('daily-detail-body');
+  const ic = document.getElementById('daily-detail-ic');
+  const open = body.style.display === 'none';
+  body.style.display = open ? 'block' : 'none';
+  ic.textContent = open ? '▴ Скрыть' : '▾ Показать';
+}
+
+const DDS_MLBL = {'2026-01':'Январь','2026-02':'Февраль','2026-03':'Март','2026-04':'Апрель','2026-05':'Май','2026-06':'Июнь'};
+const DDS_CITIES = ['Алматы','Астана','Шымкент'];
+const DDS_CITY_CLR = { 'Алматы':'#2563eb','Астана':'#0d9488','Шымкент':'#f59e0b' };
+let _ddsMonthCharts = [];
+
+function fmtK_(v) {
+  const n=+v||0;
+  if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+' млрд ₸';
+  if(Math.abs(n)>=1e6) return (n/1e6).toFixed(1)+' млн ₸';
+  if(Math.abs(n)>=1e3) return Math.round(n/1e3)+' тыс ₸';
+  return fmt(n)+' ₸';
+}
+
+function cityDashboardBlock(month) {
+  const monthStart = month + '-01';
+  const [y, mo] = month.split('-').map(Number);
+  const daysInMo = new Date(y, mo, 0).getDate();
+  const monthEnd = month + '-' + String(daysInMo).padStart(2,'0');
+  const relevant = allData.filter(r => r.type !== 'перевод' && DDS_CITIES.includes(r.city));
+
+  const stats = {};
+  DDS_CITIES.forEach(city => {
+    const cAll = relevant.filter(r => r.city === city);
+    const before = cAll.filter(r => r.date < monthStart);
+    const within = cAll.filter(r => r.date >= monthStart && r.date <= monthEnd);
+    const opening = before.reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+    const inc = within.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
+    const out = within.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+    stats[city] = { opening, inc, out, closing: opening + inc - out };
+  });
+
+  let html = `<div class="card" style="padding:18px;margin-bottom:16px">
+    <div style="font-weight:700;color:#1e3a5f;margin-bottom:2px;font-size:14px">🏙 Сводка по городам — ${DDS_MLBL[month]||month}</div>
+    <div style="font-size:11px;color:#94a3b8;margin-bottom:14px">По данным Журнала (движение денег) · без общекорпоративных расходов, не привязанных к городу</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:16px">`;
+  DDS_CITIES.forEach(city => {
+    const s = stats[city];
+    html += `<div class="card" style="padding:16px;border-top:3px solid ${DDS_CITY_CLR[city]}">
+      <div style="font-weight:700;color:#1e3a5f;font-size:14px;margin-bottom:8px">📍 ${city}</div>
+      <div style="font-size:20px;font-weight:700;color:${s.closing>=0?'#16a34a':'#dc2626'}">${fmtK_(s.closing)}</div>
+      <div style="font-size:10px;color:#94a3b8;margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">Остаток на конец месяца</div>
+      <div style="font-size:12px;color:#64748b;line-height:1.9">
+        Нач. сальдо: <b>${fmtK_(s.opening)}</b><br>
+        <span style="color:#16a34a">+ Приход: <b>${fmtK_(s.inc)}</b></span><br>
+        <span style="color:#dc2626">− Расход: <b>${fmtK_(s.out)}</b></span>
+      </div>
+    </div>`;
+  });
+  html += `</div><canvas id="ch-city-summary" height="90"></canvas></div>`;
+  return { html, stats };
+}
+
+function buildDDSMonthDash() {
+  const month = document.getElementById('dds-month-pick')?.value;
+  const el = document.getElementById('dds-month-dash');
+  if (!month || !el) return;
+  _ddsMonthCharts.forEach(c => { try { c.destroy(); } catch(e){} });
+  _ddsMonthCharts = [];
+
+  const [y, mo] = month.split('-').map(Number);
+  const daysInMo = new Date(y, mo, 0).getDate();
+  const monthStart = month + '-01';
+  const monthEnd = month + '-' + String(daysInMo).padStart(2,'0');
+
+  const relevant = allData.filter(r => r.type !== 'перевод');
+  const before = relevant.filter(r => r.date < monthStart);
+  const within = relevant.filter(r => r.date >= monthStart && r.date <= monthEnd);
+
+  const opening = before.reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+  const monthIn = within.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
+  const monthOut = within.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+  const closing = opening + monthIn - monthOut;
+  const currentTotal = relevant.reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+
+  const dayIn = {}, dayOut = {};
+  within.forEach(r => {
+    const d = +r.date.slice(8,10);
+    if (r.type==='доход') dayIn[d]=(dayIn[d]||0)+(+r.amount||0);
+    else if (r.type==='расход') dayOut[d]=(dayOut[d]||0)+(+r.amount||0);
+  });
+  const days = Array.from({length:daysInMo}, (_,i)=>i+1);
+  const hasData = within.length > 0 || opening !== 0;
+
+  const fK = v => {
+    const n=+v||0;
+    if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+' млрд ₸';
+    if(Math.abs(n)>=1e6) return (n/1e6).toFixed(1)+' млн ₸';
+    if(Math.abs(n)>=1e3) return Math.round(n/1e3)+' тыс ₸';
+    return fmt(n)+' ₸';
+  };
+  const kpi = (lbl, val, cls) => `<div class="kpi-card ${cls}"><div class="kpi-lbl">${lbl}</div><div class="kpi-val ${val>=0?'p':'n'}">${fK(val)}</div></div>`;
+
+  let html = `<div class="card" style="padding:20px 24px;margin-bottom:16px;background:linear-gradient(135deg,#1e3a5f,#2563eb);border:none;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+    <div>
+      <div style="color:#93c5fd;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Текущий общий остаток (на сегодня, все счета)</div>
+      <div style="color:white;font-size:32px;font-weight:700;margin-top:6px">${fK(currentTotal)}</div>
+    </div>
+    <div style="color:#bfdbfe;font-size:13px">${DDS_MLBL[month]||month} 2026</div>
+  </div>`;
+
+  html += `<div class="kpi-strip">
+    ${kpi('Сальдо на начало месяца', opening, '')}
+    ${kpi('Приход за месяц', monthIn, 'g')}
+    ${kpi('Расход за месяц', -monthOut, 'o')}
+    ${kpi('Сальдо на конец месяца', closing, closing>=0?'g':'o')}
+  </div>`;
+
+  if (!hasData) {
+    html += '<div class="card" style="text-align:center;color:#94a3b8">Нет операций за ' + (DDS_MLBL[month]||month) + '</div>';
+  } else {
+    html += `<div class="card" style="padding:18px;margin-bottom:16px">
+      <div style="font-weight:700;color:#1e3a5f;margin-bottom:12px;font-size:13px">📅 Динамика прихода и расхода по дням — ${DDS_MLBL[month]||month}</div>
+      <canvas id="ch-dds-month-daily" height="90"></canvas>
+    </div>`;
+  }
+
+  const cityBlock = cityDashboardBlock(month);
+  html += cityBlock.html;
+
+  el.innerHTML = html;
+
+  if (typeof Chart !== 'undefined') {
+    _ddsMonthCharts.push(new Chart(document.getElementById('ch-city-summary'), {
+      type: 'bar',
+      data: {
+        labels: DDS_CITIES,
+        datasets: [{ label:'Остаток на конец месяца', data: DDS_CITIES.map(c=>Math.round(cityBlock.stats[c].closing)), backgroundColor: DDS_CITIES.map(c=>DDS_CITY_CLR[c]), borderRadius:6 }]
+      },
+      options: { indexAxis:'y', responsive:true, plugins:{legend:{display:false}}, scales:{x:{ticks:{callback:v=>fmtK_(v)}}} }
+    }));
+  }
+
+  if (!hasData || typeof Chart === 'undefined') return;
+
+  _ddsMonthCharts.push(new Chart(document.getElementById('ch-dds-month-daily'), {
+    type: 'bar',
+    data: {
+      labels: days,
+      datasets: [
+        { label:'Приход', data: days.map(d=>Math.round(dayIn[d]||0)), backgroundColor:'#16a34a', borderRadius:3 },
+        { label:'Расход', data: days.map(d=>-Math.round(dayOut[d]||0)), backgroundColor:'#dc2626', borderRadius:3 }
+      ]
+    },
+    options: {
+      responsive:true,
+      plugins:{ legend:{position:'bottom',labels:{boxWidth:12}} },
+      scales:{ x:{stacked:false}, y:{ticks:{callback:v=>fK(v)}} }
+    }
+  }));
 }
 
 function exportJournal() {
