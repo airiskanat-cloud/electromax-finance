@@ -553,7 +553,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwQgKYNRSjzQNWP07P6Jc9gZzFaVBzt2ELnEPpXLZcOP0EVtriULu3ULrIWg3C7YJRKFA/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxdvM0JE5TE1DhuEyemUQhIx5wT748ca4ZbPRIDnSo3NyeybczJqgpXQS-KneuqOmmMrw/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -652,14 +652,50 @@ function currentMonth() {
   const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
 }
 
+const OPENING_BASE_DATE = '2026-06-30';
+let openingBalances = []; // [{account, city, balance}] — заполняется вручную в Google Sheets
+
 async function loadData() {
   try {
     const r = await fetch(SCRIPT_URL + '?action=getAll');
     const d = await r.json();
     allData = d.data || [];
   } catch(e) { allData = []; }
+  try {
+    const r2 = await fetch(SCRIPT_URL + '?action=getOpeningBalances');
+    const d2 = await r2.json();
+    openingBalances = d2.items || [];
+  } catch(e) { openingBalances = []; }
   buildDashboard(); renderBalances();
 }
+
+// Остаток СТРОГО ДО указанной даты (date < beforeDate), по строкам allData,
+// прошедшим matchFn(row) => bool. Если заведены НачальныеОстатки и
+// beforeDate позже даты старта — берём их за базу и досчитываем только
+// движения после даты старта. Иначе — считаем всю историю, как раньше.
+function balanceBefore(beforeDate, matchFn) {
+  if (openingBalances.length && beforeDate > OPENING_BASE_DATE) {
+    const seed = openingBalances.filter(matchFn).reduce((s,o)=>s+(+o.balance||0),0);
+    const extra = allData.filter(r => r.type!=='перевод' && r.date > OPENING_BASE_DATE && r.date < beforeDate && matchFn(r))
+      .reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+    return seed + extra;
+  }
+  return allData.filter(r => r.type!=='перевод' && r.date < beforeDate && matchFn(r))
+    .reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+}
+
+// Остаток ВКЛЮЧАЯ указанную дату (date <= throughDate) — та же логика.
+function balanceThrough(throughDate, matchFn) {
+  if (openingBalances.length && throughDate >= OPENING_BASE_DATE) {
+    const seed = openingBalances.filter(matchFn).reduce((s,o)=>s+(+o.balance||0),0);
+    const extra = allData.filter(r => r.type!=='перевод' && r.date > OPENING_BASE_DATE && r.date <= throughDate && matchFn(r))
+      .reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+    return seed + extra;
+  }
+  return allData.filter(r => r.type!=='перевод' && r.date <= throughDate && matchFn(r))
+    .reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+}
+const BALANCE_TODAY_SENTINEL = '9999-12-31';
 
 async function refreshData() {
   showToast('Обновляю данные...', 'success');
@@ -1074,14 +1110,17 @@ async function deleteRow(id) {
 }
 
 function renderBalances() {
-  const accounts = [...new Set(allData.map(r => r.account).filter(Boolean))];
+  const accounts = [...new Set([
+    ...allData.map(r => r.account).filter(Boolean),
+    ...openingBalances.map(o => o.account).filter(Boolean)
+  ])].sort();
   if (!accounts.length) { document.getElementById('balances-grid').innerHTML = '<div class="empty-state"><div class="emoji">&#128179;</div>Нет данных по счетам</div>'; return; }
   let html = '<div class="cards-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">';
   let total = 0;
   accounts.forEach(acc => {
+    const bal = balanceThrough(BALANCE_TODAY_SENTINEL, r => r.account === acc);
     const inc = allData.filter(r=>r.account===acc&&r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
     const exp = allData.filter(r=>r.account===acc&&r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
-    const bal = inc - exp;
     total += bal;
     html += '<div class="card"><div class="card-label" style="font-size:11px">' + acc + '</div>' +
       '<div class="card-value ' + (bal>=0?'green':'red') + '" style="font-size:20px">' + fmt(bal) + ' ₸</div>' +
@@ -1898,15 +1937,17 @@ function buildDDSDaily() {
   if (!date) { showToast('Выберите дату', 'error'); return; }
   _ddsDailyCharts.forEach(c => { try { c.destroy(); } catch(e){} });
   _ddsDailyCharts = [];
-  const before = allData.filter(r => r.date < date && r.type !== 'перевод');
   const today = allData.filter(r => r.date === date && r.type !== 'перевод');
-  const accounts = [...new Set(allData.map(r => r.account).filter(Boolean))].sort();
+  const accounts = [...new Set([
+    ...allData.map(r => r.account).filter(Boolean),
+    ...openingBalances.map(o => o.account).filter(Boolean)
+  ])].sort();
   if (!accounts.length) { document.getElementById('dds-daily-result').innerHTML = '<div class="empty-state"><div class="emoji">&#128235;</div>Нет данных</div>'; return; }
 
   const byAcc = {};
   let totalOpen=0, totalIn=0, totalOut=0;
   accounts.forEach(acc => {
-    const open = before.filter(r=>r.account===acc).reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+    const open = balanceBefore(date, r => r.account === acc);
     const dayIn = today.filter(r=>r.account===acc&&r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
     const dayOut = today.filter(r=>r.account===acc&&r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
     const close = open + dayIn - dayOut;
@@ -2041,14 +2082,10 @@ function cityDashboardBlock(month) {
   const [y, mo] = month.split('-').map(Number);
   const daysInMo = new Date(y, mo, 0).getDate();
   const monthEnd = month + '-' + String(daysInMo).padStart(2,'0');
-  const relevant = allData.filter(r => r.type !== 'перевод' && DDS_CITIES.includes(r.city));
-
   const stats = {};
   DDS_CITIES.forEach(city => {
-    const cAll = relevant.filter(r => r.city === city);
-    const before = cAll.filter(r => r.date < monthStart);
-    const within = cAll.filter(r => r.date >= monthStart && r.date <= monthEnd);
-    const opening = before.reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+    const within = allData.filter(r => r.type !== 'перевод' && r.city === city && r.date >= monthStart && r.date <= monthEnd);
+    const opening = balanceBefore(monthStart, r => r.city === city);
     const inc = within.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
     const out = within.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
     stats[city] = { opening, inc, out, closing: opening + inc - out };
@@ -2088,14 +2125,13 @@ function buildDDSMonthDash() {
   const monthEnd = month + '-' + String(daysInMo).padStart(2,'0');
 
   const relevant = allData.filter(r => r.type !== 'перевод');
-  const before = relevant.filter(r => r.date < monthStart);
   const within = relevant.filter(r => r.date >= monthStart && r.date <= monthEnd);
 
-  const opening = before.reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+  const opening = balanceBefore(monthStart, () => true);
   const monthIn = within.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
   const monthOut = within.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
   const closing = opening + monthIn - monthOut;
-  const currentTotal = relevant.reduce((s,r)=>s+(r.type==='доход'?1:-1)*(+r.amount||0),0);
+  const currentTotal = balanceThrough(BALANCE_TODAY_SENTINEL, () => true);
 
   const dayIn = {}, dayOut = {};
   within.forEach(r => {
