@@ -311,6 +311,7 @@
             <label>Категория <span class="required">*</span></label>
             <select id="f-category" onchange="updateTags()">
               <option value="">— Выберите —</option>
+              <option value="продажи">💰 Продажи (доход)</option>
               <option value="остаток">⚙️ Остаток на начало (корректировка счёта)</option>
               <option value="аренда">Аренда</option>
               <option value="ком платежи">Коммунальные платежи</option>
@@ -595,6 +596,7 @@ let _dc = []; // Chart.js instances for dashboard
 
 const CATEGORY_MAP = {
   'остаток':         { dds: 'Остаток на начало', opiu: '' },
+  'продажи':         { dds: 'Операционная', opiu: '' },
   'аренда':          { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'ком платежи':     { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'командировочные': { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
@@ -700,20 +702,15 @@ async function loadData() {
     openingBalances = d2.items || [];
   } catch(e) { openingBalances = []; }
   await refreshMonthPickers();
+  refreshAccountLists();
   buildDashboard(); renderBalances();
 }
 
-// Полный список известных счетов приложения — используется, чтобы отличить
-// "внутренний" перевод (между двумя своими счетами, нейтрален для общего
-// итога) от "внешнего" (получатель не из списка — деньги реально ушли).
-const KNOWN_ACCOUNTS = [
-  'ТОО Phonehouse','ТОО СТД','ТОО Elektro','ТОО Technovision Holding','ТОО Technovision',
-  'БЦК Phonehouse','БЦК СТД','БЦК Elektro','БЦК Technovision Holding',
-  'Счёт Халык СТД','Счёт Жусан СТД','Счёт Форте СТД','ИП АМДК',
-  'Касса нал Алматы','Касса нал Астана','Касса нал Шымкент',
-  'Каспи — Темирлан','Каспи — Актоты','Каспи — Дастан','Каспи — Аружан',
-  'Каспи — Аббас','Каспи — Алихан','Каспи — Айсултан','Каспи — Аяжан','Каспи — Камран'
-];
+// Известные счета приложения теперь определяются динамически — это все
+// счета, заведённые в листе «НачальныеОстатки» (см. isSeededAccount ниже).
+// Используется, чтобы отличить "внутренний" перевод (между двумя своими
+// счетами, нейтрален для общего итога) от "внешнего" (получатель не из
+// списка — деньги реально ушли).
 
 // Подписанная сумма движения одной строки Журнала с точки зрения:
 //  mode='account' — конкретного счёта target (движение по нему одному)
@@ -742,7 +739,7 @@ function movementAmount(row, mode, target) {
   if (row.type === 'доход')  return amt;
   if (row.type === 'расход') return -amt;
   if (row.type === 'перевод') {
-    const internal = row.to_account && KNOWN_ACCOUNTS.includes(row.to_account);
+    const internal = row.to_account && isSeededAccount(row.to_account);
     return internal ? 0 : -amt;
   }
   return 0;
@@ -815,7 +812,7 @@ function balanceGeneric(cmpDate, mode, target) {
     else if (r.type === 'расход' && counts(r.account, r.date)) sum -= amt;
     else if (r.type === 'перевод') {
       if (counts(r.account, r.date)) sum -= amt;
-      if (r.to_account && KNOWN_ACCOUNTS.includes(r.to_account) && counts(r.to_account, r.date)) sum += amt;
+      if (r.to_account && isSeededAccount(r.to_account) && counts(r.to_account, r.date)) sum += amt;
     }
   });
   return sum;
@@ -879,6 +876,57 @@ async function refreshMonthPickers() {
       picker.value = months[months.length-1];
     }
   }
+}
+
+// Классифицирует имя счёта по префиксу — нужно, чтобы разложить единый
+// список НачальныеОстатки по нужным выпадающим спискам формы.
+function acctBucket(acc) {
+  if (acc.startsWith('Каспи — ')) return { type: 'kaspi', name: acc.slice(8) };
+  if (acc.startsWith('Касса нал')) return { type: 'cash' };
+  return { type: 'legal' };
+}
+
+// Синхронизирует все выпадающие списки счетов (юр.счёт, держатель Kaspi Gold,
+// счёт получателя при переводе, счёт для сверки выписки) со списком счетов
+// из листа «НачальныеОстатки». Как только там появляется новый счёт (даже
+// с нулевым балансом) — он сам возникает во всех списках приложения.
+function refreshAccountLists() {
+  const accounts = [...new Set(openingBalances.map(o => o.account).filter(Boolean))];
+  if (!accounts.length) return; // лист ещё не заведён — оставляем как есть
+  const legal = [], kaspiHolders = [];
+  accounts.forEach(acc => {
+    const b = acctBucket(acc);
+    if (b.type === 'legal') legal.push(acc);
+    else if (b.type === 'kaspi') kaspiHolders.push(b.name);
+  });
+  legal.sort(); kaspiHolders.sort();
+  const sortedAll = [...accounts].sort();
+
+  const setOptions = (id, optsHtml, placeholder) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const prev = el.value;
+    el.innerHTML = placeholder + optsHtml;
+    if ([...el.options].some(o => o.value === prev)) el.value = prev;
+  };
+
+  setOptions('f-legal-account',
+    legal.map(a => `<option value="${a}">${a}</option>`).join(''),
+    '<option value="">— Выберите счёт —</option>');
+
+  setOptions('f-kaspi-holder',
+    kaspiHolders.map(h => `<option value="${h}">${h}</option>`).join('') +
+      '<option value="Другой">Другой Gold (впишу вручную)</option>',
+    '<option value="">— Выберите держателя —</option>');
+
+  setOptions('f-to-account',
+    sortedAll.map(a => `<option value="${a}">${a}</option>`).join('') +
+      '<option value="Другой">Другой (не из списка)</option>',
+    '<option value="">— Выберите счёт —</option>');
+
+  setOptions('rec-account',
+    sortedAll.map(a => `<option value="${a}">${a}</option>`).join(''),
+    '<option value="">— Выберите счёт —</option>');
 }
 
 async function refreshData() {
