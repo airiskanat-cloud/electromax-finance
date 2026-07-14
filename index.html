@@ -601,7 +601,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxN4LQV1zOAWWVt9RykDmSeVdiSJzJmNW4plq17nK34rjc7_ExGQoHeRkWNISEXdWeXAA/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby0rf1FZBD9p6g7L2YCLU6iJhXjOFZ7l4hXc2tU0DGgNsxhlCW0-WINDJPxYxtVJWO_vg/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -1134,6 +1134,7 @@ async function buildDashboard() {
 
   // Load 1С data: weekly sales + purchases → aggregate by month
   const revM = {}, cogsM = {}, revCity = {}; // revCity: { city: { month: amount } }
+  const receiptsM = {}, receiptsCity = {}; // receipts — кол-во чеков (для среднего чека)
   try {
     const r = await fetch(SCRIPT_URL + '?action=get1CData');
     const d = await r.json();
@@ -1144,6 +1145,9 @@ async function buildDashboard() {
       const city = s.city||'Прочее';
       if (!revCity[city]) revCity[city] = {};
       revCity[city][mo] = (revCity[city][mo]||0) + (+s.revenue||0);
+      receiptsM[mo] = (receiptsM[mo]||0) + (+s.receipts||0);
+      if (!receiptsCity[city]) receiptsCity[city] = {};
+      receiptsCity[city][mo] = (receiptsCity[city][mo]||0) + (+s.receipts||0);
     });
     (d.purchases||[]).forEach(s => {
       const mo = String(s.month||'');
@@ -1189,6 +1193,11 @@ async function buildDashboard() {
   ['rev','cogs','gp','varE','mp','fix','op','com','ebit','own','net','cred','totExp'].forEach(k => {
     tot[k] = MONTHS.reduce((s,m) => s+(pm[m][k]||0), 0);
   });
+  tot.receipts = MONTHS.reduce((s,m) => s+(receiptsM[m]||0), 0);
+  // Средний чек = сумма выручки / сумма чеков за период (не среднее по месячным
+  // средним — так корректнее при разном количестве чеков в разные месяцы).
+  const avgCheck = tot.receipts ? Math.round(tot.rev / tot.receipts) : 0;
+  const hasReceipts = tot.receipts > 0;
 
   // City totals (expenses from Журнал)
   const cityTot = {};
@@ -1242,6 +1251,7 @@ async function buildDashboard() {
     ${card('EBIT (до вывода)', tot.ebit, tot.ebit>=0?'g':'o', pctOf(tot.ebit,tot.rev)+' от выручки')}
     ${card('Вывод собственников', tot.own, 'd', 'шеф + Дастан + Еркин')}
     ${card('Чистая прибыль', tot.net, tot.net>=0?'g':'o', pctOf(tot.net,tot.rev)+' маржа')}
+    ${hasReceipts ? card('Средний чек', avgCheck, '', tot.receipts+' чеков за период') : ''}
   </div>`;
 
   // Row 1: 2 charts
@@ -1287,6 +1297,16 @@ async function buildDashboard() {
       <canvas id="ch-city" height="200"></canvas>
     </div>
   </div>`;
+
+  // Row 3: средний чек — общий + по городам
+  if (hasReceipts) {
+    html += `<div style="display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px">
+      <div class="card" style="padding:18px">
+        <div style="font-weight:700;color:#1e3a5f;margin-bottom:12px;font-size:13px">💳 Средний чек по месяцам (общий и по городам)</div>
+        <canvas id="ch-check" height="120"></canvas>
+      </div>
+    </div>`;
+  }
 
   el.innerHTML = html;
 
@@ -1361,6 +1381,31 @@ async function buildDashboard() {
       scales:{x:{ticks:{callback:v=>v+' млн'}}}
     }
   }));
+
+  // Chart 5 – Средний чек по месяцам: общий (жирная линия) + по городам
+  if (hasReceipts && document.getElementById('ch-check')) {
+    const checkOf = (rev, rec) => rec ? Math.round(rev/rec) : null;
+    const totalCheckByMonth = MONTHS.map(m => checkOf(revM[m]||0, receiptsM[m]||0));
+    const cityCheckByMonth = city => MONTHS.map(m => checkOf((revCity[city]&&revCity[city][m])||0, (receiptsCity[city]&&receiptsCity[city][m])||0));
+    _dc.push(new Chart(document.getElementById('ch-check'), {
+      type:'line',
+      data:{
+        labels: MLBL,
+        datasets: [
+          { label:'Итого по компании', data: totalCheckByMonth, borderColor:'#1e3a5f', backgroundColor:'#1e3a5f', borderWidth:3, tension:0.3, pointRadius:4, spanGaps:true },
+          ...CITIES.map(city => ({
+            label: city, data: cityCheckByMonth(city),
+            borderColor: CITY_CLR[city]||'#94a3b8', borderDash:[4,2], tension:0.3, pointRadius:3, fill:false, spanGaps:true
+          }))
+        ]
+      },
+      options: {
+        responsive:true,
+        plugins:{ legend:{position:'bottom',labels:{boxWidth:12}} },
+        scales:{ y:{ ticks:{ callback:v=>fmt(v)+' ₸' } } }
+      }
+    }));
+  }
 }
 
 function renderJournal() {
@@ -1936,13 +1981,17 @@ function parse1CFile(file) {
         for (let i = headerIdx + 1; i < raw.length; i++) {
           const r = raw[i] || [];
           if (!r[0]) continue;
-          let date, city, amount;
+          let date, city, amount, receiptKey = null;
           if (fileType === 'sales') {
-            // col[0]=дата "DD.MM.YYYY HH:MM:SS", col[7]=склад, col[11]=кол-во, col[12]=цена
+            // col[0]=дата "DD.MM.YYYY HH:MM:SS", col[4]=клиент, col[7]=склад, col[11]=кол-во, col[12]=цена
             date   = parse1CDate(r[0]);
             city   = getCity(r[7]);
             amount = (parseFloat(r[11])||0) * (parseFloat(r[12])||0);
             if (amount < 100) continue; // пропуск внутренних перемещений (цена=1)
+            // Прокси «одного чека» — строки одного документа продажи в 1С
+            // выгружаются с одинаковой датой-временем (до секунды) и клиентом.
+            // Несколько товаров в одном чеке схлопываются в один уникальный ключ.
+            receiptKey = String(r[0]) + '|' + String(r[4]||'');
           } else {
             // col[0]=документ "... от DD.MM.YYYY ...", col[8]=склад, col[12]=кол-во, col[13]=цена
             date   = parse1CDate(r[0]);
@@ -1957,8 +2006,12 @@ function parse1CFile(file) {
           // её выручка корректно делится между двумя месяцами по фактической дате каждой строки
           // (раньше весь период недели ошибочно относился к месяцу первой встреченной строки).
           const key = week + '|' + month;
-          if (!byWeek[key]) byWeek[key] = { week, month, cities: {} };
+          if (!byWeek[key]) byWeek[key] = { week, month, cities: {}, receiptSets: {} };
           byWeek[key].cities[city] = (byWeek[key].cities[city] || 0) + amount;
+          if (receiptKey) {
+            if (!byWeek[key].receiptSets[city]) byWeek[key].receiptSets[city] = new Set();
+            byWeek[key].receiptSets[city].add(receiptKey);
+          }
           rowCount++;
         }
 
@@ -1986,11 +2039,19 @@ async function processUploadedFiles(files) {
   _mergedData = { sales: {}, purchases: {} };
   results.filter(r => !r.error).forEach(r => {
     const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
-    Object.entries(r.byWeek).forEach(([key, {week, month, cities}]) => {
-      if (!target[key]) target[key] = { week, month, cities: {} };
+    Object.entries(r.byWeek).forEach(([key, {week, month, cities, receiptSets}]) => {
+      if (!target[key]) target[key] = { week, month, cities: {}, receiptSets: {} };
       Object.entries(cities).forEach(([city, amt]) => {
         target[key].cities[city] = (target[key].cities[city] || 0) + amt;
       });
+      // Чеки объединяем через Set (не складываем числа!) — если одна и та же
+      // неделя встретится в двух файлах, один и тот же чек не задвоится.
+      if (receiptSets) {
+        Object.entries(receiptSets).forEach(([city, set]) => {
+          if (!target[key].receiptSets[city]) target[key].receiptSets[city] = new Set();
+          set.forEach(k => target[key].receiptSets[city].add(k));
+        });
+      }
     });
   });
 
@@ -2024,7 +2085,7 @@ async function processUploadedFiles(files) {
   });
 
   // Сводная таблица по неделям — Продажи
-  const buildWeekTable = (weekData, amtKey, amtLabel, colorCls) => {
+  const buildWeekTable = (weekData, amtKey, amtLabel, colorCls, showReceipts) => {
     const weeks = Object.keys(weekData).sort();
     if (!weeks.length) return '';
     let t = `<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin:14px 0 6px">${amtLabel} по неделям:</div>
@@ -2036,11 +2097,13 @@ async function processUploadedFiles(files) {
       <th style="padding:7px 10px;text-align:right">Астана</th>
       <th style="padding:7px 10px;text-align:right">Шымкент</th>
       <th style="padding:7px 10px;text-align:right">Итого</th>
+      ${showReceipts?'<th style="padding:7px 10px;text-align:right">Чеков</th>':''}
     </tr></thead><tbody>`;
     weeks.forEach((wk, idx) => {
-      const {month, cities} = weekData[wk];
+      const {month, cities, receiptSets} = weekData[wk];
       const alm = cities['Алматы']||0, ast = cities['Астана']||0, shy = cities['Шымкент']||0;
       const tot = alm + ast + shy;
+      const receiptsTot = showReceipts ? Object.values(receiptSets||{}).reduce((s,set)=>s+set.size,0) : 0;
       t += `<tr style="background:${idx%2?'white':'#f8fafc'}">
         <td style="padding:6px 10px;font-weight:700;color:#1e3a5f">${weekLabel(wk)}</td>
         <td style="padding:6px 10px;color:#64748b">${month}</td>
@@ -2048,6 +2111,7 @@ async function processUploadedFiles(files) {
         <td style="padding:6px 10px;text-align:right">${ast>0?fM(ast)+' ₸':'—'}</td>
         <td style="padding:6px 10px;text-align:right">${shy>0?fM(shy)+' ₸':'—'}</td>
         <td style="padding:6px 10px;text-align:right;font-weight:700;color:${colorCls}">${tot>0?fM(tot)+' ₸':'—'}</td>
+        ${showReceipts?`<td style="padding:6px 10px;text-align:right;color:#7c3aed">${receiptsTot||'—'}</td>`:''}
       </tr>`;
     });
     t += `</tbody></table></div>`;
@@ -2057,8 +2121,8 @@ async function processUploadedFiles(files) {
   const hasSales = Object.keys(_mergedData.sales).length > 0;
   const hasPurch = Object.keys(_mergedData.purchases).length > 0;
 
-  if (hasSales) html += buildWeekTable(_mergedData.sales,     'revenue', '📊 Продажи (выручка)', '#16a34a');
-  if (hasPurch) html += buildWeekTable(_mergedData.purchases, 'cogs',    '📦 Приход (себестоимость)', '#dc2626');
+  if (hasSales) html += buildWeekTable(_mergedData.sales,     'revenue', '📊 Продажи (выручка)', '#16a34a', true);
+  if (hasPurch) html += buildWeekTable(_mergedData.purchases, 'cogs',    '📦 Приход (себестоимость)', '#dc2626', false);
 
   if (hasSales || hasPurch) {
     html += `<div style="display:flex;align-items:center;gap:14px;margin-top:16px">
@@ -2080,9 +2144,10 @@ async function confirmAndSave() {
 
   // Разворачиваем в массивы строк
   const flatSales = [];
-  Object.entries(_mergedData.sales).forEach(([key, {week, month, cities}]) => {
+  Object.entries(_mergedData.sales).forEach(([key, {week, month, cities, receiptSets}]) => {
     Object.entries(cities).forEach(([city, revenue]) => {
-      flatSales.push({ week, month, city, revenue: Math.round(revenue), source: 'загрузка 1С' });
+      const receipts = receiptSets && receiptSets[city] ? receiptSets[city].size : 0;
+      flatSales.push({ week, month, city, revenue: Math.round(revenue), receipts, source: 'загрузка 1С' });
     });
   });
 
