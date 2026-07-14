@@ -601,7 +601,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby0rf1FZBD9p6g7L2YCLU6iJhXjOFZ7l4hXc2tU0DGgNsxhlCW0-WINDJPxYxtVJWO_vg/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxNJ7KmiHT-d7kVEcg7zHxFESTiGMVX7J7YOAE0Azgt7dPK37yTSjKB5bHTpyrEA91pRg/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -1134,7 +1134,7 @@ async function buildDashboard() {
 
   // Load 1С data: weekly sales + purchases → aggregate by month
   const revM = {}, cogsM = {}, revCity = {}; // revCity: { city: { month: amount } }
-  const receiptsM = {}, receiptsCity = {}; // receipts — кол-во чеков (для среднего чека)
+  const unitsM = {}, unitsCity = {}; // units — кол-во проданных штук (для средней цены продажи)
   try {
     const r = await fetch(SCRIPT_URL + '?action=get1CData');
     const d = await r.json();
@@ -1145,9 +1145,9 @@ async function buildDashboard() {
       const city = s.city||'Прочее';
       if (!revCity[city]) revCity[city] = {};
       revCity[city][mo] = (revCity[city][mo]||0) + (+s.revenue||0);
-      receiptsM[mo] = (receiptsM[mo]||0) + (+s.receipts||0);
-      if (!receiptsCity[city]) receiptsCity[city] = {};
-      receiptsCity[city][mo] = (receiptsCity[city][mo]||0) + (+s.receipts||0);
+      unitsM[mo] = (unitsM[mo]||0) + (+s.units||0);
+      if (!unitsCity[city]) unitsCity[city] = {};
+      unitsCity[city][mo] = (unitsCity[city][mo]||0) + (+s.units||0);
     });
     (d.purchases||[]).forEach(s => {
       const mo = String(s.month||'');
@@ -1193,11 +1193,16 @@ async function buildDashboard() {
   ['rev','cogs','gp','varE','mp','fix','op','com','ebit','own','net','cred','totExp'].forEach(k => {
     tot[k] = MONTHS.reduce((s,m) => s+(pm[m][k]||0), 0);
   });
-  tot.receipts = MONTHS.reduce((s,m) => s+(receiptsM[m]||0), 0);
-  // Средний чек = сумма выручки / сумма чеков за период (не среднее по месячным
-  // средним — так корректнее при разном количестве чеков в разные месяцы).
-  const avgCheck = tot.receipts ? Math.round(tot.rev / tot.receipts) : 0;
-  const hasReceipts = tot.receipts > 0;
+  tot.units = MONTHS.reduce((s,m) => s+(unitsM[m]||0), 0);
+  // Средняя цена продажи = сумма выручки / сумма проданных штук за период
+  // (не среднее по месячным средним — так корректнее при разном объёме продаж
+  // в разные месяцы). Раньше считали «средний чек» через группировку по
+  // документам, но Kaspi-маркетплей и внутренняя доставка (~95% выручки)
+  // в выгрузке 1С не имеют отдельного номера чека на заказ — сотни реальных
+  // заказов схлопывались в 1-2 «чека», и цифра улетала в миллионы. Цена за
+  // штуку — надёжная метрика, которая не зависит от группировки по чекам.
+  const avgPrice = tot.units ? Math.round(tot.rev / tot.units) : 0;
+  const hasUnits = tot.units > 0;
 
   // City totals (expenses from Журнал)
   const cityTot = {};
@@ -1251,7 +1256,7 @@ async function buildDashboard() {
     ${card('EBIT (до вывода)', tot.ebit, tot.ebit>=0?'g':'o', pctOf(tot.ebit,tot.rev)+' от выручки')}
     ${card('Вывод собственников', tot.own, 'd', 'шеф + Дастан + Еркин')}
     ${card('Чистая прибыль', tot.net, tot.net>=0?'g':'o', pctOf(tot.net,tot.rev)+' маржа')}
-    ${hasReceipts ? card('Средний чек', avgCheck, '', tot.receipts+' чеков за период') : ''}
+    ${hasUnits ? card('Средняя цена продажи', avgPrice, '', fmt(tot.units)+' шт. продано') : ''}
   </div>`;
 
   // Row 1: 2 charts
@@ -1298,11 +1303,11 @@ async function buildDashboard() {
     </div>
   </div>`;
 
-  // Row 3: средний чек — общий + по городам
-  if (hasReceipts) {
+  // Row 3: средняя цена продажи — общая + по городам
+  if (hasUnits) {
     html += `<div style="display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px">
       <div class="card" style="padding:18px">
-        <div style="font-weight:700;color:#1e3a5f;margin-bottom:12px;font-size:13px">💳 Средний чек по месяцам (общий и по городам)</div>
+        <div style="font-weight:700;color:#1e3a5f;margin-bottom:12px;font-size:13px">💳 Средняя цена продажи по месяцам (общая и по городам)</div>
         <canvas id="ch-check" height="120"></canvas>
       </div>
     </div>`;
@@ -1382,11 +1387,11 @@ async function buildDashboard() {
     }
   }));
 
-  // Chart 5 – Средний чек по месяцам: общий (жирная линия) + по городам
-  if (hasReceipts && document.getElementById('ch-check')) {
-    const checkOf = (rev, rec) => rec ? Math.round(rev/rec) : null;
-    const totalCheckByMonth = MONTHS.map(m => checkOf(revM[m]||0, receiptsM[m]||0));
-    const cityCheckByMonth = city => MONTHS.map(m => checkOf((revCity[city]&&revCity[city][m])||0, (receiptsCity[city]&&receiptsCity[city][m])||0));
+  // Chart 5 – Средняя цена продажи по месяцам: общая (жирная линия) + по городам
+  if (hasUnits && document.getElementById('ch-check')) {
+    const priceOf = (rev, u) => u ? Math.round(rev/u) : null;
+    const totalCheckByMonth = MONTHS.map(m => priceOf(revM[m]||0, unitsM[m]||0));
+    const cityCheckByMonth = city => MONTHS.map(m => priceOf((revCity[city]&&revCity[city][m])||0, (unitsCity[city]&&unitsCity[city][m])||0));
     _dc.push(new Chart(document.getElementById('ch-check'), {
       type:'line',
       data:{
@@ -1981,17 +1986,14 @@ function parse1CFile(file) {
         for (let i = headerIdx + 1; i < raw.length; i++) {
           const r = raw[i] || [];
           if (!r[0]) continue;
-          let date, city, amount, receiptKey = null;
+          let date, city, amount, qty = 0;
           if (fileType === 'sales') {
             // col[0]=дата "DD.MM.YYYY HH:MM:SS", col[4]=клиент, col[7]=склад, col[11]=кол-во, col[12]=цена
             date   = parse1CDate(r[0]);
             city   = getCity(r[7]);
-            amount = (parseFloat(r[11])||0) * (parseFloat(r[12])||0);
+            qty    = parseFloat(r[11]) || 0;
+            amount = qty * (parseFloat(r[12])||0);
             if (amount < 100) continue; // пропуск внутренних перемещений (цена=1)
-            // Прокси «одного чека» — строки одного документа продажи в 1С
-            // выгружаются с одинаковой датой-временем (до секунды) и клиентом.
-            // Несколько товаров в одном чеке схлопываются в один уникальный ключ.
-            receiptKey = String(r[0]) + '|' + String(r[4]||'');
           } else {
             // col[0]=документ "... от DD.MM.YYYY ...", col[8]=склад, col[12]=кол-во, col[13]=цена
             date   = parse1CDate(r[0]);
@@ -2006,11 +2008,10 @@ function parse1CFile(file) {
           // её выручка корректно делится между двумя месяцами по фактической дате каждой строки
           // (раньше весь период недели ошибочно относился к месяцу первой встреченной строки).
           const key = week + '|' + month;
-          if (!byWeek[key]) byWeek[key] = { week, month, cities: {}, receiptSets: {} };
+          if (!byWeek[key]) byWeek[key] = { week, month, cities: {}, units: {} };
           byWeek[key].cities[city] = (byWeek[key].cities[city] || 0) + amount;
-          if (receiptKey) {
-            if (!byWeek[key].receiptSets[city]) byWeek[key].receiptSets[city] = new Set();
-            byWeek[key].receiptSets[city].add(receiptKey);
+          if (fileType === 'sales') {
+            byWeek[key].units[city] = (byWeek[key].units[city] || 0) + qty;
           }
           rowCount++;
         }
@@ -2039,17 +2040,14 @@ async function processUploadedFiles(files) {
   _mergedData = { sales: {}, purchases: {} };
   results.filter(r => !r.error).forEach(r => {
     const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
-    Object.entries(r.byWeek).forEach(([key, {week, month, cities, receiptSets}]) => {
-      if (!target[key]) target[key] = { week, month, cities: {}, receiptSets: {} };
+    Object.entries(r.byWeek).forEach(([key, {week, month, cities, units}]) => {
+      if (!target[key]) target[key] = { week, month, cities: {}, units: {} };
       Object.entries(cities).forEach(([city, amt]) => {
         target[key].cities[city] = (target[key].cities[city] || 0) + amt;
       });
-      // Чеки объединяем через Set (не складываем числа!) — если одна и та же
-      // неделя встретится в двух файлах, один и тот же чек не задвоится.
-      if (receiptSets) {
-        Object.entries(receiptSets).forEach(([city, set]) => {
-          if (!target[key].receiptSets[city]) target[key].receiptSets[city] = new Set();
-          set.forEach(k => target[key].receiptSets[city].add(k));
+      if (units) {
+        Object.entries(units).forEach(([city, q]) => {
+          target[key].units[city] = (target[key].units[city] || 0) + q;
         });
       }
     });
@@ -2085,7 +2083,7 @@ async function processUploadedFiles(files) {
   });
 
   // Сводная таблица по неделям — Продажи
-  const buildWeekTable = (weekData, amtKey, amtLabel, colorCls, showReceipts) => {
+  const buildWeekTable = (weekData, amtKey, amtLabel, colorCls, showUnits) => {
     const weeks = Object.keys(weekData).sort();
     if (!weeks.length) return '';
     let t = `<div style="font-size:12px;font-weight:700;color:#1e3a5f;margin:14px 0 6px">${amtLabel} по неделям:</div>
@@ -2097,13 +2095,13 @@ async function processUploadedFiles(files) {
       <th style="padding:7px 10px;text-align:right">Астана</th>
       <th style="padding:7px 10px;text-align:right">Шымкент</th>
       <th style="padding:7px 10px;text-align:right">Итого</th>
-      ${showReceipts?'<th style="padding:7px 10px;text-align:right">Чеков</th>':''}
+      ${showUnits?'<th style="padding:7px 10px;text-align:right">Шт.</th>':''}
     </tr></thead><tbody>`;
     weeks.forEach((wk, idx) => {
-      const {month, cities, receiptSets} = weekData[wk];
+      const {month, cities, units} = weekData[wk];
       const alm = cities['Алматы']||0, ast = cities['Астана']||0, shy = cities['Шымкент']||0;
       const tot = alm + ast + shy;
-      const receiptsTot = showReceipts ? Object.values(receiptSets||{}).reduce((s,set)=>s+set.size,0) : 0;
+      const unitsTot = showUnits ? Object.values(units||{}).reduce((s,v)=>s+v,0) : 0;
       t += `<tr style="background:${idx%2?'white':'#f8fafc'}">
         <td style="padding:6px 10px;font-weight:700;color:#1e3a5f">${weekLabel(wk)}</td>
         <td style="padding:6px 10px;color:#64748b">${month}</td>
@@ -2111,7 +2109,7 @@ async function processUploadedFiles(files) {
         <td style="padding:6px 10px;text-align:right">${ast>0?fM(ast)+' ₸':'—'}</td>
         <td style="padding:6px 10px;text-align:right">${shy>0?fM(shy)+' ₸':'—'}</td>
         <td style="padding:6px 10px;text-align:right;font-weight:700;color:${colorCls}">${tot>0?fM(tot)+' ₸':'—'}</td>
-        ${showReceipts?`<td style="padding:6px 10px;text-align:right;color:#7c3aed">${receiptsTot||'—'}</td>`:''}
+        ${showUnits?`<td style="padding:6px 10px;text-align:right;color:#7c3aed">${unitsTot||'—'}</td>`:''}
       </tr>`;
     });
     t += `</tbody></table></div>`;
@@ -2144,10 +2142,10 @@ async function confirmAndSave() {
 
   // Разворачиваем в массивы строк
   const flatSales = [];
-  Object.entries(_mergedData.sales).forEach(([key, {week, month, cities, receiptSets}]) => {
+  Object.entries(_mergedData.sales).forEach(([key, {week, month, cities, units}]) => {
     Object.entries(cities).forEach(([city, revenue]) => {
-      const receipts = receiptSets && receiptSets[city] ? receiptSets[city].size : 0;
-      flatSales.push({ week, month, city, revenue: Math.round(revenue), receipts, source: 'загрузка 1С' });
+      const unitsQty = units && units[city] ? units[city] : 0;
+      flatSales.push({ week, month, city, revenue: Math.round(revenue), units: Math.round(unitsQty), source: 'загрузка 1С' });
     });
   });
 
