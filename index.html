@@ -490,6 +490,12 @@
           </div>
           <div class="field"><label>Комментарий</label><input type="text" id="f-notes" placeholder="Необязательно"></div>
         </div>
+        <div class="form-row">
+          <div class="field">
+            <label>Период начисления <span style="font-weight:400;color:#94a3b8;">(если отличается от даты оплаты — напр. зарплата за прошлый месяц)</span></label>
+            <input type="month" id="f-period" placeholder="Оставьте пустым, если совпадает с датой">
+          </div>
+        </div>
         <div class="btn-row">
           <button class="btn btn-save" id="btn-save" onclick="saveOperation()">&#10003; Сохранить операцию</button>
           <button class="btn btn-clear" onclick="clearForm()">Очистить</button>
@@ -1070,6 +1076,8 @@ async function saveOperation() {
     if (!supplier) { showToast('Выберите поставщика', 'error'); return; }
   }
   const m = CATEGORY_MAP[category] || { dds: 'Операционная', opiu: '' };
+  const periodInput = document.getElementById('f-period').value; // формат YYYY-MM или пусто
+  const period = periodInput || date.slice(0, 7);
   const row = {
     date, type: opType,
     category, name, amount: parseFloat(amount), account,
@@ -1079,6 +1087,7 @@ async function saveOperation() {
     responsible: document.getElementById('f-responsible').value,
     dds: m.dds, opiu: m.opiu,
     notes: document.getElementById('f-notes').value,
+    period,
     created_by: currentUser
   };
   const btn = document.getElementById('btn-save');
@@ -1094,7 +1103,7 @@ async function saveOperation() {
 }
 
 function clearForm() {
-  ['f-amount','f-name','f-notes'].forEach(id => document.getElementById(id).value = '');
+  ['f-amount','f-name','f-notes','f-period'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('f-category').value = '';
   document.getElementById('auto-tags').innerHTML = '';
   document.getElementById('field-supplier-row').style.display = 'none';
@@ -1734,7 +1743,9 @@ async function buildOPIU() {
 
   const catM = {};
   allData.filter(r => r.type==='расход').forEach(r => {
-    const m = r.date ? r.date.slice(0,7) : null;
+    // ОПИУ группирует по месяцу НАЧИСЛЕНИЯ (period), а не по дате оплаты.
+    // Если period не указан (старые строки/большинство операций) — берём месяц из даты.
+    const m = r.period ? String(r.period).slice(0,7) : (r.date ? r.date.slice(0,7) : null);
     if(!m) return;
     if(!catM[m]) catM[m] = {};
     const c = (r.category||'').toLowerCase();
