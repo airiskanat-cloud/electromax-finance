@@ -607,7 +607,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwklXMcc7Hg_0m9gHoL9LpqQe3NxiOL0IDvnfcsoP3vbZu-P085jymchckbYm8lqhEsEQ/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzKvUwGbp2bEgxC1CRkXM8BIp1ReNPFZDQ-cgUJSUBF44tvKJq9mq11zl4Av-CILT6Hdw/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -1745,6 +1745,19 @@ async function buildOPIU() {
   allData.filter(r => r.type==='расход').forEach(r => {
     // ОПИУ группирует по месяцу НАЧИСЛЕНИЯ (period), а не по дате оплаты.
     // Если period не указан (старые строки/большинство операций) — берём месяц из даты.
+    //
+    // ВАЖНО — известный повторяющийся паттерн (обнаружено июль 2026):
+    // Основную зарплату сотрудников компания платит НЕ в текущем месяце, а в первые
+    // ~1-10 дней СЛЕДУЮЩЕГО месяца, при этом строка называется "ЗП <прошлый месяц>"
+    // или "Зарплата <прошлый месяц>". Пример: "ЗП март" оплачена 01-10 апреля,
+    // "Зарплата февраль" оплачена 04-10 марта, "ЗП апрель" оплачена 05-08 мая.
+    // Без проставленного period такие строки задним числом ложатся ОПИУ не того
+    // месяца, к которому реально относятся (искажает и месяц-источник, и месяц-приёмник).
+    // Если в будущем в Журнале появляется новая партия строк category="зарплата" с
+    // именем вида "ЗП <месяц>"/"Зарплата <месяц>", датированная НЕ этим месяцем —
+    // это тот самый паттерн: нужно проставить period = месяц, указанный в названии
+    // (не месяц даты оплаты). См. файл "Журнал_Периоды_Исправления.xlsx" — там разобраны
+    // все найденные на июль 2026 случаи (февраль→март, март→апрель, апрель→май) с суммами.
     const m = r.period ? String(r.period).slice(0,7) : (r.date ? r.date.slice(0,7) : null);
     if(!m) return;
     if(!catM[m]) catM[m] = {};
