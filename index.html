@@ -260,6 +260,22 @@
         </div>
       </div>
 
+      <!-- ── KASPI COMMISSION UPLOAD ── -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-label">🅺 Комиссия Kaspi-маркетплейса (банковские выписки)</div>
+        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Загрузи Excel-выписки текущего счёта Kaspi Bank по юрлицам (Norex / Phone House / CTD). Из выписки берётся только комиссия маркетплейса и доставка Kaspi — остальные операции (оплата поставщикам, переводы, ЗП и т.п.) уже учтены в Журнале и игнорируются.</p>
+        <label id="kaspi-drop-zone" style="display:block;border:2px dashed #e9d5ff;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#fdf4ff;transition:background .2s"
+          ondragover="event.preventDefault();this.style.background='#f3e8ff'"
+          ondragleave="this.style.background='#fdf4ff'"
+          ondrop="handleKaspiFileDrop(event)">
+          <input type="file" id="kaspi-upload-input" accept=".xlsx,.xls" multiple style="display:none" onchange="processKaspiFiles(Array.from(this.files))">
+          <div style="font-size:36px;margin-bottom:10px">🅺</div>
+          <div style="font-weight:700;color:#581c87;font-size:15px">Нажми или перетащи выписки Kaspi сюда</div>
+          <div style="font-size:12px;color:#94a3b8;margin-top:6px">.xlsx, .xls — можно несколько файлов (по юрлицам) сразу</div>
+        </label>
+        <div id="kaspi-upload-preview"></div>
+      </div>
+
       <!-- ── MANUAL ENTRY (collapsed) ── -->
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleManualEntry()">
@@ -607,7 +623,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzKvUwGbp2bEgxC1CRkXM8BIp1ReNPFZDQ-cgUJSUBF44tvKJq9mq11zl4Av-CILT6Hdw/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbziuhHdZnZuZJSz10wDUCxejykY1Bj31s5GC1ZJuX2tJhMXdWVv0I-xFyMoRfyj7PFEaA/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -1550,7 +1566,7 @@ async function buildDDS() {
   const resultEl = document.getElementById('dds-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
-  const revM = {}, cogsM = {};
+  const revM = {}, cogsM = {}, kaspiKomM = {};
   try {
     const r = await fetch(SCRIPT_URL + '?action=get1CData');
     const d = await r.json();
@@ -1561,6 +1577,13 @@ async function buildDDS() {
     (d.purchases||[]).forEach(s => {
       const mo = String(s.month||'');
       if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
+    });
+    // Комиссия Kaspi-маркетплейса (обе статьи — маркетплейс + доставка — вместе,
+    // как единый отток "Комиссия Kaspi" в ДДС, по месяцу фактической даты операции).
+    (d.commissions||[]).forEach(c => {
+      const mo = String(c.month||'');
+      if (!mo) return;
+      kaspiKomM[mo] = (kaspiKomM[mo]||0) + (+c.amount||0);
     });
   } catch(e) {}
 
@@ -1589,7 +1612,8 @@ async function buildDDS() {
           cKasp=C(m,'бонусы'), cMark=C(m,'маркетинг');
     const com  = cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther+cKasp+cMark;
     const oOs=C(m,'ос'), oUpk=C(m,'упаковка'), oLog=C(m,'логистика'), oKom=C(m,'комиссия');
-    const other= oOs+oUpk+oLog+oKom;
+    const oKaspiKom = kaspiKomM[m]||0;
+    const other= oOs+oUpk+oLog+oKom+oKaspiKom;
     const opOut = cogs + fot + rent + com + other;
     const opFlow = rev - opOut;
     const shef = C(m,'шеф'), das = C(m,'дастан'), erk = C(m,'еркин');
@@ -1599,7 +1623,7 @@ async function buildDDS() {
     const netFlow = opFlow - finOut;
     return {rev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rent,
             cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,cKasp,cMark,com,
-            oOs,oUpk,oLog,oKom,other,
+            oOs,oUpk,oLog,oKom,oKaspiKom,other,
             opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
   };
 
@@ -1702,6 +1726,7 @@ async function buildDDS() {
   html += subRow('Упаковочные материалы', 'oUpk', 'dds-other');
   html += subRow('Логистика', 'oLog', 'dds-other');
   html += subRow('Банковские комиссии', 'oKom', 'dds-other');
+  html += subRow('Комиссия Kaspi маркетплейс', 'oKaspiKom', 'dds-other');
   html += sumRow('ИТОГО ВЫПЛАТЫ ОПЕРАЦИОННЫЕ', 'opOut', 'rs-sub2');
   html += sumRow('ОПЕРАЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК', 'opFlow', 'rs-op');
 
@@ -1722,7 +1747,7 @@ async function buildOPIU() {
   const resultEl = document.getElementById('opiu-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
-  const revM = {}, cogsM = {};
+  const revM = {}, cogsM = {}, kaspiMkM = {}, kaspiDlM = {};
   try {
     const r = await fetch(SCRIPT_URL + '?action=get1CData');
     const d = await r.json();
@@ -1733,6 +1758,14 @@ async function buildOPIU() {
     (d.purchases||[]).forEach(s => {
       const mo = String(s.month||'');
       if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
+    });
+    // Комиссия Kaspi-маркетплейса — загружается отдельно из банковских выписок
+    // Kaspi (см. загрузку "Комиссия Kaspi"), 2 статьи: маркетплейс / доставка.
+    (d.commissions||[]).forEach(c => {
+      const mo = String(c.month||'');
+      if (!mo) return;
+      if (c.category === 'маркетплейс') kaspiMkM[mo] = (kaspiMkM[mo]||0) + (+c.amount||0);
+      else if (c.category === 'доставка') kaspiDlM[mo] = (kaspiDlM[mo]||0) + (+c.amount||0);
     });
   } catch(e) {}
 
@@ -1768,7 +1801,9 @@ async function buildOPIU() {
 
   const calc = m => {
     const rev=revM[m]||0, cogs=cogsM[m]||0, gp=rev-cogs;
-    const kom=C(m,'комиссия'), log_=C(m,'логистика'), upk=C(m,'упаковка'), varE=kom+log_+upk, mp=gp-varE;
+    const kom=C(m,'комиссия'), log_=C(m,'логистика'), upk=C(m,'упаковка');
+    const kaspiMk=kaspiMkM[m]||0, kaspiDl=kaspiDlM[m]||0;
+    const varE=kom+log_+upk+kaspiMk+kaspiDl, mp=gp-varE;
     const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rent=rentA+rentB;
     const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fot=fotZp+fotAv;
     const naem=C(m,'наемники'), tax=C(m,'налоги'), os_=C(m,'ос');
@@ -1782,7 +1817,7 @@ async function buildOPIU() {
     const ebit=op-comTotal;
     const shef=C(m,'шеф'), das=C(m,'дастан'), erk=C(m,'еркин'), own=shef+das+erk, net=ebit-own;
     const cred=C(m,'кредит');
-    return {rev,cogs,gp,kom,log:log_,upk,varE,mp,rentA,rentB,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
+    return {rev,cogs,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
             kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred};
   };
 
@@ -1887,6 +1922,8 @@ async function buildOPIU() {
   html += dRow('(-) Банковские комиссии и сборы', 'kom', true, true);
   html += dRow('(-) Логистика (доставка)', 'log', true, true);
   html += dRow('(-) Упаковочные материалы', 'upk', true, true);
+  html += dRow('(-) Комиссия маркетплейса Kaspi', 'kaspiMk', true, true);
+  html += dRow('(-) Доставка Kaspi', 'kaspiDl', true, true);
   html += profRow('▶  МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', 'mp');
   html += pctRow('Маржинальность %', 'mp');
 
@@ -2209,6 +2246,232 @@ async function confirmAndSave() {
     msg.textContent = `✓ Сохранено: ${uniqueWeeks}`;
     msg.style.color = '#16a34a';
     showToast('Данные 1С сохранены в Google Sheets!', 'success');
+  } catch(e) {
+    msg.textContent = '✗ Ошибка: ' + e.message;
+    msg.style.color = '#dc2626';
+  }
+}
+
+// ── KASPI КОМИССИЯ (банковские выписки Kaspi по юрлицам) ──────────────
+// Формат: строка "Наименование:" с юрлицом в шапке, затем таблица со
+// столбцами № документа | Дата операции | Дебет | Кредит | Бенефициар |
+// ИИК | БИК | КНП | Назначение платежа.
+// Из всей выписки берём ТОЛЬКО строки комиссии Kaspi-маркетплейса —
+// остальное (оплата поставщикам, переводы, ЗП, реклама, аренда, возврат
+// продаж) уже учтено в Журнале и пропускается, чтобы не задвоить расходы.
+let _mergedKaspi = {}; // { 'week|month': { week, month, account, cats:{маркетплейс, доставка} } }
+
+const KASPI_ENTITY_MAP = [
+  [/norex/i,        'Норех'],
+  [/phone\s*house/i,'Фон'],
+  [/\bctd\b/i,       'СТД']
+];
+
+function classifyKaspiPurpose(purpose) {
+  const p = String(purpose||'').toLowerCase();
+  if (p.includes('доставк')) return 'доставка';
+  if (p.includes('обработке данных')) return 'маркетплейс';
+  if (p.includes('картам kaspi gold') || p.includes('операций по картам')) return 'маркетплейс';
+  if (p.includes('процессинга')) return 'маркетплейс';
+  return null; // всё остальное — не комиссия маркетплейса, пропускаем
+}
+
+function parseKaspiCommissionFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array', raw:true});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+
+        // Юрлицо — строка "Наименование:" в шапке выписки
+        let entityRaw = '';
+        for (let i = 0; i < Math.min(raw.length, 20); i++) {
+          const c0 = String(raw[i]?.[0]||'').toLowerCase();
+          if (c0.includes('наименование')) { entityRaw = String(raw[i]?.[2]||''); break; }
+        }
+        let account = '';
+        for (const [re, name] of KASPI_ENTITY_MAP) { if (re.test(entityRaw)) { account = name; break; } }
+
+        // Заголовок таблицы — строка с "Дата операции" во 2-й колонке
+        let headerIdx = -1;
+        for (let i = 0; i < Math.min(raw.length, 25); i++) {
+          if (String(raw[i]?.[1]||'').toLowerCase().includes('дата операции')) { headerIdx = i; break; }
+        }
+
+        if (!account) {
+          resolve({error:`Не распознано юрлицо ("${entityRaw||'—'}"). Ожидались Norex / Phone House / CTD.`, name: file.name});
+          return;
+        }
+        if (headerIdx === -1) {
+          resolve({error:`Не найден заголовок выписки (колонка "Дата операции"). Проверь формат файла.`, name: file.name});
+          return;
+        }
+
+        const parseKDate = s => {
+          const m = String(s||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+          return m ? new Date(+m[3], +m[2]-1, +m[1]) : null;
+        };
+        const getISOWeek = d => {
+          const u = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+          const day = u.getUTCDay() || 7;
+          u.setUTCDate(u.getUTCDate() + 4 - day);
+          const y = u.getUTCFullYear();
+          const wn = Math.ceil((((u - new Date(Date.UTC(y,0,1))) / 86400000) + 1) / 7);
+          return `${y}-W${String(wn).padStart(2,'0')}`;
+        };
+
+        // byWeek: { '2026-W23|2026-06': { week, month, cats:{маркетплейс, доставка} } }
+        const byWeek = {};
+        let rowCount = 0;
+        for (let i = headerIdx + 1; i < raw.length; i++) {
+          const r = raw[i] || [];
+          const date = parseKDate(r[1]);
+          if (!date) continue; // пропуск строки нумерации колонок (1,2,3...) и пустых строк
+          const cat = classifyKaspiPurpose(r[8]);
+          if (!cat) continue; // не комиссия маркетплейса — пропускаем
+          const amt = (parseFloat(r[2])||0) - (parseFloat(r[3])||0); // Дебет минус Кредит (возврат комиссии уменьшает сумму)
+          if (!amt) continue;
+
+          const week  = getISOWeek(date);
+          const month = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
+          const key = week + '|' + month;
+          if (!byWeek[key]) byWeek[key] = { week, month, cats: {} };
+          byWeek[key].cats[cat] = (byWeek[key].cats[cat] || 0) + amt;
+          rowCount++;
+        }
+
+        resolve({ account, entityRaw, byWeek, rows: rowCount, name: file.name });
+      } catch(err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function handleKaspiFileDrop(event) {
+  event.preventDefault();
+  document.getElementById('kaspi-drop-zone').style.background = '#fdf4ff';
+  const files = Array.from(event.dataTransfer.files).filter(f => /\.xlsx?$/i.test(f.name));
+  if (files.length) processKaspiFiles(files);
+}
+
+async function processKaspiFiles(files) {
+  const preview = document.getElementById('kaspi-upload-preview');
+  preview.innerHTML = '<div style="margin-top:12px"><div class="loading"><div class="spinner"></div>Обрабатываю выписки Kaspi...</div></div>';
+
+  const results = [];
+  for (const file of files) {
+    try { results.push(await parseKaspiCommissionFile(file)); }
+    catch(e) { results.push({error: e.message, name: file.name}); }
+  }
+
+  // { 'week|month|account': { week, month, account, cats:{маркетплейс, доставка} } }
+  _mergedKaspi = {};
+  results.filter(r => !r.error).forEach(r => {
+    Object.entries(r.byWeek).forEach(([key, {week, month, cats}]) => {
+      const fullKey = key + '|' + r.account;
+      if (!_mergedKaspi[fullKey]) _mergedKaspi[fullKey] = { week, month, account: r.account, cats: {} };
+      Object.entries(cats).forEach(([cat, amt]) => {
+        _mergedKaspi[fullKey].cats[cat] = (_mergedKaspi[fullKey].cats[cat] || 0) + amt;
+      });
+    });
+  });
+
+  const fM = v => v >= 1e6 ? (v/1e6).toFixed(1)+' млн' : Math.round(v/1e3)+' тыс';
+  const weekLabel = wk => { const m = wk.match(/(\d{4})-W(\d+)/); return m ? `W${m[2]}` : wk; };
+
+  let html = '<div style="margin-top:14px">';
+  results.forEach(r => {
+    if (r.error) {
+      html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:12px"><b>❌ ${r.name}</b>: ${r.error}</div>`;
+    } else {
+      const totMk = Object.values(r.byWeek).reduce((s,{cats}) => s + (cats['маркетплейс']||0), 0);
+      const totDl = Object.values(r.byWeek).reduce((s,{cats}) => s + (cats['доставка']||0), 0);
+      const weeks = [...new Set(Object.keys(r.byWeek).map(weekLabel))].sort();
+      html += `<div style="background:#fdf4ff;border:1px solid #e9d5ff;border-radius:8px;padding:10px 14px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <b style="color:#581c87;font-size:13px">🅺 ${r.account} · ${r.name}</b>
+          <span style="color:#7c3aed">✓ ${r.rows} строк</span>
+        </div>
+        <div style="font-size:11px;color:#6b21a8;margin-top:4px">
+          Недели: <b>${weeks.join(', ')}</b> · Маркетплейс: <b>${fM(totMk)} ₸</b> · Доставка: <b>${fM(totDl)} ₸</b>
+        </div>
+      </div>`;
+    }
+  });
+
+  const keys = Object.keys(_mergedKaspi);
+  if (keys.length) {
+    const weeks = [...new Set(keys.map(k => _mergedKaspi[k].week))].sort();
+    let t = `<div style="font-size:12px;font-weight:700;color:#581c87;margin:14px 0 6px">Комиссия Kaspi по неделям и юрлицам:</div>
+    <div class="report-wrap"><table style="border-collapse:collapse;font-size:12px;width:100%">
+    <thead><tr style="background:#581c87;color:white">
+      <th style="padding:7px 10px;text-align:left">Неделя</th>
+      <th style="padding:7px 10px;text-align:left">Месяц</th>
+      <th style="padding:7px 10px;text-align:left">Юрлицо</th>
+      <th style="padding:7px 10px;text-align:right">Маркетплейс</th>
+      <th style="padding:7px 10px;text-align:right">Доставка</th>
+      <th style="padding:7px 10px;text-align:right">Итого</th>
+    </tr></thead><tbody>`;
+    Object.values(_mergedKaspi).sort((a,b)=> a.week.localeCompare(b.week) || a.account.localeCompare(b.account)).forEach((row, idx) => {
+      const mk = row.cats['маркетплейс']||0, dl = row.cats['доставка']||0;
+      t += `<tr style="background:${idx%2?'white':'#faf5ff'}">
+        <td style="padding:6px 10px;font-weight:700;color:#581c87">${weekLabel(row.week)}</td>
+        <td style="padding:6px 10px;color:#64748b">${row.month}</td>
+        <td style="padding:6px 10px">${row.account}</td>
+        <td style="padding:6px 10px;text-align:right">${mk>0?fM(mk)+' ₸':'—'}</td>
+        <td style="padding:6px 10px;text-align:right">${dl>0?fM(dl)+' ₸':'—'}</td>
+        <td style="padding:6px 10px;text-align:right;font-weight:700;color:#7c3aed">${fM(mk+dl)} ₸</td>
+      </tr>`;
+    });
+    t += `</tbody></table></div>`;
+    html += t;
+    html += `<div style="display:flex;align-items:center;gap:14px;margin-top:16px">
+      <button class="btn btn-save" onclick="confirmAndSaveKaspi()" style="width:auto">⬆ Добавить в Google Sheets</button>
+      <div id="kaspi-upload-save-msg" style="font-size:13px"></div>
+    </div>
+    <div style="font-size:11px;color:#64748b;margin-top:6px">
+      ℹ️ Если для этой недели и юрлица уже есть данные — они заменятся. Остальное не затронется.
+    </div>`;
+  }
+
+  html += '</div>';
+  preview.innerHTML = html;
+}
+
+async function confirmAndSaveKaspi() {
+  const msg = document.getElementById('kaspi-upload-save-msg');
+  msg.textContent = 'Сохранение...'; msg.style.color = '#64748b';
+
+  const flat = [];
+  Object.values(_mergedKaspi).forEach(({week, month, account, cats}) => {
+    Object.entries(cats).forEach(([category, amount]) => {
+      if (!amount) return;
+      flat.push({ week, month, account, category, amount: Math.round(amount), source: 'выписка Kaspi' });
+    });
+  });
+
+  const byWeek = {};
+  flat.forEach(r => { if (!byWeek[r.week]) byWeek[r.week] = []; byWeek[r.week].push(r); });
+  const weekKeys = Object.keys(byWeek).sort();
+  const CHUNK = 5;
+
+  try {
+    const savedWeeks = [];
+    for (let i = 0; i < weekKeys.length; i += CHUNK) {
+      const chunk = weekKeys.slice(i, i + CHUNK).flatMap(wk => byWeek[wk]);
+      msg.textContent = `Сохранение... ${i + Math.min(CHUNK, weekKeys.length - i)}/${weekKeys.length} недель`;
+      const r = await fetch(`${SCRIPT_URL}?action=saveWeekCommissions&data=${encodeURIComponent(JSON.stringify(chunk))}`);
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error || 'Ошибка сервера');
+      savedWeeks.push(...(d.weeks || []));
+    }
+    const uniqueWeeks = [...new Set(savedWeeks)].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
+    msg.textContent = `✓ Сохранено: ${uniqueWeeks}`;
+    msg.style.color = '#16a34a';
+    showToast('Комиссия Kaspi сохранена в Google Sheets!', 'success');
   } catch(e) {
     msg.textContent = '✗ Ошибка: ' + e.message;
     msg.style.color = '#dc2626';
