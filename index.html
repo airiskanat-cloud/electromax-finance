@@ -1800,10 +1800,14 @@ async function buildOPIU() {
   const C = (m,...cs) => cs.reduce((s,c) => s+(catM[m]?.[c]||0), 0);
 
   const calc = m => {
-    const rev=revM[m]||0, cogs=cogsM[m]||0, gp=rev-cogs;
-    const kom=C(m,'комиссия'), log_=C(m,'логистика'), upk=C(m,'упаковка');
+    const rev=revM[m]||0, cogs=cogsM[m]||0;
+    // Комиссия Kaspi-маркетплейса и доставка Kaspi — по требованию заказчика
+    // учитываются как часть себестоимости (входят в валовую прибыль), а не
+    // в переменных торговых расходах после неё.
     const kaspiMk=kaspiMkM[m]||0, kaspiDl=kaspiDlM[m]||0;
-    const varE=kom+log_+upk+kaspiMk+kaspiDl, mp=gp-varE;
+    const gp=rev-cogs-kaspiMk-kaspiDl;
+    const kom=C(m,'комиссия'), log_=C(m,'логистика'), upk=C(m,'упаковка');
+    const varE=kom+log_+upk, mp=gp-varE;
     const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rent=rentA+rentB;
     const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fot=fotZp+fotAv;
     const naem=C(m,'наемники'), tax=C(m,'налоги'), os_=C(m,'ос');
@@ -1914,6 +1918,8 @@ async function buildOPIU() {
   html += hdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
   html += dRow('Выручка (нетто)  [1С Продажи]', 'rev');
   html += dRow('(-) Себестоимость  [1С Приход]', 'cogs', false, true);
+  html += dRow('(-) Комиссия маркетплейса Kaspi', 'kaspiMk', false, true);
+  html += dRow('(-) Доставка Kaspi', 'kaspiDl', false, true);
   html += profRow('▶  ВАЛОВАЯ ПРИБЫЛЬ', 'gp');
   html += pctRow('Валовая маржа %', 'gp');
 
@@ -1922,8 +1928,6 @@ async function buildOPIU() {
   html += dRow('(-) Банковские комиссии и сборы', 'kom', true, true);
   html += dRow('(-) Логистика (доставка)', 'log', true, true);
   html += dRow('(-) Упаковочные материалы', 'upk', true, true);
-  html += dRow('(-) Комиссия маркетплейса Kaspi', 'kaspiMk', true, true);
-  html += dRow('(-) Доставка Kaspi', 'kaspiDl', true, true);
   html += profRow('▶  МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', 'mp');
   html += pctRow('Маржинальность %', 'mp');
 
