@@ -1042,17 +1042,41 @@ function acctBucket(acc) {
 // счёт получателя при переводе, счёт для сверки выписки) со списком счетов
 // из листа «НачальныеОстатки». Как только там появляется новый счёт (даже
 // с нулевым балансом) — он сам возникает во всех списках приложения.
+// Банк, которому принадлежит юр.счёт (первое слово названия — Kaspi/БЦК/
+// Халык/Жусан/Freedom/Forte) — нужен только для группировки в <optgroup>,
+// само название счёта не меняет.
+function acctBankLabel(acc) {
+  const m = String(acc||'').trim().match(/^(kaspi|бцк|халык|жусан|freedom|forte)(\s|$)/i);
+  return m ? m[1] : 'Другое';
+}
+const BANK_ORDER = ['Kaspi','БЦК','Халык','Жусан','Freedom','Forte','Другое'];
+
+// Оборачивает список счетов в <optgroup> по банку — в выпадающем списке видно
+// не плоский список, а разделы "Kaspi", "БЦК" и т.д.
+function groupedOptions(accounts) {
+  const byBank = {};
+  accounts.forEach(a => {
+    const b = acctBankLabel(a);
+    (byBank[b] = byBank[b] || []).push(a);
+  });
+  return BANK_ORDER.filter(b => byBank[b]).map(b =>
+    `<optgroup label="${b}">` +
+    byBank[b].sort().map(a => `<option value="${a}">${a}</option>`).join('') +
+    `</optgroup>`
+  ).join('');
+}
+
 function refreshAccountLists() {
   const accounts = [...new Set(openingBalances.map(o => o.account).filter(Boolean))];
   if (!accounts.length) return; // лист ещё не заведён — оставляем как есть
-  const legal = [], kaspiHolders = [];
+  const legal = [], kaspiHolders = [], cash = [];
   accounts.forEach(acc => {
     const b = acctBucket(acc);
     if (b.type === 'legal') legal.push(acc);
     else if (b.type === 'kaspi') kaspiHolders.push(b.name);
+    else if (b.type === 'cash') cash.push(acc);
   });
-  legal.sort(); kaspiHolders.sort();
-  const sortedAll = [...accounts].sort();
+  legal.sort(); kaspiHolders.sort(); cash.sort();
 
   const setOptions = (id, optsHtml, placeholder) => {
     const el = document.getElementById(id);
@@ -1063,7 +1087,7 @@ function refreshAccountLists() {
   };
 
   setOptions('f-legal-account',
-    legal.map(a => `<option value="${a}">${a}</option>`).join(''),
+    groupedOptions(legal),
     '<option value="">— Выберите счёт —</option>');
 
   setOptions('f-kaspi-holder',
@@ -1072,12 +1096,14 @@ function refreshAccountLists() {
     '<option value="">— Выберите держателя —</option>');
 
   setOptions('f-to-account',
-    sortedAll.map(a => `<option value="${a}">${a}</option>`).join('') +
+    groupedOptions(legal) +
+      (cash.length ? `<optgroup label="Наличка">${cash.map(a => `<option value="${a}">${a}</option>`).join('')}</optgroup>` : '') +
+      (kaspiHolders.length ? `<optgroup label="Kaspi Gold">${kaspiHolders.map(h => `<option value="Каспи ${h}">Каспи ${h}</option>`).join('')}</optgroup>` : '') +
       '<option value="Другой">Другой (не из списка)</option>',
     '<option value="">— Выберите счёт —</option>');
 
   setOptions('rec-account',
-    sortedAll.map(a => `<option value="${a}">${a}</option>`).join(''),
+    groupedOptions(legal),
     '<option value="">— Выберите счёт —</option>');
 }
 
