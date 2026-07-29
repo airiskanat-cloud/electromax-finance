@@ -789,21 +789,50 @@ function currentMonth() {
   const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
 }
 
-const OPENING_BASE_DATE = '2026-06-30';
+const OPENING_BASE_DATE = '2026-07-20';
 let openingBalances = []; // [{account, city, balance}] — заполняется вручную в Google Sheets
 let suppliers = []; // [name, ...] — заполняется вручную в листе «Поставщики»
 let debtsData = []; // [{id, date, counterparty, direction, amount, notes, status}] — лист «Долги»
+
+// Приводит название счёта Kaspi Gold к единому виду «Каспи — Имя» независимо
+// от того, как его набрали руками: «Темирлан Каспи голд», «каспи-темирлан»,
+// «Kaspi Gold Темирлан» и т.п. — всё это один и тот же счёт. Имя человека
+// заранее не перечисляем (список открытый, новые люди появляются сами) —
+// просто отбрасываем служебные слова (каспи/kaspi/голд/gold/тире) и то,
+// что осталось, считаем именем держателя. Остальные счета (юр.лица, касса)
+// не трогаем — там расхождения написания разбираются вручную (см. предупреждение
+// на странице «Остатки счетов»), чтобы случайно не слить разные счета в один.
+function normalizeAccountName(acc) {
+  let a = String(acc||'').trim();
+  if (!a) return a;
+  if (/(каспи|kaspi)/i.test(a)) {
+    let rest = a.replace(/каспи|kaspi|голд|gold/gi, ' ')
+                .replace(/[—\-–]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+    if (rest) {
+      rest = rest.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+      return 'Каспи — ' + rest;
+    }
+  }
+  return a.replace(/\s+/g, ' ').trim();
+}
 
 async function loadData() {
   try {
     const r = await fetch(SCRIPT_URL + '?action=getAll');
     const d = await r.json();
     allData = d.data || [];
+    allData.forEach(row => {
+      if (row.account) row.account = normalizeAccountName(row.account);
+      if (row.to_account) row.to_account = normalizeAccountName(row.to_account);
+    });
   } catch(e) { allData = []; }
   try {
     const r2 = await fetch(SCRIPT_URL + '?action=getOpeningBalances');
     const d2 = await r2.json();
     openingBalances = d2.items || [];
+    openingBalances.forEach(o => { if (o.account) o.account = normalizeAccountName(o.account); });
   } catch(e) { openingBalances = []; }
   try {
     const r3 = await fetch(SCRIPT_URL + '?action=getSuppliers');
@@ -1603,25 +1632,87 @@ async function deleteRow(id) {
   showToast('Операция удалена', 'success');
 }
 
+// Юр.счёт — начинается с ТОО / БЦК / Счёт / ИП (как в поле "Тип счёта" формы ввода).
+// Всё остальное (касса нал, Kaspi Gold, личные исторические имена) — физ.счёт.
+function isLegalAcct(acc) {
+  return /^(тоо|бцк|счет|счёт|ип)\b/i.test(String(acc||'').trim());
+}
+
+// Ловит расхождения написания между счетами в Журнале и каноническим
+// списком в НачальныеОстатки (например «БЦК ФОН» vs «БЦК Фон», или
+// «Темирлан Каспи голд» вместо положенного «Каспи — Темирлан»). Такие
+// расхождения — главная причина "лишних" счетов и минусовых остатков:
+// счёт с опечаткой не находит свой сид и считается с нуля.
+function findAccountNameIssues() {
+  const canonical = [...new Set(openingBalances.map(o => o.account).filter(Boolean))];
+  const canonicalNorm = new Map(canonical.map(a => [a.toLowerCase().replace(/\s+/g,' ').trim(), a]));
+  const journalAccs = new Set();
+  allData.forEach(r => { if (r.account) journalAccs.add(r.account); if (r.to_account) journalAccs.add(r.to_account); });
+  const issues = [];
+  journalAccs.forEach(acc => {
+    if (canonical.includes(acc)) return; // точное совпадение — всё ок
+    const norm = acc.toLowerCase().replace(/\s+/g,' ').trim();
+    if (canonicalNorm.has(norm) && canonicalNorm.get(norm) !== acc) {
+      issues.push({ acc, matches: canonicalNorm.get(norm) });
+    }
+  });
+  return issues;
+}
+
 function renderBalances() {
   const accounts = [...new Set([
     ...allData.map(r => r.account).filter(Boolean),
     ...openingBalances.map(o => o.account).filter(Boolean)
-  ])].sort();
+  ])];
   if (!accounts.length) { document.getElementById('balances-grid').innerHTML = '<div class="empty-state"><div class="emoji">&#128179;</div>Нет данных по счетам</div>'; return; }
-  let html = '<div class="cards-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">';
-  let total = 0;
-  accounts.forEach(acc => {
-    const bal = balanceThrough(BALANCE_TODAY_SENTINEL, 'account', acc);
-    const { in: inc, out: exp } = flowSplit(allData, 'account', acc);
-    total += bal;
-    html += '<div class="card"><div class="card-label" style="font-size:11px">' + acc + '</div>' +
-      '<div class="card-value ' + (bal>=0?'green':'red') + '" style="font-size:20px">' + fmt(bal) + ' ₸</div>' +
-      '<div class="card-sub">+' + fmt(inc) + ' / -' + fmt(exp) + '</div></div>';
-  });
-  html += '</div><div class="card" style="margin-top:16px;background:#1e3a5f;">' +
+
+  const rows = accounts.map(acc => ({
+    acc,
+    bal: balanceThrough(BALANCE_TODAY_SENTINEL, 'account', acc)
+  }));
+  const legal = rows.filter(r => isLegalAcct(r.acc)).sort((a,b) => Math.abs(b.bal) - Math.abs(a.bal));
+  const phys  = rows.filter(r => !isLegalAcct(r.acc)).sort((a,b) => Math.abs(b.bal) - Math.abs(a.bal));
+  const total = rows.reduce((s,r) => s + r.bal, 0);
+  const legalTotal = legal.reduce((s,r) => s + r.bal, 0);
+  const physTotal = phys.reduce((s,r) => s + r.bal, 0);
+  const maxAbs = Math.max(1, ...rows.map(r => Math.abs(r.bal)));
+
+  const barRow = r => {
+    const pct = Math.min(100, Math.abs(r.bal) / maxAbs * 100);
+    const neg = r.bal < 0;
+    return '<div style="display:grid;grid-template-columns:200px 1fr 130px;align-items:center;gap:10px;margin-bottom:9px">' +
+      '<span style="font-size:13px;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + r.acc + '</span>' +
+      '<div style="height:10px;background:#f1f5f9;border-radius:5px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + (neg?'#dc2626':'#2563eb') + ';border-radius:5px"></div></div>' +
+      '<span style="font-size:13px;text-align:right;font-weight:700;color:' + (neg?'#dc2626':'#1e3a5f') + '">' + fmt(r.bal) + ' ₸</span>' +
+    '</div>';
+  };
+
+  const block = (title, list, sum, color) =>
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">' +
+        '<div class="card-label" style="margin:0">' + title + '</div>' +
+        '<span style="font-size:16px;font-weight:700;color:' + (sum>=0?color:'#dc2626') + '">' + fmt(sum) + ' ₸</span>' +
+      '</div>' +
+      (list.length ? list.map(barRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет счетов</div>') +
+    '</div>';
+
+  const nameIssues = findAccountNameIssues();
+  let html = '';
+  if (nameIssues.length) {
+    html += '<div class="card" style="margin-bottom:16px;background:#fffbeb;border:1px solid #fde68a">' +
+      '<div style="font-weight:700;color:#92400e;margin-bottom:8px">&#9888; Расхождение в написании счетов (' + nameIssues.length + ')</div>' +
+      '<div style="font-size:12px;color:#92400e;line-height:1.7">' +
+      nameIssues.map(i => 'В Журнале «<b>' + i.acc + '</b>» — в НачальныеОстатки записано как «<b>' + i.matches + '</b>». Приведи к одному написанию.').join('<br>') +
+      '</div></div>';
+  }
+
+  html += block('Юридические счета', legal, legalTotal, '#1e3a5f')
+        + block('Физические счета (касса, Kaspi Gold, прочие)', phys, physTotal, '#1e3a5f');
+
+  html += '<div class="card" style="background:#1e3a5f">' +
     '<div class="card-label" style="color:#93c5fd">ИТОГО ПО ВСЕМ СЧЕТАМ</div>' +
     '<div class="card-value" style="color:white;font-size:28px">' + fmt(total) + ' ₸</div></div>';
+
   document.getElementById('balances-grid').innerHTML = html;
 }
 
