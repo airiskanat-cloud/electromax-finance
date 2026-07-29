@@ -417,6 +417,7 @@
               <option value="дастан">Вывод Дастан</option>
               <option value="еркин">Вывод Еркин</option>
               <option value="ОС">Основные средства (ОС)</option>
+              <option value="долг">🤝 Погашение долга</option>
               <option value="прочее">Прочее</option>
             </select>
             <div class="auto-tags" id="auto-tags"></div>
@@ -533,6 +534,14 @@
           <div class="field" id="field-supplier-other" style="display:none">
             <label>Название поставщика</label>
             <input type="text" id="f-supplier-other" placeholder="Впишите название">
+          </div>
+        </div>
+        <div class="form-row" id="field-close-debt-row" style="display:none">
+          <div class="field">
+            <label>Какой долг закрываем <span class="required">*</span></label>
+            <select id="f-close-debt">
+              <option value="">— Выберите долг —</option>
+            </select>
           </div>
         </div>
         <div class="form-row triple">
@@ -724,6 +733,7 @@ const CATEGORY_MAP = {
   'дастан':          { dds: 'Финансовая',   opiu: '' },
   'еркин':           { dds: 'Финансовая',   opiu: '' },
   'ОС':              { dds: 'Инвестиционная', opiu: '' },
+  'долг':            { dds: 'Финансовая',   opiu: '' },
   'прочее':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
 };
 
@@ -1141,6 +1151,7 @@ function setType(t) {
   document.getElementById('debt-form').style.display = isDebt ? 'block' : 'none';
   document.getElementById('normal-op-form').style.display = isDebt ? 'none' : 'block';
   if (!isDebt) document.getElementById('field-to-account-row').style.display = t === 'перевод' ? 'grid' : 'none';
+  if (document.getElementById('f-category').value === 'долг') populateCloseDebtOptions();
 }
 
 async function saveDebt() {
@@ -1226,6 +1237,31 @@ function updateTags() {
       document.getElementById('field-supplier-other').style.display = 'none';
     }
   }
+  const debtRow = document.getElementById('field-close-debt-row');
+  if (debtRow) {
+    debtRow.style.display = cat === 'долг' ? 'grid' : 'none';
+    if (cat === 'долг') populateCloseDebtOptions();
+    else document.getElementById('f-close-debt').value = '';
+  }
+}
+
+// Список открытых долгов для закрытия через обычную операцию (категория
+// «Погашение долга»). Направление зависит от типа операции: доход — нам
+// должны (мы получаем деньги), расход — мы должны (мы платим), перевод —
+// оба варианта сразу (перевод не имеет своего направления доход/расход).
+function populateCloseDebtOptions() {
+  const sel = document.getElementById('f-close-debt');
+  if (!sel) return;
+  const type = document.getElementById('f-type').value;
+  const open = debtsData.filter(d => (d.status||'открыт') !== 'закрыт');
+  let list;
+  if (type === 'доход') list = open.filter(d => d.direction === 'нам должны');
+  else if (type === 'расход') list = open.filter(d => d.direction === 'мы должны');
+  else list = open;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Выберите долг —</option>' +
+    list.map(d => `<option value="${d.id}">${d.counterparty} — ${d.direction}, ${fmt(d.amount)} ₸</option>`).join('');
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
 async function saveOperation() {
@@ -1263,6 +1299,11 @@ async function saveOperation() {
     if (supplier === 'Другой') supplier = document.getElementById('f-supplier-other').value.trim();
     if (!supplier) { showToast('Выберите поставщика', 'error'); return; }
   }
+  let closeDebtId = '';
+  if (category === 'долг') {
+    closeDebtId = document.getElementById('f-close-debt').value;
+    if (!closeDebtId) { showToast('Выберите какой долг закрываем', 'error'); return; }
+  }
   const m = CATEGORY_MAP[category] || { dds: 'Операционная', opiu: '' };
   const periodInput = document.getElementById('f-period').value; // формат YYYY-MM или пусто
   const period = periodInput || date.slice(0, 7);
@@ -1285,6 +1326,9 @@ async function saveOperation() {
     await fetch(`${SCRIPT_URL}?${params}`);
   } catch(e) { /* данные отправлены */ }
   allData.push({ ...row, id: Date.now() });
+  if (category === 'долг' && closeDebtId) {
+    await closeOrReduceDebt(closeDebtId, parseFloat(amount));
+  }
   showToast('Операция сохранена!', 'success');
   clearForm();
   btn.disabled = false; btn.textContent = 'Сохранить операцию';
@@ -1297,8 +1341,31 @@ function clearForm() {
   document.getElementById('field-supplier-row').style.display = 'none';
   document.getElementById('f-supplier').value = '';
   document.getElementById('field-supplier-other').style.display = 'none';
+  document.getElementById('field-close-debt-row').style.display = 'none';
+  document.getElementById('f-close-debt').value = '';
   setType('расход');
   setTodayDate();
+}
+
+// Закрывает долг полностью, либо (если оплачено меньше остатка) уменьшает
+// его сумму — остальное остаётся открытым. Обновляет и локальный debtsData
+// (чтобы Отчёт дня сразу показал актуальную картину без перезагрузки),
+// и сам лист «Долги» на сервере.
+async function closeOrReduceDebt(debtId, paidAmount) {
+  const debt = debtsData.find(d => String(d.id) === String(debtId));
+  if (!debt) return;
+  const remaining = (+debt.amount || 0) - paidAmount;
+  try {
+    if (remaining <= 0) {
+      const params = new URLSearchParams({ action: 'updateDebtStatus', id: debtId, status: 'закрыт' });
+      await fetch(`${SCRIPT_URL}?${params}`);
+      debt.status = 'закрыт';
+    } else {
+      const params = new URLSearchParams({ action: 'updateDebtAmount', id: debtId, amount: remaining });
+      await fetch(`${SCRIPT_URL}?${params}`);
+      debt.amount = remaining;
+    }
+  } catch(e) { /* данные отправлены */ }
 }
 
 function renderDashboard() {
