@@ -1655,17 +1655,38 @@ async function buildDailyReport() {
     return fmt(n)+' ₸';
   };
 
-  // ── 1. Остаток по счетам + стрелка (изменение за сегодня) ──
+  // ── 1. Остаток по счетам, сгруппированный по юрлицам + стрелка (изменение за сегодня) ──
+  // Группировка ТОЛЬКО для отображения — сами названия счетов в Журнале не трогаем.
+  // Так разные варианты написания одного юрлица ("БЦК ФОН" / "БЦК Фон") попадают
+  // в одну группу, а десятки старых личных/разовых счетов не засоряют экран —
+  // уходят в общую группу «Прочее» (полный список — на странице «Остатки счетов»).
+  function dailyAcctGroup(acc) {
+    const a = String(acc||'');
+    if (/стд/i.test(a)) return 'СТД';
+    if (/техно|technovision|холдинг|holding/i.test(a)) return 'Technovision';
+    if (/фон|phonehouse/i.test(a)) return 'Фон';
+    if (/норех|norex/i.test(a)) return 'Норех';
+    if (/электро|elektro/i.test(a)) return 'Elektro';
+    if (/амдк|amdk/i.test(a)) return 'АМДК';
+    if (/^каспи/i.test(a)) return 'Kaspi Gold';
+    if (/^касса нал/i.test(a)) return 'Касса (нал)';
+    return 'Прочее';
+  }
+
   const accounts = [...new Set([
     ...allData.map(r => r.account).filter(Boolean),
     ...openingBalances.map(o => o.account).filter(Boolean)
-  ])].sort();
+  ])];
   let totalBalance = 0;
-  const accRows = accounts.map(acc => {
+  const groupBalances = {};
+  let otherCount = 0;
+  accounts.forEach(acc => {
     const bal = balanceThrough(BALANCE_TODAY_SENTINEL, 'account', acc);
     totalBalance += bal;
-    return { acc, bal };
-  }).sort((a,b) => b.bal - a.bal);
+    const g = dailyAcctGroup(acc);
+    groupBalances[g] = (groupBalances[g]||0) + bal;
+    if (g === 'Прочее') otherCount++;
+  });
   const { in: todayIn, out: todayOut } = flowSplit(allData.filter(r => r.date === today), 'total', null);
   const todayNet = todayIn - todayOut;
 
@@ -1724,29 +1745,70 @@ async function buildDailyReport() {
   // ── 7. Итого капитал ──
   const totalCapital = totalBalance + receivablesSum + stockValue;
 
-  // ── Рендер ──
-  const card = (label, value, sub, cls) => `<div style="background:var(--surface-1, #f8fafc);border-radius:10px;padding:12px 14px">
-    <div style="font-size:11px;color:#64748b">${label}</div>
-    <div style="font-size:17px;font-weight:700;color:${cls||'#1e3a5f'}">${value}</div>
-    ${sub ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px">${sub}</div>` : ''}
+  // ── Рендер: горизонтальная строка KPI сверху + графики-полоски вместо сеток чисел ──
+  const kpi = (label, value, cls) => `<div style="background:#f8fafc;border-radius:10px;padding:12px">
+    <div style="font-size:11px;color:#64748b;margin-bottom:4px">${label}</div>
+    <div style="font-size:18px;font-weight:700;color:${cls||'#1e3a5f'}">${value}</div>
   </div>`;
 
-  let html = `<div class="card" style="margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
-      <div>
-        <div style="font-size:13px;color:#64748b;margin-bottom:4px">Общий остаток на счетах · ${today}</div>
-        <div style="font-size:30px;font-weight:700;color:#1e3a5f">${fK(totalBalance)}</div>
+  // Горизонтальная полоска-бар: длина = величина относительно maxAbs, цвет = знак.
+  const barRow = (label, value, maxAbs) => {
+    const pct = maxAbs > 0 ? Math.min(100, Math.abs(value)/maxAbs*100) : 0;
+    const neg = value < 0;
+    return `<div style="display:grid;grid-template-columns:110px 1fr 92px;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="font-size:12px;color:#64748b">${label}</span>
+      <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${neg?'#dc2626':'#2563eb'};border-radius:4px"></div></div>
+      <span style="font-size:12px;text-align:right;font-weight:700;color:${neg?'#dc2626':'#1e3a5f'}">${fK(value)}</span>
+    </div>`;
+  };
+
+  let html = `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">
+    ${kpi('Остаток · '+today, fK(totalBalance), totalBalance>=0?'#1e3a5f':'#dc2626')}
+    ${kpi('За сегодня', (todayNet>=0?'+':'')+fK(todayNet), todayNet>=0?'#16a34a':'#dc2626')}
+    ${kpi('Транзит', fK(transitTotal))}
+    ${kpi('Дебиторка', fK(receivablesSum), '#16a34a')}
+    ${kpi('Итого капитал', fK(totalCapital), totalCapital>=0?'#1e3a5f':'#dc2626')}
+  </div>`;
+
+  // Остаток по юрлицам (бары) + остаток склада по городам (бары) — рядом
+  const mainGroups = Object.entries(groupBalances)
+    .filter(([g]) => g !== 'Прочее')
+    .sort((a,b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const maxGroupAbs = Math.max(1, ...mainGroups.map(([,v]) => Math.abs(v)));
+  const otherTotal = groupBalances['Прочее'] || 0;
+
+  const maxCityQty = Math.max(1, ...Object.values(stockByCity));
+
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+    <div class="card">
+      <div class="card-label" style="margin-bottom:12px">Остаток по юрлицам</div>
+      ${mainGroups.length ? mainGroups.map(([g,v]) => barRow(g, v, maxGroupAbs)).join('') : '<div style="font-size:12px;color:#94a3b8">Нет данных</div>'}
+      ${otherCount ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between">
+        <span style="font-size:12px;color:#64748b">Прочее / личные · ${otherCount} счётов</span>
+        <span style="font-size:12px;font-weight:700;color:${otherTotal<0?'#dc2626':'#1e3a5f'}">${fK(otherTotal)}</span>
       </div>
-      <div style="background:${todayNet>=0?'#f0fdf4':'#fef2f2'};color:${todayNet>=0?'#16a34a':'#dc2626'};font-weight:700;padding:6px 12px;border-radius:8px;font-size:13px;white-space:nowrap">
-        ${todayNet>=0?'▲':'▼'} ${fK(Math.abs(todayNet))} за сегодня
-      </div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:4px">Полный список — на странице «Остатки счетов»</div>` : ''}
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:14px">
-      ${accRows.map(a => card(a.acc, fK(a.bal), '', a.bal>=0?'#1e3a5f':'#dc2626')).join('')}
+    <div class="card">
+      <div class="card-label" style="margin-bottom:12px">Остаток склада по городам</div>
+      ${Object.keys(stockByCity).length ? Object.entries(stockByCity).sort((a,b)=>b[1]-a[1]).map(([c,q]) => {
+        const pct = Math.min(100, q/maxCityQty*100);
+        return `<div style="display:grid;grid-template-columns:80px 1fr 70px;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font-size:12px;color:#64748b">${c}</span>
+          <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${c==='Брак'?'#f59e0b':'#2563eb'};border-radius:4px"></div></div>
+          <span style="font-size:12px;text-align:right;font-weight:700;color:#1e3a5f">${fmt(q)} шт</span>
+        </div>`;
+      }).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных остатков склада</div>'}
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between">
+        <span style="font-size:12px;color:#64748b">Оценка в деньгах</span>
+        <span style="font-size:12px;font-weight:700">${fK(stockValue)}</span>
+      </div>
+      ${stockUnmatched>0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">Без цены: ${fmt(stockUnmatched)} шт — товар ещё не встречался в загруженных продажах</div>` : ''}
     </div>
   </div>`;
 
-  const catList = (cats, positive) => Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([c,v]) =>
+  // Приход/расход за сегодня — компактно
+  const catList = cats => Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([c,v]) =>
     `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:#64748b"><span>${c}</span><span>${fmt(v)} ₸</span></div>`
   ).join('') || '<div style="font-size:12px;color:#94a3b8">Нет операций сегодня</div>';
 
@@ -1768,54 +1830,80 @@ async function buildDailyReport() {
     </div>
   </div>`;
 
-  html += `<div class="card" style="margin-bottom:16px">
-    <div class="card-label" style="margin-bottom:8px">Мини-бюджет — запас хода</div>
-    <div style="font-size:13px;color:#64748b">Средний расход на ЗП + аренду за последние ${lastMonths.length||0} мес.: <b>${fK(avgMajorMonthly)}</b> / мес</div>
-    <div style="font-size:22px;font-weight:700;color:${runwayMonths===null?'#94a3b8':(runwayMonths<1?'#dc2626':runwayMonths<2?'#f59e0b':'#16a34a')};margin-top:6px">
-      ${runwayMonths===null?'Недостаточно данных' : runwayMonths.toFixed(1)+' мес. запаса'}
+  // Транзит по магазинам (бары) + Долги (бары нам/мы должны) — рядом
+  const maxTransit = Math.max(1, ...Object.values(transitByStore));
+  const maxDebt = Math.max(1, receivablesSum, payablesSum);
+
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+    <div class="card">
+      <div class="card-label" style="margin-bottom:12px">Транзит по магазинам — ${transitCount} шт</div>
+      ${Object.keys(transitByStore).length ? Object.entries(transitByStore).sort((a,b)=>b[1]-a[1]).map(([s,v]) => {
+        const pct = Math.min(100, v/maxTransit*100);
+        return `<div style="display:grid;grid-template-columns:70px 1fr 90px;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font-size:12px;color:#64748b">${s}</span>
+          <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:#8b5cf6;border-radius:4px"></div></div>
+          <span style="font-size:12px;text-align:right;font-weight:700;color:#1e3a5f">${fK(v)}</span>
+        </div>`;
+      }).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных транзитных заказов</div>'}
+    </div>
+    <div class="card">
+      <div class="card-label" style="margin-bottom:12px">Долги</div>
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#16a34a">Нам должны</span><span style="font-size:12px;font-weight:700;color:#16a34a">${fK(receivablesSum)}</span></div>
+        <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,receivablesSum/maxDebt*100)}%;height:100%;background:#16a34a;border-radius:4px"></div></div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#dc2626">Мы должны</span><span style="font-size:12px;font-weight:700;color:#dc2626">${fK(payablesSum)}</span></div>
+        <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,payablesSum/maxDebt*100)}%;height:100%;background:#dc2626;border-radius:4px"></div></div>
+      </div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:8px">Нетто: ${fK(receivablesSum-payablesSum)} ${receivablesSum>=payablesSum?'в нашу пользу':'в минус'}</div>
     </div>
   </div>`;
 
-  const debtRow = d => `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #f1f5f9">
+  // Развёрнутые списки долгов (кому конкретно) — под графиком, компактно
+  const debtRow = d => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9">
     <div>
       <div style="font-size:13px;color:#1e3a5f">${d.counterparty}</div>
       <div style="font-size:11px;color:#94a3b8">${d.notes||''} · ${daysSince(d.date)} дн.</div>
     </div>
     <div style="font-size:13px;font-weight:700">${fmt(d.amount)} ₸</div>
   </div>`;
-
-  html += `<div class="card" style="margin-bottom:16px">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-      <div>
-        <div class="card-label" style="color:#16a34a;margin-bottom:6px">Нам должны · ${fmt(receivablesSum)} ₸</div>
-        ${weOwed.length ? weOwed.map(debtRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет открытых долгов</div>'}
+  if (weOwed.length || weOwe.length) {
+    html += `<div class="card" style="margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <div class="card-label" style="color:#16a34a;margin-bottom:6px">Нам должны — детали</div>
+          ${weOwed.length ? weOwed.map(debtRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет</div>'}
+        </div>
+        <div>
+          <div class="card-label" style="color:#dc2626;margin-bottom:6px">Мы должны — детали</div>
+          ${weOwe.length ? weOwe.map(debtRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет</div>'}
+        </div>
       </div>
-      <div>
-        <div class="card-label" style="color:#dc2626;margin-bottom:6px">Мы должны · ${fmt(payablesSum)} ₸</div>
-        ${weOwe.length ? weOwe.map(debtRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет открытых долгов</div>'}
-      </div>
-    </div>
-  </div>`;
+    </div>`;
+  }
 
+  // Запас хода — шкала с цветными зонами вместо просто числа
+  const runwayPct = runwayMonths === null ? 0 : Math.max(0, Math.min(100, runwayMonths / 3 * 100));
+  const runwayLbl = runwayMonths === null ? 'Недостаточно данных' : (runwayMonths<0 ? 'Запаса нет' : runwayMonths.toFixed(1)+' мес. запаса');
+  const runwayClr = runwayMonths === null ? '#94a3b8' : (runwayMonths<1 ? '#dc2626' : runwayMonths<2 ? '#f59e0b' : '#16a34a');
   html += `<div class="card" style="margin-bottom:16px">
-    <div class="card-label" style="margin-bottom:8px">Транзитные заказы (в пути) — ${transitCount} шт · ${fK(transitTotal)}</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
-      ${Object.keys(transitByStore).length ? Object.entries(transitByStore).map(([s,v]) => card(s, fK(v))).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных транзитных заказов</div>'}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="card-label" style="margin:0">Запас хода (ЗП + аренда, среднее за ${lastMonths.length||0} мес.: ${fK(avgMajorMonthly)}/мес)</div>
+      <span style="font-size:12px;font-weight:700;color:${runwayClr}">${runwayLbl}</span>
     </div>
-  </div>`;
-
-  html += `<div class="card" style="margin-bottom:16px">
-    <div class="card-label" style="margin-bottom:8px">Остаток склада — ${fK(stockValue)} (по средней цене продажи)</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
-      ${Object.keys(stockByCity).length ? Object.entries(stockByCity).map(([c,q]) => card(c, fmt(q)+' шт')).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных остатков склада</div>'}
+    <div style="height:10px;background:#f1f5f9;border-radius:5px;position:relative;overflow:hidden">
+      <div style="position:absolute;left:0;top:0;width:33.3%;height:100%;background:#fecaca"></div>
+      <div style="position:absolute;left:33.3%;top:0;width:33.3%;height:100%;background:#fde68a"></div>
+      <div style="position:absolute;left:66.6%;top:0;width:33.4%;height:100%;background:#bbf7d0"></div>
+      <div style="position:absolute;top:-2px;bottom:-2px;width:3px;background:#1e3a5f;left:calc(${runwayPct}% - 1.5px)"></div>
     </div>
-    ${stockUnmatched>0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:8px">Без найденной цены (не оценено): ${fmt(stockUnmatched)} шт — товар ещё не встречался в загруженных продажах</div>` : ''}
-  </div>`;
-
-  html += `<div class="card" style="background:#1e3a5f">
-    <div style="color:#93c5fd;font-size:13px;margin-bottom:6px">ИТОГО КАПИТАЛ (счета + дебиторка + склад)</div>
-    <div style="color:white;font-size:28px;font-weight:700">${fK(totalCapital)}</div>
-    <div style="color:#93c5fd;font-size:11px;margin-top:6px">Остатки на счетах ${fK(totalBalance)} · Нам должны ${fK(receivablesSum)} · Склад ${fK(stockValue)}</div>
+    <div style="display:flex;justify-content:space-between;margin-top:4px">
+      <span style="font-size:10px;color:#94a3b8">0 мес</span>
+      <span style="font-size:10px;color:#94a3b8">1 мес</span>
+      <span style="font-size:10px;color:#94a3b8">2 мес</span>
+      <span style="font-size:10px;color:#94a3b8">3+ мес</span>
+    </div>
   </div>`;
 
   el.innerHTML = html;
@@ -2976,9 +3064,9 @@ async function confirmAndSaveStock() {
 let _mergedTransit = {}; // { store: [{orderId,status,amount,date}] }
 
 const TRANSIT_STORE_MAP = [
-  [/техно|стд/i,      'СТД'],
-  [/сана|санг/i,       'Сана Стор'],
-  [/норекс|norex/i,    'Норекс'],
+  [/техно|стд/i,      'Техно'],
+  [/сана|санг/i,       'Санго'],
+  [/норекс|norex/i,    'Норех'],
   [/байноу|buynow/i,   'Байноу']
 ];
 
