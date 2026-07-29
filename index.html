@@ -3792,7 +3792,16 @@ function exportJournal() {
 }
 
 function fmt(n) { return Math.round(+n||0).toLocaleString('ru-RU'); }
-function fmtDate(d) { if (!d) return '—'; const p = d.split('-'); return p.length===3 ? p[2]+'.'+p[1]+'.'+p[0] : d; }
+// Принимает "YYYY-MM-DD" (нормальный случай) или, на всякий случай, полный
+// ISO-таймстамп "YYYY-MM-DDTHH:mm:ss.sssZ" (если бэкенд ещё не обновлён и
+// дата пришла как объект Date, не через fixDateVal) — обрезаем до даты,
+// чтобы не показать "19T19:00:00.000Z.07.2026" вместо "19.07.2026".
+function fmtDate(d) {
+  if (!d) return '—';
+  const datePart = String(d).slice(0, 10);
+  const p = datePart.split('-');
+  return p.length===3 ? p[2]+'.'+p[1]+'.'+p[0] : String(d);
+}
 function showToast(msg, type='success') {
   const t = document.getElementById('toast');
   t.textContent = msg; t.className = 'toast ' + type + ' show';
