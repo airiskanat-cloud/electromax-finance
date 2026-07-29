@@ -687,7 +687,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbziuhHdZnZuZJSz10wDUCxejykY1Bj31s5GC1ZJuX2tJhMXdWVv0I-xFyMoRfyj7PFEaA/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxY3Dji0FdJDDEsQbOhvpbMDVJTX6XuEK3nCD8GUQuAh3ZfQG6rvAAWMAMv4icvnk9tgA/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -2639,7 +2639,8 @@ function parseKaspiCommissionFile(file) {
           if (c0.includes('наименование')) { entityRaw = String(raw[i]?.[2]||''); break; }
         }
         let account = '';
-        for (const [re, name] of KASPI_ENTITY_MAP) { if (re.test(entityRaw)) { account = name; break; } }
+        const entityRawNFC = String(entityRaw||'').normalize('NFC');
+        for (const [re, name] of KASPI_ENTITY_MAP) { if (re.test(entityRawNFC)) { account = name; break; } }
 
         // Заголовок таблицы — строка с "Дата операции" во 2-й колонке
         let headerIdx = -1;
@@ -3000,7 +3001,11 @@ function parseTransitFile(file) {
           return;
         }
         let store = '';
-        for (const [re, name] of TRANSIT_STORE_MAP) { if (re.test(file.name)) { store = name; break; } }
+        // .normalize('NFC') — на macOS имена файлов с буквами вроде "й" иногда
+        // приходят в "разложенном" юникоде (и + отдельный значок), и обычное
+        // сравнение строк их не совпадает с "й" в регулярке. Нормализация чинит это.
+        const fileNameNFC = String(file.name||'').normalize('NFC');
+        for (const [re, name] of TRANSIT_STORE_MAP) { if (re.test(fileNameNFC)) { store = name; break; } }
         if (!store) {
           resolve({error:`Не распознан магазин по имени файла. Ожидались слова: техно/стд, сана, норекс, байноу.`, name: file.name});
           return;
