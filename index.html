@@ -612,6 +612,15 @@
               <option value="Астана">Астана</option>
               <option value="Шымкент">Шымкент</option>
             </select>
+            <select id="filter-account" onchange="renderJournal()">
+              <option value="">Все счета</option>
+            </select>
+            <select id="filter-category" onchange="renderJournal()">
+              <option value="">Все категории</option>
+            </select>
+            <select id="filter-responsible" onchange="renderJournal()">
+              <option value="">Все ответственные</option>
+            </select>
             <input type="text" id="filter-search" placeholder="Поиск..." oninput="renderJournal()" style="width:150px">
           </div>
           <button class="btn btn-clear" onclick="exportJournal()" style="padding:7px 16px;font-size:13px;">Excel</button>
@@ -1322,16 +1331,24 @@ async function saveOperation() {
   const btn = document.getElementById('btn-save');
   btn.disabled = true; btn.textContent = 'Сохранение...';
   try {
-    const params = new URLSearchParams({ action: 'addRow', data: JSON.stringify(row) });
-    await fetch(`${SCRIPT_URL}?${params}`);
+    if (editingId) {
+      const params = new URLSearchParams({ action: 'updateRow', id: String(editingId), data: JSON.stringify(row) });
+      await fetch(`${SCRIPT_URL}?${params}`);
+      const idx = allData.findIndex(r => r.id === editingId);
+      if (idx >= 0) allData[idx] = { ...row, id: editingId };
+    } else {
+      const params = new URLSearchParams({ action: 'addRow', data: JSON.stringify(row) });
+      await fetch(`${SCRIPT_URL}?${params}`);
+      allData.push({ ...row, id: Date.now() });
+    }
   } catch(e) { /* данные отправлены */ }
-  allData.push({ ...row, id: Date.now() });
   if (category === 'долг' && closeDebtId) {
     await closeOrReduceDebt(closeDebtId, parseFloat(amount));
   }
-  showToast('Операция сохранена!', 'success');
+  showToast(editingId ? 'Изменения сохранены!' : 'Операция сохранена!', 'success');
   clearForm();
   btn.disabled = false; btn.textContent = 'Сохранить операцию';
+  renderJournal(); renderBalances();
 }
 
 function clearForm() {
@@ -1343,6 +1360,8 @@ function clearForm() {
   document.getElementById('field-supplier-other').style.display = 'none';
   document.getElementById('field-close-debt-row').style.display = 'none';
   document.getElementById('f-close-debt').value = '';
+  editingId = null;
+  document.getElementById('btn-save').textContent = 'Сохранить операцию';
   setType('расход');
   setTodayDate();
 }
@@ -1677,17 +1696,40 @@ async function buildDashboard() {
   }
 }
 
+// Заполняет фильтры «Счёт»/«Категория»/«Ответственный» реальными значениями
+// из Журнала (а не фиксированным списком) — новая категория/счёт сама
+// появится в фильтре, как только по ней есть хоть одна запись.
+function refreshJournalFilters() {
+  const setOpts = (id, values, placeholder) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const prev = el.value;
+    el.innerHTML = placeholder + values.sort().map(v => `<option value="${v}">${v}</option>`).join('');
+    if ([...el.options].some(o => o.value === prev)) el.value = prev;
+  };
+  setOpts('filter-account', [...new Set(allData.map(r => r.account).filter(Boolean))], '<option value="">Все счета</option>');
+  setOpts('filter-category', [...new Set(allData.map(r => r.category).filter(Boolean))], '<option value="">Все категории</option>');
+  setOpts('filter-responsible', [...new Set(allData.map(r => r.responsible).filter(Boolean))], '<option value="">Все ответственные</option>');
+}
+
 function renderJournal() {
+  refreshJournalFilters();
   let data = [...allData];
   const from = document.getElementById('filter-from').value;
   const to = document.getElementById('filter-to').value;
   const type = document.getElementById('filter-type').value;
   const city = document.getElementById('filter-city').value;
+  const account = document.getElementById('filter-account').value;
+  const category = document.getElementById('filter-category').value;
+  const responsible = document.getElementById('filter-responsible').value;
   const search = document.getElementById('filter-search').value.toLowerCase();
   if (from) data = data.filter(r => r.date >= from);
   if (to) data = data.filter(r => r.date <= to);
   if (type) data = data.filter(r => r.type === type);
   if (city) data = data.filter(r => r.city === city);
+  if (account) data = data.filter(r => r.account === account);
+  if (category) data = data.filter(r => r.category === category);
+  if (responsible) data = data.filter(r => r.responsible === responsible);
   if (search) data = data.filter(r => (r.name||'').toLowerCase().includes(search) || (r.category||'').toLowerCase().includes(search));
   data.sort((a,b) => b.date > a.date ? 1 : -1);
   document.getElementById('journal-table').innerHTML = data.length ? buildTable(data, currentRole === 'admin') : '<div class="empty-state"><div class="emoji">&#128269;</div>Ничего не найдено</div>';
@@ -1714,7 +1756,11 @@ function buildTable(data, withActions) {
     '<td>' + (r.responsible||'—') + '</td>' +
     '<td><span class="tag dds" style="font-size:11px">' + (r.dds||'—') + '</span></td>' +
     '<td><span class="tag ' + (r.opiu?'opiu':'no-opiu') + '" style="font-size:11px">' + (r.opiu||'—') + '</span></td>' +
-    (withActions ? '<td><button onclick="deleteRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px">&#128465;</button></td>' : '') +
+    (withActions ?
+      '<td style="white-space:nowrap">' +
+      '<button onclick="editRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#64748b;font-size:15px;margin-right:8px" title="Редактировать">&#9998;</button>' +
+      '<button onclick="deleteRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px" title="Удалить">&#128465;</button>' +
+      '</td>' : '') +
     '</tr>'
   ).join('');
   return '<table><thead><tr>' +
@@ -1731,6 +1777,61 @@ async function deleteRow(id) {
   fetch(`${SCRIPT_URL}?${delParams}`);
   renderJournal(); renderBalances();
   showToast('Операция удалена', 'success');
+}
+
+// Редактирование строки Журнала — переиспользует форму «Ввод операции»
+// (та же логика юр/физ счёта, Kaspi Gold, поставщика и т.п., только заранее
+// заполненная), чтобы не дублировать её отдельным окном. editingId хранит
+// id строки, которую редактируем; saveOperation() проверяет его и вместо
+// добавления новой строки обновляет существующую.
+let editingId = null;
+
+function editRow(id) {
+  const r = allData.find(x => x.id === id);
+  if (!r) return;
+  editingId = id;
+  showPage('entry', document.querySelector('.nav-item[onclick*="entry"]'));
+  setType(r.type);
+  document.getElementById('f-date').value = r.date || '';
+  document.getElementById('f-amount').value = r.amount || '';
+  document.getElementById('f-name').value = r.name || '';
+  document.getElementById('f-category').value = r.category || '';
+  updateTags();
+  document.getElementById('f-city').value = r.city || 'Алматы';
+  document.getElementById('f-responsible').value = r.responsible || '';
+  document.getElementById('f-notes').value = r.notes || '';
+  document.getElementById('f-period').value = (r.period && r.period !== r.date.slice(0,7)) ? r.period : '';
+
+  // Определяем юр/физ по тому же принципу, что и на странице «Остатки счетов».
+  const isLegal = isLegalAcct(r.account);
+  document.getElementById('f-account-type').value = isLegal ? 'юр' : 'физ';
+  toggleAccountFields();
+  if (isLegal) {
+    document.getElementById('f-legal-account').value = r.account || '';
+  } else {
+    const b = acctBucket(r.account);
+    if (b.type === 'kaspi') {
+      document.getElementById('f-physical-account').value = 'Каспи голд';
+      toggleKaspi();
+      document.getElementById('f-kaspi-holder').value = b.name;
+      if (![...document.getElementById('f-kaspi-holder').options].some(o=>o.value===b.name)) {
+        document.getElementById('f-kaspi-holder').value = 'Другой';
+        toggleKaspiOther();
+        document.getElementById('f-kaspi-holder-other').value = b.name;
+      }
+    } else {
+      document.getElementById('f-physical-account').value = r.account || '';
+    }
+  }
+  if (r.type === 'перевод') {
+    document.getElementById('f-to-account').value = r.to_account || '';
+  }
+  if (r.category === 'закуп') {
+    document.getElementById('f-supplier').value = r.supplier || '';
+  }
+
+  document.getElementById('btn-save').textContent = 'Сохранить изменения';
+  showToast('Редактирование операции — измените поля и сохраните', 'success');
 }
 
 // Юр.счёт — начинается с названия банка (Kaspi латиницей / БЦК / Халык /
