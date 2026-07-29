@@ -1744,8 +1744,17 @@ function renderJournal() {
 function buildTable(data, withActions) {
   const typeMap = { расход: 'expense', доход: 'income', перевод: 'transfer' };
   const typeLabel = { расход: 'Расход', доход: 'Доход', перевод: 'Перевод' };
+  // Колонка действий (редактировать/удалить) стоит ПЕРВОЙ (не последней) —
+  // чтобы её не перекрывало и не обрезало на узких экранах / поверх других
+  // окон: с широкой таблицей (10 колонок) правый край мог уезжать за видимую
+  // область, и кнопки казались «пропавшими», хотя код их отрисовывал.
   let rows = data.map(r =>
     '<tr>' +
+    (withActions ?
+      '<td style="white-space:nowrap">' +
+      '<button onclick="editRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#64748b;font-size:15px;margin-right:8px" title="Редактировать">&#9998;</button>' +
+      '<button onclick="deleteRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px" title="Удалить">&#128465;</button>' +
+      '</td>' : '') +
     '<td>' + fmtDate(r.date) + '</td>' +
     '<td><span class="badge badge-' + (typeMap[r.type]||'transfer') + '">' + (typeLabel[r.type]||r.type) + '</span></td>' +
     '<td>' + (r.category||'—') + '</td>' +
@@ -1756,18 +1765,13 @@ function buildTable(data, withActions) {
     '<td>' + (r.responsible||'—') + '</td>' +
     '<td><span class="tag dds" style="font-size:11px">' + (r.dds||'—') + '</span></td>' +
     '<td><span class="tag ' + (r.opiu?'opiu':'no-opiu') + '" style="font-size:11px">' + (r.opiu||'—') + '</span></td>' +
-    (withActions ?
-      '<td style="white-space:nowrap">' +
-      '<button onclick="editRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#64748b;font-size:15px;margin-right:8px" title="Редактировать">&#9998;</button>' +
-      '<button onclick="deleteRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px" title="Удалить">&#128465;</button>' +
-      '</td>' : '') +
     '</tr>'
   ).join('');
-  return '<table><thead><tr>' +
+  return '<div style="overflow-x:auto"><table><thead><tr>' +
+    (withActions ? '<th></th>' : '') +
     '<th>Дата</th><th>Тип</th><th>Категория</th><th>Название</th><th>Сумма</th>' +
     '<th>Счёт</th><th>Город</th><th>Ответственный</th><th>ДДС</th><th>ОПИУ</th>' +
-    (withActions ? '<th></th>' : '') +
-    '</tr></thead><tbody>' + rows + '</tbody></table>';
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
 async function deleteRow(id) {
@@ -1865,6 +1869,11 @@ function findAccountNameIssues() {
   return issues;
 }
 
+// Остатки счетов — согласованный вид: 3 колонки по горизонтали
+// (Юридические счета по банкам / Kaspi Gold по держателям / Наличка по
+// городам), см. одобренный макет. Группировка — теми же общими функциями
+// (acctBucket/acctBankLabel/BANK_ORDER), что и в Отчёте дня, чтобы цифры
+// нигде не расходились.
 function renderBalances() {
   const accounts = [...new Set([
     ...allData.map(r => r.account).filter(Boolean),
@@ -1876,30 +1885,64 @@ function renderBalances() {
     acc,
     bal: balanceThrough(BALANCE_TODAY_SENTINEL, 'account', acc)
   }));
-  const legal = rows.filter(r => isLegalAcct(r.acc)).sort((a,b) => Math.abs(b.bal) - Math.abs(a.bal));
-  const phys  = rows.filter(r => !isLegalAcct(r.acc)).sort((a,b) => Math.abs(b.bal) - Math.abs(a.bal));
   const total = rows.reduce((s,r) => s + r.bal, 0);
-  const legalTotal = legal.reduce((s,r) => s + r.bal, 0);
-  const physTotal = phys.reduce((s,r) => s + r.bal, 0);
-  const maxAbs = Math.max(1, ...rows.map(r => Math.abs(r.bal)));
 
-  const barRow = r => {
-    const pct = Math.min(100, Math.abs(r.bal) / maxAbs * 100);
-    const neg = r.bal < 0;
-    return '<div style="display:grid;grid-template-columns:200px 1fr 130px;align-items:center;gap:10px;margin-bottom:9px">' +
-      '<span style="font-size:13px;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + r.acc + '</span>' +
-      '<div style="height:10px;background:#f1f5f9;border-radius:5px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + (neg?'#dc2626':'#2563eb') + ';border-radius:5px"></div></div>' +
-      '<span style="font-size:13px;text-align:right;font-weight:700;color:' + (neg?'#dc2626':'#1e3a5f') + '">' + fmt(r.bal) + ' ₸</span>' +
+  // Юр.счета — сгруппированы по банку
+  const legalRows = rows.filter(r => isLegalAcct(r.acc));
+  const legalTotal = legalRows.reduce((s,r) => s + r.bal, 0);
+  const byBank = {};
+  legalRows.forEach(r => {
+    const bank = acctBankLabel(r.acc);
+    (byBank[bank] = byBank[bank] || []).push(r);
+  });
+
+  // Kaspi Gold — по держателям
+  const kaspiRows = rows
+    .filter(r => acctBucket(r.acc).type === 'kaspi')
+    .map(r => ({ acc: r.acc, bal: r.bal, holder: acctBucket(r.acc).name }))
+    .sort((a,b) => b.bal - a.bal);
+  const kaspiTotal = kaspiRows.reduce((s,r) => s + r.bal, 0);
+
+  // Наличка — по городам
+  const cashRows = rows
+    .filter(r => acctBucket(r.acc).type === 'cash')
+    .map(r => ({ acc: r.acc, bal: r.bal, city: r.acc.replace(/^касса\s*наличными\s*/i, '').trim() || r.acc }))
+    .sort((a,b) => b.bal - a.bal);
+  const cashTotal = cashRows.reduce((s,r) => s + r.bal, 0);
+
+  const moneyColor = v => (v < 0 ? '#dc2626' : '#1e3a5f');
+  const line = (label, bal) =>
+    '<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0">' +
+      '<span style="font-size:13px;color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + label + '</span>' +
+      '<span style="font-size:13px;font-weight:600;color:' + moneyColor(bal) + ';white-space:nowrap">' + fmt(bal) + ' ₸</span>' +
     '</div>';
-  };
+  const bankHeader = bank =>
+    '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;margin:12px 0 2px;first-of-type:margin-top:0">' + bank + '</div>';
 
-  const block = (title, list, sum, color) =>
-    '<div class="card" style="margin-bottom:16px">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">' +
+  let legalHtml = '';
+  BANK_ORDER.filter(b => byBank[b]).forEach(bank => {
+    legalHtml += bankHeader(bank);
+    byBank[bank].sort((a,b) => b.bal - a.bal).forEach(r => {
+      const short = r.acc.replace(new RegExp('^' + bank + '\\s*', 'i'), '').trim() || r.acc;
+      legalHtml += line(short, r.bal);
+    });
+  });
+  if (!legalHtml) legalHtml = '<div style="font-size:12px;color:#94a3b8">Нет счетов</div>';
+
+  const kaspiHtml = kaspiRows.length
+    ? kaspiRows.map(r => line(r.holder, r.bal)).join('')
+    : '<div style="font-size:12px;color:#94a3b8">Нет счетов</div>';
+  const cashHtml = cashRows.length
+    ? cashRows.map(r => line(r.city, r.bal)).join('')
+    : '<div style="font-size:12px;color:#94a3b8">Нет счетов</div>';
+
+  const col = (title, sum, bodyHtml) =>
+    '<div class="card">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:8px">' +
         '<div class="card-label" style="margin:0">' + title + '</div>' +
-        '<span style="font-size:16px;font-weight:700;color:' + (sum>=0?color:'#dc2626') + '">' + fmt(sum) + ' ₸</span>' +
+        '<span style="font-size:15px;font-weight:700;color:' + moneyColor(sum) + ';white-space:nowrap">' + fmt(sum) + ' ₸</span>' +
       '</div>' +
-      (list.length ? list.map(barRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет счетов</div>') +
+      '<div style="border-top:1px solid #f1f5f9;padding-top:4px">' + bodyHtml + '</div>' +
     '</div>';
 
   const nameIssues = findAccountNameIssues();
@@ -1912,8 +1955,11 @@ function renderBalances() {
       '</div></div>';
   }
 
-  html += block('Юридические счета', legal, legalTotal, '#1e3a5f')
-        + block('Физические счета (касса, Kaspi Gold, прочие)', phys, physTotal, '#1e3a5f');
+  html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">' +
+    col('Юридические счета', legalTotal, legalHtml) +
+    col('Физ.счета — Kaspi Gold', kaspiTotal, kaspiHtml) +
+    col('Наличка', cashTotal, cashHtml) +
+  '</div>';
 
   html += '<div class="card" style="background:#1e3a5f">' +
     '<div class="card-label" style="color:#93c5fd">ИТОГО ПО ВСЕМ СЧЕТАМ</div>' +
