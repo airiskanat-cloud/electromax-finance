@@ -91,6 +91,7 @@
   .type-btn.expense.active { border-color: #dc2626; background: #fef2f2; color: #dc2626; }
   .type-btn.income.active { border-color: #16a34a; background: #f0fdf4; color: #16a34a; }
   .type-btn.transfer.active { border-color: #6366f1; background: #eef2ff; color: #6366f1; }
+  .type-btn.debt.active { border-color: #a855f7; background: #faf5ff; color: #a855f7; }
   .auto-tags { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
   .tag { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
   .tag.dds { background: #dbeafe; color: #1d4ed8; }
@@ -199,6 +200,7 @@
     </div>
     <nav class="sidebar-nav">
       <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="icon">&#128202;</span> Дашборд</div>
+      <div class="nav-item" onclick="showPage('daily-report',this)"><span class="icon">&#128197;</span> Отчёт дня</div>
       <div class="nav-item" onclick="showPage('entry',this)"><span class="icon">&#10133;</span> Ввод операции</div>
       <div class="nav-item" onclick="showPage('journal',this)"><span class="icon">&#128203;</span> Журнал</div>
       <div class="nav-item" onclick="showPage('reconcile',this)"><span class="icon">&#128269;</span> Сверка выписки</div>
@@ -218,6 +220,10 @@
     <div class="page active" id="page-dashboard">
       <div class="page-title">Финансовое табло — ElectroMax</div>
       <div id="dashboard-content"><div class="loading"><div class="spinner"></div>Загрузка дашборда...</div></div>
+    </div>
+    <div class="page" id="page-daily-report">
+      <div class="page-title">Отчёт дня</div>
+      <div id="daily-report-content"><div class="loading"><div class="spinner"></div>Загрузка отчёта...</div></div>
     </div>
     <div class="page" id="page-load">
       <div class="page-title">Загрузка данных</div>
@@ -263,7 +269,7 @@
       <!-- ── KASPI COMMISSION UPLOAD ── -->
       <div class="card" style="margin-bottom:16px">
         <div class="card-label">🅺 Комиссия Kaspi-маркетплейса (банковские выписки)</div>
-        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Загрузи Excel-выписки текущего счёта Kaspi Bank по юрлицам (Norex / Phone House / CTD). Из выписки берётся только комиссия маркетплейса и доставка Kaspi — остальные операции (оплата поставщикам, переводы, ЗП и т.п.) уже учтены в Журнале и игнорируются.</p>
+        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Загрузи Excel-выписки текущего счёта Kaspi Bank по юрлицам (Norex / Phone House / CTD / AMDK). Из выписки берётся только комиссия маркетплейса и доставка Kaspi — остальные операции (оплата поставщикам, переводы, ЗП и т.п.) уже учтены в Журнале и игнорируются.</p>
         <label id="kaspi-drop-zone" style="display:block;border:2px dashed #e9d5ff;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#fdf4ff;transition:background .2s"
           ondragover="event.preventDefault();this.style.background='#f3e8ff'"
           ondragleave="this.style.background='#fdf4ff'"
@@ -274,6 +280,38 @@
           <div style="font-size:12px;color:#94a3b8;margin-top:6px">.xlsx, .xls — можно несколько файлов (по юрлицам) сразу</div>
         </label>
         <div id="kaspi-upload-preview"></div>
+      </div>
+
+      <!-- ── STOCK BALANCE UPLOAD ── -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-label">📦 Остаток склада (ведомость 1С)</div>
+        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Загрузи выгрузку «Ведомость по товарам на складах» из 1С — один файл заменяет весь текущий снимок остатков.</p>
+        <label id="stock-drop-zone" style="display:block;border:2px dashed #bfdbfe;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#eff6ff;transition:background .2s"
+          ondragover="event.preventDefault();this.style.background='#dbeafe'"
+          ondragleave="this.style.background='#eff6ff'"
+          ondrop="handleStockFileDrop(event)">
+          <input type="file" id="stock-upload-input" accept=".xlsx,.xls" style="display:none" onchange="processStockFile(this.files[0])">
+          <div style="font-size:36px;margin-bottom:10px">📦</div>
+          <div style="font-weight:700;color:#1e3a5f;font-size:15px">Нажми или перетащи файл сюда</div>
+          <div style="font-size:12px;color:#94a3b8;margin-top:6px">.xlsx, .xls — один файл (текущий снимок остатков)</div>
+        </label>
+        <div id="stock-upload-preview"></div>
+      </div>
+
+      <!-- ── TRANSIT ORDERS UPLOAD ── -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-label">🚚 Транзитные заказы Kaspi (по магазинам)</div>
+        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Загрузи выгрузки заказов из личного кабинета Kaspi по магазинам (Техно/СТД, Сана Стор, Норекс, Байноу) — магазин узнаётся по имени файла. Можно сразу несколько файлов.</p>
+        <label id="transit-drop-zone" style="display:block;border:2px dashed #fed7aa;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#fff7ed;transition:background .2s"
+          ondragover="event.preventDefault();this.style.background='#ffedd5'"
+          ondragleave="this.style.background='#fff7ed'"
+          ondrop="handleTransitFileDrop(event)">
+          <input type="file" id="transit-upload-input" accept=".xlsx,.xls" multiple style="display:none" onchange="processTransitFiles(Array.from(this.files))">
+          <div style="font-size:36px;margin-bottom:10px">🚚</div>
+          <div style="font-weight:700;color:#7c2d12;font-size:15px">Нажми или перетащи файлы сюда</div>
+          <div style="font-size:12px;color:#94a3b8;margin-top:6px">.xlsx, .xls — можно несколько магазинов сразу</div>
+        </label>
+        <div id="transit-upload-preview"></div>
       </div>
 
       <!-- ── MANUAL ENTRY (collapsed) ── -->
@@ -316,8 +354,33 @@
           <button class="type-btn expense active" onclick="setType('расход')">&#128184; Расход</button>
           <button class="type-btn income" onclick="setType('доход')">&#128176; Доход</button>
           <button class="type-btn transfer" onclick="setType('перевод')">&#128260; Перевод</button>
+          <button class="type-btn debt" onclick="setType('долг')">&#129309; Долг</button>
         </div>
         <input type="hidden" id="f-type" value="расход">
+        <div class="form-card" id="debt-form" style="display:none;background:#faf5ff;border:1px solid #e9d5ff;margin-bottom:16px">
+          <div class="form-row">
+            <div class="field"><label>Дата <span class="required">*</span></label><input type="date" id="d-date"></div>
+            <div class="field"><label>Сумма (&#8376;) <span class="required">*</span></label><input type="number" id="d-amount" placeholder="0" min="0" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label>Направление <span class="required">*</span></label>
+              <select id="d-direction">
+                <option value="нам должны">Нам должны (дебиторка)</option>
+                <option value="мы должны">Мы должны (кредиторка)</option>
+              </select>
+            </div>
+            <div class="field"><label>Контрагент <span class="required">*</span></label><input type="text" id="d-counterparty" placeholder="Например: Поставщик Электрон"></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label>Комментарий</label><input type="text" id="d-notes" placeholder="Необязательно"></div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-save" id="btn-save-debt" onclick="saveDebt()">&#10003; Сохранить долг</button>
+            <button class="btn btn-clear" onclick="clearDebtForm()">Очистить</button>
+          </div>
+        </div>
+        <div id="normal-op-form">
         <div class="form-row">
           <div class="field"><label>Дата <span class="required">*</span></label><input type="date" id="f-date"></div>
           <div class="field"><label>Сумма (&#8376;) <span class="required">*</span></label><input type="number" id="f-amount" placeholder="0" min="0" step="0.01"></div>
@@ -515,6 +578,7 @@
         <div class="btn-row">
           <button class="btn btn-save" id="btn-save" onclick="saveOperation()">&#10003; Сохранить операцию</button>
           <button class="btn btn-clear" onclick="clearForm()">Очистить</button>
+        </div>
         </div>
       </div>
     </div>
@@ -715,6 +779,7 @@ function showPage(name, el) {
   if (name === 'dds-daily') buildDDSDaily();
   if (name === 'dds') buildDDSMonthDash();
   if (name === 'dashboard') buildDashboard();
+  if (name === 'daily-report') buildDailyReport();
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
@@ -727,6 +792,7 @@ function currentMonth() {
 const OPENING_BASE_DATE = '2026-06-30';
 let openingBalances = []; // [{account, city, balance}] — заполняется вручную в Google Sheets
 let suppliers = []; // [name, ...] — заполняется вручную в листе «Поставщики»
+let debtsData = []; // [{id, date, counterparty, direction, amount, notes, status}] — лист «Долги»
 
 async function loadData() {
   try {
@@ -744,6 +810,11 @@ async function loadData() {
     const d3 = await r3.json();
     suppliers = d3.items || [];
   } catch(e) { suppliers = []; }
+  try {
+    const r4 = await fetch(SCRIPT_URL + '?action=getDebts');
+    const d4 = await r4.json();
+    debtsData = d4.items || [];
+  } catch(e) { debtsData = []; }
   await refreshMonthPickers();
   refreshAccountLists();
   refreshSupplierList();
@@ -1001,9 +1072,47 @@ function setTodayDate() {
 function setType(t) {
   document.getElementById('f-type').value = t;
   document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
-  const map = { расход:'expense', доход:'income', перевод:'transfer' };
+  const map = { расход:'expense', доход:'income', перевод:'transfer', долг:'debt' };
   document.querySelector('.type-btn.' + map[t]).classList.add('active');
-  document.getElementById('field-to-account-row').style.display = t === 'перевод' ? 'grid' : 'none';
+  const isDebt = t === 'долг';
+  document.getElementById('debt-form').style.display = isDebt ? 'block' : 'none';
+  document.getElementById('normal-op-form').style.display = isDebt ? 'none' : 'block';
+  if (!isDebt) document.getElementById('field-to-account-row').style.display = t === 'перевод' ? 'grid' : 'none';
+}
+
+async function saveDebt() {
+  const date = document.getElementById('d-date').value;
+  const amount = document.getElementById('d-amount').value;
+  const counterparty = document.getElementById('d-counterparty').value.trim();
+  const direction = document.getElementById('d-direction').value;
+  if (!date || !amount || !counterparty) { showToast('Заполните обязательные поля', 'error'); return; }
+  const debt = {
+    date, amount: parseFloat(amount), counterparty, direction,
+    notes: document.getElementById('d-notes').value,
+    status: 'открыт', created_by: currentUser
+  };
+  const btn = document.getElementById('btn-save-debt');
+  btn.disabled = true; btn.textContent = 'Сохранение...';
+  try {
+    const params = new URLSearchParams({ action: 'addDebt', data: JSON.stringify(debt) });
+    const r = await fetch(`${SCRIPT_URL}?${params}`);
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'Ошибка сервера');
+    debtsData.push({ ...debt, id: d.id || Date.now() });
+    showToast('Долг сохранён!', 'success');
+    clearDebtForm();
+  } catch(e) {
+    showToast('Ошибка сохранения: ' + e.message, 'error');
+  }
+  btn.disabled = false; btn.textContent = 'Сохранить долг';
+}
+
+function clearDebtForm() {
+  document.getElementById('d-date').value = '';
+  document.getElementById('d-amount').value = '';
+  document.getElementById('d-counterparty').value = '';
+  document.getElementById('d-direction').value = 'нам должны';
+  document.getElementById('d-notes').value = '';
 }
 
 function toggleToAccountOther() {
@@ -1516,6 +1625,202 @@ function renderBalances() {
   document.getElementById('balances-grid').innerHTML = html;
 }
 
+// ── ОТЧЁТ ДНЯ (сводный ежедневный отчёт для заказчика) ─────────────
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+async function buildDailyReport() {
+  const el = document.getElementById('daily-report-content');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка отчёта...</div>';
+
+  let stock = [], prices = [], transit = [];
+  try {
+    const [r1, r2, r3] = await Promise.all([
+      fetch(SCRIPT_URL + '?action=getStockBalance'),
+      fetch(SCRIPT_URL + '?action=getItemPrices'),
+      fetch(SCRIPT_URL + '?action=getTransit')
+    ]);
+    stock   = (await r1.json()).items || [];
+    prices  = (await r2.json()).items || [];
+    transit = (await r3.json()).items || [];
+  } catch(e) {}
+
+  const today = todayStr();
+  const fK = v => {
+    const n = +v||0;
+    if (Math.abs(n) >= 1e9) return (n/1e9).toFixed(2)+' млрд ₸';
+    if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1)+' млн ₸';
+    return fmt(n)+' ₸';
+  };
+
+  // ── 1. Остаток по счетам + стрелка (изменение за сегодня) ──
+  const accounts = [...new Set([
+    ...allData.map(r => r.account).filter(Boolean),
+    ...openingBalances.map(o => o.account).filter(Boolean)
+  ])].sort();
+  let totalBalance = 0;
+  const accRows = accounts.map(acc => {
+    const bal = balanceThrough(BALANCE_TODAY_SENTINEL, 'account', acc);
+    totalBalance += bal;
+    return { acc, bal };
+  }).sort((a,b) => b.bal - a.bal);
+  const { in: todayIn, out: todayOut } = flowSplit(allData.filter(r => r.date === today), 'total', null);
+  const todayNet = todayIn - todayOut;
+
+  // ── 2. Приход/расход за сегодня по статьям ──
+  const todayRows = allData.filter(r => r.date === today);
+  const inCats = {}, outCats = {};
+  todayRows.forEach(r => {
+    const amt = +r.amount || 0;
+    if (r.type === 'доход') inCats[r.category||'прочее'] = (inCats[r.category||'прочее']||0) + amt;
+    else if (r.type === 'расход') outCats[r.category||'прочее'] = (outCats[r.category||'прочее']||0) + amt;
+  });
+
+  // ── 3. Мини-бюджет: запас хода по крупным постоянным расходам (ЗП+аренда) ──
+  const majorCats = ['зарплата','аванс','аренда','ком платежи'];
+  const byMonth = {};
+  allData.filter(r => r.type==='расход' && majorCats.includes((r.category||'').toLowerCase())).forEach(r => {
+    const m = r.date ? r.date.slice(0,7) : null;
+    if (!m) return;
+    byMonth[m] = (byMonth[m]||0) + (+r.amount||0);
+  });
+  const monthKeys = Object.keys(byMonth).sort().filter(m => m !== today.slice(0,7)); // без текущего неполного месяца
+  const lastMonths = monthKeys.slice(-3);
+  const avgMajorMonthly = lastMonths.length ? lastMonths.reduce((s,m)=>s+byMonth[m],0)/lastMonths.length : 0;
+  const runwayMonths = avgMajorMonthly > 0 ? totalBalance / avgMajorMonthly : null;
+
+  // ── 4. Долги: нам должны / мы должны ──
+  const openDebts = debtsData.filter(d => (d.status||'открыт') !== 'закрыт');
+  const weOwed = openDebts.filter(d => d.direction === 'нам должны');
+  const weOwe  = openDebts.filter(d => d.direction === 'мы должны');
+  const daysSince = dateStr => {
+    if (!dateStr) return 0;
+    const d1 = new Date(dateStr), d2 = new Date(today);
+    return Math.max(0, Math.round((d2 - d1) / 86400000));
+  };
+  const receivablesSum = weOwed.reduce((s,d)=>s+(+d.amount||0),0);
+  const payablesSum = weOwe.reduce((s,d)=>s+(+d.amount||0),0);
+
+  // ── 5. Транзитные заказы по магазинам ──
+  const transitByStore = {};
+  transit.forEach(t => { transitByStore[t.store] = (transitByStore[t.store]||0) + (+t.amount||0); });
+  const transitTotal = Object.values(transitByStore).reduce((a,b)=>a+b,0);
+  const transitCount = transit.length;
+
+  // ── 6. Остаток склада: кол-во × средняя цена продажи ──
+  const priceMap = {};
+  prices.forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
+  let stockValue = 0, stockMatched = 0, stockUnmatched = 0;
+  const stockByCity = {};
+  stock.forEach(s => {
+    const price = priceMap[s.product] || 0;
+    stockByCity[s.city] = (stockByCity[s.city]||0) + (+s.qty||0);
+    if (price > 0) { stockValue += s.qty * price; stockMatched += s.qty; }
+    else stockUnmatched += s.qty;
+  });
+
+  // ── 7. Итого капитал ──
+  const totalCapital = totalBalance + receivablesSum + stockValue;
+
+  // ── Рендер ──
+  const card = (label, value, sub, cls) => `<div style="background:var(--surface-1, #f8fafc);border-radius:10px;padding:12px 14px">
+    <div style="font-size:11px;color:#64748b">${label}</div>
+    <div style="font-size:17px;font-weight:700;color:${cls||'#1e3a5f'}">${value}</div>
+    ${sub ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px">${sub}</div>` : ''}
+  </div>`;
+
+  let html = `<div class="card" style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:13px;color:#64748b;margin-bottom:4px">Общий остаток на счетах · ${today}</div>
+        <div style="font-size:30px;font-weight:700;color:#1e3a5f">${fK(totalBalance)}</div>
+      </div>
+      <div style="background:${todayNet>=0?'#f0fdf4':'#fef2f2'};color:${todayNet>=0?'#16a34a':'#dc2626'};font-weight:700;padding:6px 12px;border-radius:8px;font-size:13px;white-space:nowrap">
+        ${todayNet>=0?'▲':'▼'} ${fK(Math.abs(todayNet))} за сегодня
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:14px">
+      ${accRows.map(a => card(a.acc, fK(a.bal), '', a.bal>=0?'#1e3a5f':'#dc2626')).join('')}
+    </div>
+  </div>`;
+
+  const catList = (cats, positive) => Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([c,v]) =>
+    `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:#64748b"><span>${c}</span><span>${fmt(v)} ₸</span></div>`
+  ).join('') || '<div style="font-size:12px;color:#94a3b8">Нет операций сегодня</div>';
+
+  html += `<div class="card" style="margin-bottom:16px">
+    <div class="card-label" style="margin-bottom:10px">Приход / расход за сегодня</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div style="display:flex;justify-content:space-between;background:#f0fdf4;border-radius:8px;padding:8px 10px;font-weight:700;color:#16a34a;font-size:13px">
+          <span>▲ Приход</span><span>${fmt(todayIn)} ₸</span>
+        </div>
+        <div style="padding:8px 4px 0 12px">${catList(inCats)}</div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;background:#fef2f2;border-radius:8px;padding:8px 10px;font-weight:700;color:#dc2626;font-size:13px">
+          <span>▼ Расход</span><span>${fmt(todayOut)} ₸</span>
+        </div>
+        <div style="padding:8px 4px 0 12px">${catList(outCats)}</div>
+      </div>
+    </div>
+  </div>`;
+
+  html += `<div class="card" style="margin-bottom:16px">
+    <div class="card-label" style="margin-bottom:8px">Мини-бюджет — запас хода</div>
+    <div style="font-size:13px;color:#64748b">Средний расход на ЗП + аренду за последние ${lastMonths.length||0} мес.: <b>${fK(avgMajorMonthly)}</b> / мес</div>
+    <div style="font-size:22px;font-weight:700;color:${runwayMonths===null?'#94a3b8':(runwayMonths<1?'#dc2626':runwayMonths<2?'#f59e0b':'#16a34a')};margin-top:6px">
+      ${runwayMonths===null?'Недостаточно данных' : runwayMonths.toFixed(1)+' мес. запаса'}
+    </div>
+  </div>`;
+
+  const debtRow = d => `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #f1f5f9">
+    <div>
+      <div style="font-size:13px;color:#1e3a5f">${d.counterparty}</div>
+      <div style="font-size:11px;color:#94a3b8">${d.notes||''} · ${daysSince(d.date)} дн.</div>
+    </div>
+    <div style="font-size:13px;font-weight:700">${fmt(d.amount)} ₸</div>
+  </div>`;
+
+  html += `<div class="card" style="margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div class="card-label" style="color:#16a34a;margin-bottom:6px">Нам должны · ${fmt(receivablesSum)} ₸</div>
+        ${weOwed.length ? weOwed.map(debtRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет открытых долгов</div>'}
+      </div>
+      <div>
+        <div class="card-label" style="color:#dc2626;margin-bottom:6px">Мы должны · ${fmt(payablesSum)} ₸</div>
+        ${weOwe.length ? weOwe.map(debtRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет открытых долгов</div>'}
+      </div>
+    </div>
+  </div>`;
+
+  html += `<div class="card" style="margin-bottom:16px">
+    <div class="card-label" style="margin-bottom:8px">Транзитные заказы (в пути) — ${transitCount} шт · ${fK(transitTotal)}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
+      ${Object.keys(transitByStore).length ? Object.entries(transitByStore).map(([s,v]) => card(s, fK(v))).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных транзитных заказов</div>'}
+    </div>
+  </div>`;
+
+  html += `<div class="card" style="margin-bottom:16px">
+    <div class="card-label" style="margin-bottom:8px">Остаток склада — ${fK(stockValue)} (по средней цене продажи)</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
+      ${Object.keys(stockByCity).length ? Object.entries(stockByCity).map(([c,q]) => card(c, fmt(q)+' шт')).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных остатков склада</div>'}
+    </div>
+    ${stockUnmatched>0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:8px">Без найденной цены (не оценено): ${fmt(stockUnmatched)} шт — товар ещё не встречался в загруженных продажах</div>` : ''}
+  </div>`;
+
+  html += `<div class="card" style="background:#1e3a5f">
+    <div style="color:#93c5fd;font-size:13px;margin-bottom:6px">ИТОГО КАПИТАЛ (счета + дебиторка + склад)</div>
+    <div style="color:white;font-size:28px;font-weight:700">${fK(totalCapital)}</div>
+    <div style="color:#93c5fd;font-size:11px;margin-top:6px">Остатки на счетах ${fK(totalBalance)} · Нам должны ${fK(receivablesSum)} · Склад ${fK(stockValue)}</div>
+  </div>`;
+
+  el.innerHTML = html;
+}
+
 function doReconcile() {
   const raw = document.getElementById('rec-data').value.trim();
   if (!raw) { showToast('Вставьте данные выписки', 'error'); return; }
@@ -1987,6 +2292,18 @@ async function buildOPIU() {
 
 // ── FILE UPLOAD ─────────────────────────────────────
 let _mergedData = {}; // {month: {city: {revenue, cogs}}}
+let _mergedItemPrices = {}; // {товар: {revenue, qty}} — из файлов продаж, для оценки склада
+
+// Универсальный POST-запрос к Apps Script (для крупных данных — избегаем
+// лимита длины URL, который ломает обычные GET-запросы с большим 'data').
+async function postAction(action, data) {
+  const r = await fetch(SCRIPT_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action, data })
+  });
+  return r.json();
+}
 
 function handleFileDrop(event) {
   event.preventDefault();
@@ -2046,6 +2363,9 @@ function parse1CFile(file) {
 
         // byWeek: { '2026-W23': { month:'2026-06', cities:{ 'Алматы': amount } } }
         const byWeek = {};
+        // Средняя цена продажи по товару (только для sales) — используется потом
+        // для оценки остатка склада в деньгах: {товар: {revenue, qty}}
+        const itemPrices = {};
         let rowCount = 0;
 
         for (let i = headerIdx + 1; i < raw.length; i++) {
@@ -2053,7 +2373,8 @@ function parse1CFile(file) {
           if (!r[0]) continue;
           let date, city, amount, qty = 0;
           if (fileType === 'sales') {
-            // col[0]=дата "DD.MM.YYYY HH:MM:SS", col[4]=клиент, col[7]=склад, col[11]=кол-во, col[12]=цена
+            // col[0]=дата "DD.MM.YYYY HH:MM:SS", col[4]=клиент, col[5]=номенклатура,
+            // col[7]=склад, col[11]=кол-во, col[12]=цена
             date   = parse1CDate(r[0]);
             city   = getCity(r[7]);
             qty    = parseFloat(r[11]) || 0;
@@ -2077,11 +2398,17 @@ function parse1CFile(file) {
           byWeek[key].cities[city] = (byWeek[key].cities[city] || 0) + amount;
           if (fileType === 'sales') {
             byWeek[key].units[city] = (byWeek[key].units[city] || 0) + qty;
+            const item = String(r[5]||'').trim();
+            if (item && qty > 0) {
+              if (!itemPrices[item]) itemPrices[item] = { revenue: 0, qty: 0 };
+              itemPrices[item].revenue += amount;
+              itemPrices[item].qty += qty;
+            }
           }
           rowCount++;
         }
 
-        resolve({ fileType, periodStr, byWeek, rows: rowCount, name: file.name });
+        resolve({ fileType, periodStr, byWeek, itemPrices, rows: rowCount, name: file.name });
       } catch(err) { reject(err); }
     };
     reader.onerror = reject;
@@ -2103,8 +2430,16 @@ async function processUploadedFiles(files) {
   // Раздельное объединение: продажи и приход по неделям
   // { '2026-W23': { month:'2026-06', cities:{ 'Алматы': amount } } }
   _mergedData = { sales: {}, purchases: {} };
+  _mergedItemPrices = {};
   results.filter(r => !r.error).forEach(r => {
     const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
+    if (r.itemPrices) {
+      Object.entries(r.itemPrices).forEach(([item, {revenue, qty}]) => {
+        if (!_mergedItemPrices[item]) _mergedItemPrices[item] = { revenue: 0, qty: 0 };
+        _mergedItemPrices[item].revenue += revenue;
+        _mergedItemPrices[item].qty += qty;
+      });
+    }
     Object.entries(r.byWeek).forEach(([key, {week, month, cities, units}]) => {
       if (!target[key]) target[key] = { week, month, cities: {}, units: {} };
       Object.entries(cities).forEach(([city, amt]) => {
@@ -2246,6 +2581,13 @@ async function confirmAndSave() {
     if (flatSales.length)     savedWeeks = savedWeeks.concat(await batchSave('saveWeekSales',     flatSales));
     if (flatPurchases.length) savedWeeks = savedWeeks.concat(await batchSave('saveWeekPurchases', flatPurchases));
 
+    // Попутно копим среднюю цену продажи по товару — для оценки остатка склада
+    // в деньгах в «Отчёте дня». Идёт через POST (может быть много товаров).
+    const priceRows = Object.entries(_mergedItemPrices).map(([product, {revenue, qty}]) => ({ product, revenue, qty }));
+    if (priceRows.length) {
+      try { await postAction('saveItemPrices', priceRows); } catch(e) { /* не критично для основного сохранения */ }
+    }
+
     const uniqueWeeks = [...new Set(savedWeeks)].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
     msg.textContent = `✓ Сохранено: ${uniqueWeeks}`;
     msg.style.color = '#16a34a';
@@ -2268,7 +2610,8 @@ let _mergedKaspi = {}; // { 'week|month': { week, month, account, cats:{марк
 const KASPI_ENTITY_MAP = [
   [/norex/i,        'Норех'],
   [/phone\s*house/i,'Фон'],
-  [/\bctd\b/i,       'СТД']
+  [/\bctd\b/i,       'СТД'],
+  [/amdk/i,          'АМДК']
 ];
 
 function classifyKaspiPurpose(purpose) {
@@ -2305,7 +2648,7 @@ function parseKaspiCommissionFile(file) {
         }
 
         if (!account) {
-          resolve({error:`Не распознано юрлицо ("${entityRaw||'—'}"). Ожидались Norex / Phone House / CTD.`, name: file.name});
+          resolve({error:`Не распознано юрлицо ("${entityRaw||'—'}"). Ожидались Norex / Phone House / CTD / AMDK.`, name: file.name});
           return;
         }
         if (headerIdx === -1) {
@@ -2481,6 +2824,301 @@ async function confirmAndSaveKaspi() {
     msg.textContent = `✓ Сохранено: ${uniqueWeeks}`;
     msg.style.color = '#16a34a';
     showToast('Комиссия Kaspi сохранена в Google Sheets!', 'success');
+  } catch(e) {
+    msg.textContent = '✗ Ошибка: ' + e.message;
+    msg.style.color = '#dc2626';
+  }
+}
+
+// ── ОСТАТОК СКЛАДА (ведомость по товарам на складах, 1С) ───────────
+// Формат: шапка с метаданными, затем таблица с колонками Период/Склад/
+// Артикул(название товара)/Серия/Количество — построчно по серийным
+// номерам. Сворачиваем по городу+товару в суммарное количество (серийники
+// не храним, они не нужны для отчёта). Каждая загрузка ПОЛНОСТЬЮ заменяет
+// предыдущий снимок остатков (это текущее состояние склада, не история).
+let _mergedStock = null; // { date, items:[{city,product,qty}] }
+
+function getStockCity(wh) {
+  const u = String(wh||'').toUpperCase();
+  if (u.includes('БРАК')) return 'Брак';
+  if (u.includes('АЛМАТ')) return 'Алматы';
+  if (u.includes('АСТАН')) return 'Астана';
+  if (u.includes('ШЫМ'))   return 'Шымкент';
+  return 'Прочее';
+}
+
+function parseStockFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array', raw:true});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+
+        let headerIdx = -1;
+        for (let i = 0; i < Math.min(raw.length, 25); i++) {
+          const cells = (raw[i]||[]).map(c => String(c||''));
+          if (cells.some(c=>c.includes('Склад')) && cells.some(c=>c.includes('Артикул'))) { headerIdx = i; break; }
+        }
+        if (headerIdx === -1) {
+          resolve({error:`Не найден заголовок ведомости (колонки "Склад"/"Артикул"). Проверь что это выгрузка "Ведомость по товарам на складах" из 1С.`, name: file.name});
+          return;
+        }
+        const hdr = raw[headerIdx].map(c => String(c||''));
+        const whCol   = hdr.findIndex(c => c.includes('Склад'));
+        const prodCol = hdr.findIndex(c => c.includes('Артикул'));
+        const qtyCol  = hdr.findIndex(c => c.includes('Количество'));
+
+        const parseSDate = s => {
+          const m = String(s||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+          return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+        };
+
+        const agg = {};
+        let lastDate = '';
+        let rowCount = 0;
+        for (let i = headerIdx + 1; i < raw.length; i++) {
+          const r = raw[i] || [];
+          const wh = r[whCol], prod = r[prodCol];
+          if (!wh || !prod) continue;
+          const qty = parseFloat(r[qtyCol]) || 0;
+          if (!qty) continue;
+          const d = parseSDate(r[0]);
+          if (d) lastDate = d;
+          const city = getStockCity(wh);
+          const key = city + '|' + prod;
+          if (!agg[key]) agg[key] = { city, product: prod, qty: 0 };
+          agg[key].qty += qty;
+          rowCount++;
+        }
+
+        resolve({ date: lastDate, items: Object.values(agg), rows: rowCount, name: file.name });
+      } catch(err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function handleStockFileDrop(event) {
+  event.preventDefault();
+  document.getElementById('stock-drop-zone').style.background = '#eff6ff';
+  const files = Array.from(event.dataTransfer.files).filter(f => /\.xlsx?$/i.test(f.name));
+  if (files.length) processStockFile(files[0]);
+}
+
+async function processStockFile(file) {
+  const preview = document.getElementById('stock-upload-preview');
+  preview.innerHTML = '<div style="margin-top:12px"><div class="loading"><div class="spinner"></div>Обрабатываю ведомость склада (может занять немного времени)...</div></div>';
+
+  let r;
+  try { r = await parseStockFile(file); }
+  catch(e) { r = { error: e.message, name: file.name }; }
+
+  if (r.error) {
+    preview.innerHTML = `<div style="margin-top:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:12px"><b>❌ ${r.name}</b>: ${r.error}</div>`;
+    _mergedStock = null;
+    return;
+  }
+  _mergedStock = r;
+
+  const fM = v => v >= 1e3 ? (v/1e3).toFixed(1)+' тыс' : v;
+  const byCity = {};
+  r.items.forEach(it => { byCity[it.city] = (byCity[it.city]||0) + it.qty; });
+
+  let html = `<div style="margin-top:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <b style="color:#1e3a5f;font-size:13px">📦 ${r.name}</b>
+      <span style="color:#2563eb">✓ ${r.rows} позиций</span>
+    </div>
+    <div style="font-size:11px;color:#1e40af;margin-top:4px">На дату: <b>${r.date || '—'}</b></div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:12px">`;
+  Object.entries(byCity).sort((a,b)=>b[1]-a[1]).forEach(([city, qty]) => {
+    html += `<div style="background:#f8fafc;border-radius:8px;padding:10px 12px">
+      <div style="font-size:11px;color:#64748b">${city}</div>
+      <div style="font-size:16px;font-weight:700;color:#1e3a5f">${fM(qty)} шт</div>
+    </div>`;
+  });
+  html += `</div>
+  <div style="display:flex;align-items:center;gap:14px;margin-top:16px">
+    <button class="btn btn-save" onclick="confirmAndSaveStock()" style="width:auto">⬆ Заменить остаток склада в Google Sheets</button>
+    <div id="stock-upload-save-msg" style="font-size:13px"></div>
+  </div>
+  <div style="font-size:11px;color:#64748b;margin-top:6px">
+    ℹ️ Загрузка ПОЛНОСТЬЮ заменяет предыдущий снимок остатков (это текущее состояние, а не история).
+  </div>`;
+  preview.innerHTML = html;
+}
+
+async function confirmAndSaveStock() {
+  if (!_mergedStock) return;
+  const msg = document.getElementById('stock-upload-save-msg');
+  msg.textContent = 'Сохранение...'; msg.style.color = '#64748b';
+  const rows = _mergedStock.items.map(it => ({ date: _mergedStock.date, city: it.city, product: it.product, qty: Math.round(it.qty) }));
+  try {
+    const d = await postAction('saveStockBalance', rows);
+    if (!d.success) throw new Error(d.error || 'Ошибка сервера');
+    msg.textContent = `✓ Сохранено: ${d.rows} позиций`;
+    msg.style.color = '#16a34a';
+    showToast('Остаток склада сохранён!', 'success');
+  } catch(e) {
+    msg.textContent = '✗ Ошибка: ' + e.message;
+    msg.style.color = '#dc2626';
+  }
+}
+
+// ── ТРАНЗИТНЫЕ ЗАКАЗЫ (выгрузка заказов Kaspi по магазинам) ────────
+// Магазин определяется по имени файла (в самой выгрузке нет колонки
+// юрлица/магазина). Каждая загрузка заменяет заказы ТОЛЬКО этого магазина.
+let _mergedTransit = {}; // { store: [{orderId,status,amount,date}] }
+
+const TRANSIT_STORE_MAP = [
+  [/техно|стд/i,      'СТД'],
+  [/сана|санг/i,       'Сана Стор'],
+  [/норекс|norex/i,    'Норекс'],
+  [/байноу|buynow/i,   'Байноу']
+];
+
+function parseTransitFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array', raw:true});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+
+        let headerIdx = -1;
+        for (let i = 0; i < Math.min(raw.length, 5); i++) {
+          const cells = (raw[i]||[]).map(c => String(c||''));
+          if (cells.some(c=>c.includes('№ заказа')) && cells.some(c=>c.includes('Статус'))) { headerIdx = i; break; }
+        }
+        if (headerIdx === -1) {
+          resolve({error:`Не найден заголовок таблицы заказов ("№ заказа"/"Статус"). Проверь формат файла.`, name: file.name});
+          return;
+        }
+        let store = '';
+        for (const [re, name] of TRANSIT_STORE_MAP) { if (re.test(file.name)) { store = name; break; } }
+        if (!store) {
+          resolve({error:`Не распознан магазин по имени файла. Ожидались слова: техно/стд, сана, норекс, байноу.`, name: file.name});
+          return;
+        }
+
+        const hdr = raw[headerIdx].map(c => String(c||''));
+        const idCol     = hdr.findIndex(c => c.includes('№ заказа'));
+        const dateCol   = hdr.findIndex(c => c.includes('Дата поступления'));
+        const amtCol    = hdr.findIndex(c => c.includes('Сумма'));
+        const statusCol = hdr.findIndex(c => c.includes('Статус') && !c.includes('измен'));
+
+        const parseTDate = s => {
+          const m = String(s||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+          return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+        };
+
+        const items = [];
+        for (let i = headerIdx + 1; i < raw.length; i++) {
+          const r = raw[i] || [];
+          const orderId = r[idCol];
+          if (!orderId) continue;
+          items.push({
+            orderId: String(orderId),
+            status: String(r[statusCol]||''),
+            amount: parseFloat(r[amtCol]) || 0,
+            date: parseTDate(r[dateCol])
+          });
+        }
+        resolve({ store, items, rows: items.length, name: file.name });
+      } catch(err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function handleTransitFileDrop(event) {
+  event.preventDefault();
+  document.getElementById('transit-drop-zone').style.background = '#fff7ed';
+  const files = Array.from(event.dataTransfer.files).filter(f => /\.xlsx?$/i.test(f.name));
+  if (files.length) processTransitFiles(files);
+}
+
+async function processTransitFiles(files) {
+  const preview = document.getElementById('transit-upload-preview');
+  preview.innerHTML = '<div style="margin-top:12px"><div class="loading"><div class="spinner"></div>Обрабатываю заказы...</div></div>';
+
+  const results = [];
+  for (const file of files) {
+    try { results.push(await parseTransitFile(file)); }
+    catch(e) { results.push({error: e.message, name: file.name}); }
+  }
+
+  results.filter(r => !r.error).forEach(r => { _mergedTransit[r.store] = r.items; });
+
+  const fM = v => v >= 1e6 ? (v/1e6).toFixed(1)+' млн' : Math.round(v/1e3)+' тыс';
+  let html = '<div style="margin-top:14px">';
+  results.forEach(r => {
+    if (r.error) {
+      html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:12px"><b>❌ ${r.name}</b>: ${r.error}</div>`;
+    } else {
+      const total = r.items.reduce((s,it)=>s+it.amount,0);
+      html += `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 14px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <b style="color:#7c2d12;font-size:13px">🚚 ${r.store} · ${r.name}</b>
+          <span style="color:#c2410c">✓ ${r.rows} заказов</span>
+        </div>
+        <div style="font-size:11px;color:#9a3412;margin-top:4px">На сумму: <b>${fM(total)} ₸</b></div>
+      </div>`;
+    }
+  });
+
+  const stores = Object.keys(_mergedTransit);
+  if (stores.length) {
+    let grand = 0;
+    html += `<div class="report-wrap"><table style="border-collapse:collapse;font-size:12px;width:100%">
+    <thead><tr style="background:#7c2d12;color:white">
+      <th style="padding:7px 10px;text-align:left">Магазин</th>
+      <th style="padding:7px 10px;text-align:right">Заказов</th>
+      <th style="padding:7px 10px;text-align:right">Сумма</th>
+    </tr></thead><tbody>`;
+    stores.forEach((s, idx) => {
+      const items = _mergedTransit[s];
+      const sum = items.reduce((a,it)=>a+it.amount,0);
+      grand += sum;
+      html += `<tr style="background:${idx%2?'white':'#fffbeb'}">
+        <td style="padding:6px 10px;font-weight:700;color:#7c2d12">${s}</td>
+        <td style="padding:6px 10px;text-align:right">${items.length}</td>
+        <td style="padding:6px 10px;text-align:right;font-weight:700">${fM(sum)} ₸</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>
+    <div style="display:flex;align-items:center;gap:14px;margin-top:16px">
+      <button class="btn btn-save" onclick="confirmAndSaveTransit()" style="width:auto">⬆ Сохранить транзитные заказы</button>
+      <div id="transit-upload-save-msg" style="font-size:13px"></div>
+    </div>
+    <div style="font-size:11px;color:#64748b;margin-top:6px">
+      ℹ️ Итого в транзите: <b>${fM(grand)} ₸</b>. Загрузка заменяет заказы только этого магазина, остальные не затронутся.
+    </div>`;
+  }
+
+  html += '</div>';
+  preview.innerHTML = html;
+}
+
+async function confirmAndSaveTransit() {
+  const msg = document.getElementById('transit-upload-save-msg');
+  msg.textContent = 'Сохранение...'; msg.style.color = '#64748b';
+  const rows = [];
+  Object.entries(_mergedTransit).forEach(([store, items]) => {
+    items.forEach(it => rows.push({ store, orderId: it.orderId, status: it.status, amount: Math.round(it.amount), date: it.date }));
+  });
+  try {
+    const d = await postAction('saveTransit', rows);
+    if (!d.success) throw new Error(d.error || 'Ошибка сервера');
+    msg.textContent = `✓ Сохранено: ${d.rows} заказов`;
+    msg.style.color = '#16a34a';
+    showToast('Транзитные заказы сохранены!', 'success');
   } catch(e) {
     msg.textContent = '✗ Ошибка: ' + e.message;
     msg.style.color = '#dc2626';
