@@ -1784,37 +1784,29 @@ async function buildDailyReport() {
     return fmt(n)+' ₸';
   };
 
-  // ── 1. Остаток по счетам, сгруппированный по юрлицам + стрелка (изменение за сегодня) ──
-  // Группировка ТОЛЬКО для отображения — сами названия счетов в Журнале не трогаем.
-  // Так разные варианты написания одного юрлица ("БЦК ФОН" / "БЦК Фон") попадают
-  // в одну группу, а десятки старых личных/разовых счетов не засоряют экран —
-  // уходят в общую группу «Прочее» (полный список — на странице «Остатки счетов»).
-  function dailyAcctGroup(acc) {
-    const a = String(acc||'');
-    if (/ctd|стд/i.test(a)) return 'CTD';
-    if (/техно|technovision|холдинг|holding/i.test(a)) return 'Technovision';
-    if (/фон|phone\s*house/i.test(a)) return 'Phone House';
-    if (/норех|norex/i.test(a)) return 'Norex';
-    if (/электро|elektro|electromax/i.test(a)) return 'Electromax';
-    if (/амдк|amdk/i.test(a)) return 'АМДК';
-    if (/^каспи/i.test(a)) return 'Kaspi Gold';
-    if (/^касса/i.test(a)) return 'Касса (нал)';
-    return 'Прочее';
-  }
-
+  // ── 1. Остаток по счетам: банки (юр.счета) + Kaspi Gold по держателям + наличка ──
+  // Классификация — те же глобальные функции, что и на странице «Остатки
+  // счетов» (acctBucket/acctBankLabel), чтобы группировка совпадала везде.
   const accounts = [...new Set([
     ...allData.map(r => r.account).filter(Boolean),
     ...openingBalances.map(o => o.account).filter(Boolean)
   ])];
   let totalBalance = 0;
-  const groupBalances = {};
-  let otherCount = 0;
+  const bankBalances = {};      // юр.счета, по банку
+  const kaspiGoldBalances = {}; // физ Kaspi Gold, по держателю
+  let cashBalance = 0;
   accounts.forEach(acc => {
     const bal = balanceThrough(BALANCE_TODAY_SENTINEL, 'account', acc);
     totalBalance += bal;
-    const g = dailyAcctGroup(acc);
-    groupBalances[g] = (groupBalances[g]||0) + bal;
-    if (g === 'Прочее') otherCount++;
+    const b = acctBucket(acc);
+    if (b.type === 'legal') {
+      const bank = acctBankLabel(acc);
+      bankBalances[bank] = (bankBalances[bank]||0) + bal;
+    } else if (b.type === 'kaspi') {
+      kaspiGoldBalances[b.name] = (kaspiGoldBalances[b.name]||0) + bal;
+    } else if (b.type === 'cash') {
+      cashBalance += bal;
+    }
   });
   const { in: todayIn, out: todayOut } = flowSplit(allData.filter(r => r.date === today), 'total', null);
   const todayNet = todayIn - todayOut;
@@ -1899,27 +1891,56 @@ async function buildDailyReport() {
     ${kpi('Итого капитал', fK(totalCapital), totalCapital>=0?'#1e3a5f':'#dc2626')}
   </div>`;
 
-  // Остаток по юрлицам (бары) + остаток склада по городам (бары) — рядом
-  const mainGroups = Object.entries(groupBalances)
-    .filter(([g]) => g !== 'Прочее')
-    .sort((a,b) => Math.abs(b[1]) - Math.abs(a[1]));
-  const maxGroupAbs = Math.max(1, ...mainGroups.map(([,v]) => Math.abs(v)));
-  const otherTotal = groupBalances['Прочее'] || 0;
+  // Остаток по счетам: банки (Kaspi/БЦК отдельно, остальные банки — одной
+  // строкой, там по 1 счёту) + Kaspi Gold по держателям (только у кого есть
+  // деньги, остальные — свёрнуты в одну строку) + наличка.
+  const otherBanksSum = ['Халык','Жусан','Freedom','Forte'].reduce((s,b)=>s+(bankBalances[b]||0),0);
+  const bankRows = [
+    ['Kaspi', bankBalances['Kaspi']||0],
+    ['БЦК', bankBalances['БЦК']||0],
+    ['Халык / Жусан / Freedom / Forte', otherBanksSum],
+  ];
+  if (bankBalances['Другое']) bankRows.push(['Другое', bankBalances['Другое']]);
+  const maxBankAbs = Math.max(1, ...bankRows.map(([,v]) => Math.abs(v)));
+
+  const kaspiEntries = Object.entries(kaspiGoldBalances);
+  const kaspiActive = kaspiEntries.filter(([,v]) => v !== 0).sort((a,b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const kaspiZeroCount = kaspiEntries.length - kaspiActive.length;
+  const kaspiTotal = kaspiEntries.reduce((s,[,v]) => s+v, 0);
+  const maxKaspiAbs = Math.max(1, ...kaspiActive.map(([,v]) => Math.abs(v)));
 
   const maxCityQty = Math.max(1, ...Object.values(stockByCity));
+  const stockDate = fmtDate(stock.reduce((max,s) => (s.date && s.date > max ? s.date : max), ''));
+  const transitDate = fmtDate(transit.reduce((max,t) => (t.date && t.date > max ? t.date : max), ''));
 
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
     <div class="card">
-      <div class="card-label" style="margin-bottom:12px">Остаток по юрлицам</div>
-      ${mainGroups.length ? mainGroups.map(([g,v]) => barRow(g, v, maxGroupAbs)).join('') : '<div style="font-size:12px;color:#94a3b8">Нет данных</div>'}
-      ${otherCount ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between">
-        <span style="font-size:12px;color:#64748b">Прочее / личные · ${otherCount} счётов</span>
-        <span style="font-size:12px;font-weight:700;color:${otherTotal<0?'#dc2626':'#1e3a5f'}">${fK(otherTotal)}</span>
+      <div class="card-label" style="margin-bottom:12px">Остаток по счетам</div>
+      ${bankRows.map(([b,v]) => barRow(b, v, maxBankAbs)).join('')}
+      ${kaspiEntries.length ? `
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:700;color:#64748b">Kaspi Gold — по держателям</span>
+          <span style="font-size:12px;font-weight:700">${fK(kaspiTotal)}</span>
+        </div>
+        ${kaspiActive.map(([n,v]) => {
+          const pct = Math.min(100, Math.abs(v)/maxKaspiAbs*100);
+          const neg = v<0;
+          return `<div style="display:grid;grid-template-columns:90px 1fr 78px;align-items:center;gap:8px;margin-bottom:7px">
+            <span style="font-size:12px;color:#64748b">${n}</span>
+            <div style="height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${neg?'#dc2626':'#8b5cf6'};border-radius:3px"></div></div>
+            <span style="font-size:12px;text-align:right;font-weight:700;color:${neg?'#dc2626':'#1e3a5f'}">${fK(v)}</span>
+          </div>`;
+        }).join('')}
+        ${kaspiZeroCount ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px">Остальные держатели (${kaspiZeroCount}) — без остатка</div>` : ''}
+      ` : ''}
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between">
+        <span style="font-size:12px;color:#64748b">Наличка</span>
+        <span style="font-size:12px;font-weight:700;color:${cashBalance<0?'#dc2626':'#1e3a5f'}">${fK(cashBalance)}</span>
       </div>
-      <div style="font-size:11px;color:#94a3b8;margin-top:4px">Полный список — на странице «Остатки счетов»</div>` : ''}
     </div>
     <div class="card">
-      <div class="card-label" style="margin-bottom:12px">Остаток склада по городам</div>
+      <div class="card-label" style="margin-bottom:2px">Остаток склада по городам</div>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">${stockDate!=='—' ? 'Снимок на '+stockDate : 'Нет загруженных остатков'}</div>
       ${Object.keys(stockByCity).length ? Object.entries(stockByCity).sort((a,b)=>b[1]-a[1]).map(([c,q]) => {
         const pct = Math.min(100, q/maxCityQty*100);
         return `<div style="display:grid;grid-template-columns:80px 1fr 70px;align-items:center;gap:8px;margin-bottom:8px">
@@ -1965,7 +1986,8 @@ async function buildDailyReport() {
 
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
     <div class="card">
-      <div class="card-label" style="margin-bottom:12px">Транзит по магазинам — ${transitCount} шт</div>
+      <div class="card-label" style="margin-bottom:2px">Транзит по магазинам — ${transitCount} шт</div>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">${transitDate!=='—' ? 'Данные на '+transitDate : 'Нет загруженных заказов'}</div>
       ${Object.keys(transitByStore).length ? Object.entries(transitByStore).sort((a,b)=>b[1]-a[1]).map(([s,v]) => {
         const pct = Math.min(100, v/maxTransit*100);
         return `<div style="display:grid;grid-template-columns:70px 1fr 90px;align-items:center;gap:8px;margin-bottom:8px">
