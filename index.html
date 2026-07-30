@@ -2302,7 +2302,11 @@ async function buildDailyReport() {
     const price = itemCostAsOf(resolveItemName(s.product, itemAliasMap), today, linesByItem, priceMap);
     const val = (+s.qty||0) * price;
     if (isActiveStock(s.city)) {
-      stockByCity[s.city] = (stockByCity[s.city]||0) + (+s.qty||0);
+      // Для отображения активные склады сворачиваются в укрупнённый «город»
+      // (getStockCity) — сама классификация активный/неактивный выше уже
+      // прошла по полному названию склада (s.city до свёртки).
+      const displayCity = getStockCity(s.city);
+      stockByCity[displayCity] = (stockByCity[displayCity]||0) + (+s.qty||0);
       if (price > 0) { stockValue += val; stockMatched += s.qty; }
       else stockUnmatched += s.qty;
     } else {
@@ -2388,20 +2392,20 @@ async function buildDailyReport() {
       </div>
     </div>
     <div class="card">
-      <div class="card-label" style="margin-bottom:2px">Остаток склада по городам</div>
+      <div class="card-label" style="margin-bottom:2px">Остаток склада — активные</div>
       <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">${stockDate!=='—' ? 'Снимок на '+stockDate : 'Нет загруженных остатков'}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;background:#f8fafc;border-radius:8px;padding:8px 10px;margin-bottom:12px">
+        <span style="font-size:12px;font-weight:700;color:#64748b">Итого активные</span>
+        <span style="font-size:13px;font-weight:700;color:#1e3a5f">${fmt(stockMatched+stockUnmatched)} шт · ${fK(stockValue)}</span>
+      </div>
       ${Object.keys(stockByCity).length ? Object.entries(stockByCity).sort((a,b)=>b[1]-a[1]).map(([c,q]) => {
         const pct = Math.min(100, q/maxCityQty*100);
         return `<div style="display:grid;grid-template-columns:80px 1fr 70px;align-items:center;gap:8px;margin-bottom:8px">
           <span style="font-size:12px;color:#64748b">${c}</span>
-          <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${c==='Брак'?'#f59e0b':'#2563eb'};border-radius:4px"></div></div>
+          <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:#2563eb;border-radius:4px"></div></div>
           <span style="font-size:12px;text-align:right;font-weight:700;color:#1e3a5f">${fmt(q)} шт</span>
         </div>`;
       }).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных остатков склада</div>'}
-      <div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between">
-        <span style="font-size:12px;color:#64748b">Оценка в деньгах</span>
-        <span style="font-size:12px;font-weight:700">${fK(stockValue)}</span>
-      </div>
       ${stockUnmatched>0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">Без цены: ${fmt(stockUnmatched)} шт — товар ещё не встречался ни в приходах, ни в продажах</div>` : ''}
     </div>
   </div>`;
@@ -3728,12 +3732,21 @@ async function confirmAndSaveKaspi() {
 // предыдущий снимок остатков (это текущее состояние склада, не история).
 let _mergedStock = null; // { date, items:[{city,product,qty}] }
 
+// Группирует сырое название склада в укрупнённый «город» — только для
+// отображения (свод по активным складам в отчёте дня). Классификация
+// активный/неактивный (isActiveStock) работает по сырому названию ДО этой
+// группировки — см. parseStockFile, где город больше не схлопывается.
 function getStockCity(wh) {
   const u = String(wh||'').toUpperCase();
   if (u.includes('БРАК')) return 'Брак';
   if (u.includes('АЛМАТ')) return 'Алматы';
   if (u.includes('АСТАН')) return 'Астана';
   if (u.includes('ШЫМ'))   return 'Шымкент';
+  if (u.includes('ОЗОН'))  return 'Озон';
+  if (u.includes('УРАЛЬСК')) return 'Уральск';
+  if (u.includes('ЖУСАН')) return 'Жусан';
+  if (u.includes('ФОРТЕ')) return 'Форте';
+  if (u.includes('ХАЛЫК')) return 'Халык';
   return 'Прочее';
 }
 
@@ -3776,7 +3789,12 @@ function parseStockFile(file) {
           if (!qty) continue;
           const d = parseSDate(r[0]);
           if (d) lastDate = d;
-          const city = getStockCity(wh);
+          // Раньше здесь схлопывали название склада до города (getStockCity) —
+          // из-за этого терялась информация, нужная чтобы отличить активный
+          // склад от неактивного (isActiveStock сверяется по полному названию).
+          // Теперь сохраняем склад как есть; в укрупнённый «город» сворачиваем
+          // только при отображении отчёта, и только для активных складов.
+          const city = String(wh).trim();
           const key = city + '|' + prod;
           if (!agg[key]) agg[key] = { city, product: prod, qty: 0 };
           agg[key].qty += qty;
