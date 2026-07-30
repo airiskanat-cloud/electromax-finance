@@ -707,7 +707,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxY3Dji0FdJDDEsQbOhvpbMDVJTX6XuEK3nCD8GUQuAh3ZfQG6rvAAWMAMv4icvnk9tgA/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwGYuQOspFqyj7Ejs7ANxe2q265hZvN0uSHr9cINXo4do8k95h6jJWyw_0AgHqt3F5atQ/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -1968,6 +1968,56 @@ function renderBalances() {
   document.getElementById('balances-grid').innerHTML = html;
 }
 
+// ── ЗАКУПОЧНАЯ СЕБЕСТОИМОСТЬ ТОВАРА «НА ДАТУ X» ─────────────────────
+// Логика бухгалтера (перенесена из модели Power BI 1:1):
+//   1. Берём последний приход этого товара на дату ≤ asOfDate.
+//   2. Средневзвешенная цена (сумма/кол-во) по приходам этого товара за
+//      1 месяц ДО этой даты (включительно по саму дату последнего прихода).
+//   3. Если за 1 месяц приходов не было — то же самое за 3 месяца.
+//   4. Если приходов по товару вообще никогда не было — берём среднюю цену
+//      ПРОДАЖИ этого товара как запасной вариант (закупочную цену взять
+//      неоткуда), см. fallbackPriceMap.
+// Используется и в «Остатке склада» (asOfDate = сегодня), и в себестоимости
+// ОПиУ (asOfDate = конец отчётного месяца) — чтобы методология не расходилась.
+function groupPurchaseLinesByItem(lines) {
+  const map = {};
+  lines.forEach(l => { (map[l.item] = map[l.item] || []).push(l); });
+  Object.values(map).forEach(arr => arr.sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0)));
+  return map;
+}
+function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
+  const all = linesByItem[item];
+  const fallback = (fallbackPriceMap && fallbackPriceMap[item]) || 0;
+  if (!all || !all.length) return fallback;
+  const upTo = all.filter(l => l.date <= asOfDate);
+  if (!upTo.length) return fallback;
+  const lastDate = upTo[upTo.length - 1].date; // upTo отсортирован по возрастанию — последний = самый поздний ≤ asOfDate
+  const monthsBack = (dateStr, n) => {
+    const d = new Date(dateStr + 'T00:00:00');
+    d.setMonth(d.getMonth() - n);
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  };
+  const windowAvg = n => {
+    const from = monthsBack(lastDate, n);
+    const win = upTo.filter(l => l.date > from && l.date <= lastDate);
+    const qty = win.reduce((s,l) => s + l.qty, 0);
+    const sum = win.reduce((s,l) => s + l.sum, 0);
+    return qty > 0 ? sum / qty : null;
+  };
+  const c1 = windowAvg(1);
+  if (c1 !== null) return c1;
+  const c3 = windowAvg(3);
+  if (c3 !== null) return c3;
+  return fallback;
+}
+// Последний день месяца "YYYY-MM" → "YYYY-MM-DD" (для себестоимости в ОПиУ:
+// "на дату X" = конец отчётного месяца, а не сегодняшний день).
+function monthEndDate(m) {
+  const [y, mo] = m.split('-').map(Number);
+  const d = new Date(y, mo, 0); // «нулевой» день следующего месяца = последний день текущего
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
 // ── ОТЧЁТ ДНЯ (сводный ежедневный отчёт для заказчика) ─────────────
 function todayStr() {
   const d = new Date();
@@ -1978,16 +2028,18 @@ async function buildDailyReport() {
   const el = document.getElementById('daily-report-content');
   el.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка отчёта...</div>';
 
-  let stock = [], prices = [], transit = [];
+  let stock = [], prices = [], transit = [], purchaseLines = [];
   try {
-    const [r1, r2, r3] = await Promise.all([
+    const [r1, r2, r3, r4] = await Promise.all([
       fetch(SCRIPT_URL + '?action=getStockBalance'),
       fetch(SCRIPT_URL + '?action=getItemPrices'),
-      fetch(SCRIPT_URL + '?action=getTransit')
+      fetch(SCRIPT_URL + '?action=getTransit'),
+      fetch(SCRIPT_URL + '?action=getPurchaseLines')
     ]);
     stock   = (await r1.json()).items || [];
     prices  = (await r2.json()).items || [];
     transit = (await r3.json()).items || [];
+    purchaseLines = (await r4.json()).items || [];
   } catch(e) {}
 
   const today = todayStr();
@@ -2069,13 +2121,17 @@ async function buildDailyReport() {
   const transitTotal = Object.values(transitByStore).reduce((a,b)=>a+b,0);
   const transitCount = transitActive.length;
 
-  // ── 6. Остаток склада: кол-во × средняя цена продажи ──
+  // ── 6. Остаток склада: кол-во × закупочная цена «на сегодня» ──
+  // Закупочная цена — по логике бухгалтера (см. itemCostAsOf): средневзвешенная
+  // цена последних приходов этого товара (1 месяц, иначе 3). Если по товару
+  // вообще не было приходов — запасной вариант: средняя цена ПРОДАЖИ.
   const priceMap = {};
   prices.forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
+  const linesByItem = groupPurchaseLinesByItem(purchaseLines);
   let stockValue = 0, stockMatched = 0, stockUnmatched = 0;
   const stockByCity = {};
   stock.forEach(s => {
-    const price = priceMap[s.product] || 0;
+    const price = itemCostAsOf(s.product, today, linesByItem, priceMap);
     stockByCity[s.city] = (stockByCity[s.city]||0) + (+s.qty||0);
     if (price > 0) { stockValue += s.qty * price; stockMatched += s.qty; }
     else stockUnmatched += s.qty;
@@ -2171,7 +2227,7 @@ async function buildDailyReport() {
         <span style="font-size:12px;color:#64748b">Оценка в деньгах</span>
         <span style="font-size:12px;font-weight:700">${fK(stockValue)}</span>
       </div>
-      ${stockUnmatched>0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">Без цены: ${fmt(stockUnmatched)} шт — товар ещё не встречался в загруженных продажах</div>` : ''}
+      ${stockUnmatched>0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">Без цены: ${fmt(stockUnmatched)} шт — товар ещё не встречался ни в приходах, ни в продажах</div>` : ''}
     </div>
   </div>`;
 
@@ -2511,16 +2567,38 @@ async function buildOPIU() {
 
   const revM = {}, cogsM = {}, kaspiMkM = {}, kaspiDlM = {};
   try {
-    const r = await fetch(SCRIPT_URL + '?action=get1CData');
+    const [r, r2, r3, r4] = await Promise.all([
+      fetch(SCRIPT_URL + '?action=get1CData'),
+      fetch(SCRIPT_URL + '?action=getPurchaseLines'),
+      fetch(SCRIPT_URL + '?action=getItemMonthly'),
+      fetch(SCRIPT_URL + '?action=getItemPrices')
+    ]);
     const d = await r.json();
     (d.sales||[]).forEach(s => {
       const mo = String(s.month||'');
       if (mo) revM[mo] = (revM[mo]||0) + (+s.revenue||0);
     });
-    (d.purchases||[]).forEach(s => {
-      const mo = String(s.month||'');
-      if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
+
+    // Себестоимость проданного (по просьбе бухгалтера) = для каждого товара,
+    // проданного в месяце, (кол-во продано) × (его закупочная цена на конец
+    // месяца — см. itemCostAsOf: последний приход, взвеш. цена за 1/3 мес.).
+    // НЕ сумма закупок (Приход), попавших в этот же период — раньше товар,
+    // купленный в одном месяце и проданный в другом, искажал себестоимость
+    // именно того месяца, где физически была закупка, а не продажа.
+    // Строка «Поставщикам — закупки товаров» в ДДС на эту логику НЕ переведена —
+    // там кассовый метод (реальные платежи), это осознанно другая метрика.
+    const purchaseLines = (await r2.json()).items || [];
+    const itemMonthly   = (await r3.json()).items || [];
+    const priceMap = {};
+    ((await r4.json()).items || []).forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
+    const linesByItem = groupPurchaseLinesByItem(purchaseLines);
+    itemMonthly.forEach(row => {
+      const mo = String(row.month||'');
+      if (!mo || !row.qty) return;
+      const cost = itemCostAsOf(row.item, monthEndDate(mo), linesByItem, priceMap);
+      cogsM[mo] = (cogsM[mo]||0) + row.qty * cost;
     });
+
     // Комиссия Kaspi-маркетплейса — загружается отдельно из банковских выписок
     // Kaspi (см. загрузку "Комиссия Kaspi"), 2 статьи: маркетплейс / доставка.
     (d.commissions||[]).forEach(c => {
@@ -2750,6 +2828,8 @@ async function buildOPIU() {
 // ── FILE UPLOAD ─────────────────────────────────────
 let _mergedData = {}; // {month: {city: {revenue, cogs}}}
 let _mergedItemPrices = {}; // {товар: {revenue, qty}} — из файлов продаж, для оценки склада
+let _mergedItemMonthly = {}; // {'товар|месяц': {item, month, qty, revenue}} — продажи по товару помесячно (для себестоимости в ОПиУ)
+let _mergedPurchaseLines = {}; // {'товар|дата': {item, date, qty, sum}} — построчная история приходов (для закупочной цены «на дату»)
 
 // Универсальный POST-запрос к Apps Script (для крупных данных — избегаем
 // лимита длины URL, который ломает обычные GET-запросы с большим 'data').
@@ -2820,28 +2900,42 @@ function parse1CFile(file) {
 
         // byWeek: { '2026-W23': { month:'2026-06', cities:{ 'Алматы': amount } } }
         const byWeek = {};
-        // Средняя цена продажи по товару (только для sales) — используется потом
-        // для оценки остатка склада в деньгах: {товар: {revenue, qty}}
+        // Средняя цена продажи по товару (только для sales, за ВСЁ время) —
+        // остаётся как запасной вариант оценки остатка склада, если по товару
+        // ни разу не было прихода (закупочную цену взять неоткуда).
         const itemPrices = {};
+        // Кол-во и выручка по товару ПОМЕСЯЧНО (только sales) — нужно, чтобы в
+        // ОПиУ считать себестоимость проданного: qty_проданного_в_месяце × цена
+        // закупки на тот момент (а не сумма закупок, попавших в этот же период).
+        const itemMonthly = {};
+        // Построчная история приходов (только purchase): item + дата дня +
+        // кол-во + сумма — по ней считается средневзвешенная закупочная цена
+        // «на дату X» так же, как в модели бухгалтера (см. itemCostAsOf).
+        const purchaseLines = {};
+        const toISODate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
         let rowCount = 0;
 
         for (let i = headerIdx + 1; i < raw.length; i++) {
           const r = raw[i] || [];
           if (!r[0]) continue;
-          let date, city, amount, qty = 0;
+          let date, city, amount, qty = 0, item = '';
           if (fileType === 'sales') {
             // col[0]=дата "DD.MM.YYYY HH:MM:SS", col[4]=клиент, col[5]=номенклатура,
             // col[7]=склад, col[11]=кол-во, col[12]=цена
             date   = parse1CDate(r[0]);
             city   = getCity(r[7]);
+            item   = String(r[5]||'').trim();
             qty    = parseFloat(r[11]) || 0;
             amount = qty * (parseFloat(r[12])||0);
             if (amount < 100) continue; // пропуск внутренних перемещений (цена=1)
           } else {
-            // col[0]=документ "... от DD.MM.YYYY ...", col[8]=склад, col[12]=кол-во, col[13]=цена
+            // col[0]=документ "... от DD.MM.YYYY ...", col[7]=номенклатура,
+            // col[8]=склад, col[12]=кол-во, col[13]=цена
             date   = parse1CDate(r[0]);
             city   = getCity(r[8]);
-            amount = (parseFloat(r[12])||0) * (parseFloat(r[13])||0);
+            item   = String(r[7]||'').trim();
+            qty    = parseFloat(r[12]) || 0;
+            amount = qty * (parseFloat(r[13])||0);
           }
           if (!date || amount <= 0) continue;
 
@@ -2855,17 +2949,26 @@ function parse1CFile(file) {
           byWeek[key].cities[city] = (byWeek[key].cities[city] || 0) + amount;
           if (fileType === 'sales') {
             byWeek[key].units[city] = (byWeek[key].units[city] || 0) + qty;
-            const item = String(r[5]||'').trim();
             if (item && qty > 0) {
               if (!itemPrices[item]) itemPrices[item] = { revenue: 0, qty: 0 };
               itemPrices[item].revenue += amount;
               itemPrices[item].qty += qty;
+
+              const mKey = item + '|' + month;
+              if (!itemMonthly[mKey]) itemMonthly[mKey] = { item, month, qty: 0, revenue: 0 };
+              itemMonthly[mKey].qty += qty;
+              itemMonthly[mKey].revenue += amount;
             }
+          } else if (item && qty > 0) {
+            const dKey = item + '|' + toISODate(date);
+            if (!purchaseLines[dKey]) purchaseLines[dKey] = { item, date: toISODate(date), qty: 0, sum: 0 };
+            purchaseLines[dKey].qty += qty;
+            purchaseLines[dKey].sum += amount;
           }
           rowCount++;
         }
 
-        resolve({ fileType, periodStr, byWeek, itemPrices, rows: rowCount, name: file.name });
+        resolve({ fileType, periodStr, byWeek, itemPrices, itemMonthly, purchaseLines, rows: rowCount, name: file.name });
       } catch(err) { reject(err); }
     };
     reader.onerror = reject;
@@ -2888,6 +2991,8 @@ async function processUploadedFiles(files) {
   // { '2026-W23': { month:'2026-06', cities:{ 'Алматы': amount } } }
   _mergedData = { sales: {}, purchases: {} };
   _mergedItemPrices = {};
+  _mergedItemMonthly = {};
+  _mergedPurchaseLines = {};
   results.filter(r => !r.error).forEach(r => {
     const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
     if (r.itemPrices) {
@@ -2895,6 +3000,20 @@ async function processUploadedFiles(files) {
         if (!_mergedItemPrices[item]) _mergedItemPrices[item] = { revenue: 0, qty: 0 };
         _mergedItemPrices[item].revenue += revenue;
         _mergedItemPrices[item].qty += qty;
+      });
+    }
+    if (r.itemMonthly) {
+      Object.entries(r.itemMonthly).forEach(([mKey, {item, month, qty, revenue}]) => {
+        if (!_mergedItemMonthly[mKey]) _mergedItemMonthly[mKey] = { item, month, qty: 0, revenue: 0 };
+        _mergedItemMonthly[mKey].qty += qty;
+        _mergedItemMonthly[mKey].revenue += revenue;
+      });
+    }
+    if (r.purchaseLines) {
+      Object.entries(r.purchaseLines).forEach(([dKey, {item, date, qty, sum}]) => {
+        if (!_mergedPurchaseLines[dKey]) _mergedPurchaseLines[dKey] = { item, date, qty: 0, sum: 0 };
+        _mergedPurchaseLines[dKey].qty += qty;
+        _mergedPurchaseLines[dKey].sum += sum;
       });
     }
     Object.entries(r.byWeek).forEach(([key, {week, month, cities, units}]) => {
@@ -3038,11 +3157,25 @@ async function confirmAndSave() {
     if (flatSales.length)     savedWeeks = savedWeeks.concat(await batchSave('saveWeekSales',     flatSales));
     if (flatPurchases.length) savedWeeks = savedWeeks.concat(await batchSave('saveWeekPurchases', flatPurchases));
 
-    // Попутно копим среднюю цену продажи по товару — для оценки остатка склада
-    // в деньгах в «Отчёте дня». Идёт через POST (может быть много товаров).
+    // Попутно копим среднюю цену продажи по товару — запасной вариант оценки
+    // остатка склада, если по товару вообще не было приходов.
     const priceRows = Object.entries(_mergedItemPrices).map(([product, {revenue, qty}]) => ({ product, revenue, qty }));
     if (priceRows.length) {
       try { await postAction('saveItemPrices', priceRows); } catch(e) { /* не критично для основного сохранения */ }
+    }
+
+    // Продажи по товару помесячно — для себестоимости в ОПиУ (кол-во продано
+    // в месяце × закупочная цена товара на тот момент).
+    const monthlyRows = Object.values(_mergedItemMonthly);
+    if (monthlyRows.length) {
+      try { await postAction('saveItemMonthly', monthlyRows); } catch(e) { /* не критично для основного сохранения */ }
+    }
+
+    // Построчная история приходов (товар+дата+кол-во+сумма) — по ней считается
+    // закупочная цена «на дату X» (последний приход → взвеш. цена за 1/3 мес.).
+    const purchaseLineRows = Object.values(_mergedPurchaseLines);
+    if (purchaseLineRows.length) {
+      try { await postAction('savePurchaseLines', purchaseLineRows); } catch(e) { /* не критично для основного сохранения */ }
     }
 
     const uniqueWeeks = [...new Set(savedWeeks)].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
