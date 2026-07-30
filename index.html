@@ -2060,10 +2060,14 @@ async function buildDailyReport() {
   const payablesSum = weOwe.reduce((s,d)=>s+(+d.amount||0),0);
 
   // ── 5. Транзитные заказы по магазинам ──
+  // «Ожидает передачи курьеру» — заказ ещё не сдан в доставку, физически
+  // лежит на складе продавца, поэтому не считается «в транзите» и не входит
+  // ни в сумму, ни в количество (по просьбе — из учёта транзита убрать).
+  const transitActive = transit.filter(t => t.status !== 'Ожидает передачи курьеру');
   const transitByStore = {};
-  transit.forEach(t => { transitByStore[t.store] = (transitByStore[t.store]||0) + (+t.amount||0); });
+  transitActive.forEach(t => { transitByStore[t.store] = (transitByStore[t.store]||0) + (+t.amount||0); });
   const transitTotal = Object.values(transitByStore).reduce((a,b)=>a+b,0);
-  const transitCount = transit.length;
+  const transitCount = transitActive.length;
 
   // ── 6. Остаток склада: кол-во × средняя цена продажи ──
   const priceMap = {};
