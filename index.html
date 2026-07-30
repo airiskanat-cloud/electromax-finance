@@ -2943,13 +2943,16 @@ function parse1CFile(file) {
         // остаётся как запасной вариант оценки остатка склада, если по товару
         // ни разу не было прихода (закупочную цену взять неоткуда).
         const itemPrices = {};
-        // Кол-во и выручка по товару ПОМЕСЯЧНО (только sales) — нужно, чтобы в
-        // ОПиУ считать себестоимость проданного: qty_проданного_в_месяце × цена
-        // закупки на тот момент (а не сумма закупок, попавших в этот же период).
-        const itemMonthly = {};
+        // Кол-во и выручка по товару ПО НЕДЕЛЯМ (только sales) — не сразу по
+        // месяцу: неделя нужна отдельно, чтобы при слиянии НЕСКОЛЬКИХ файлов в
+        // одной загрузке можно было отличить пересекающиеся недели и не
+        // задвоить себестоимость (см. защиту от задвоения в processUploadedFiles).
+        // К месяцу агрегируется уже ПОСЛЕ этой защиты.
+        const itemWeekly = {};
         // Построчная история приходов (только purchase): item + дата дня +
-        // кол-во + сумма — по ней считается средневзвешенная закупочная цена
-        // «на дату X» так же, как в модели бухгалтера (см. itemCostAsOf).
+        // неделя + кол-во + сумма — по ней считается средневзвешенная
+        // закупочная цена «на дату X», как в модели бухгалтера (itemCostAsOf).
+        // Неделя — тоже для защиты от задвоения при слиянии файлов.
         const purchaseLines = {};
         const toISODate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
         let rowCount = 0;
@@ -2993,21 +2996,21 @@ function parse1CFile(file) {
               itemPrices[item].revenue += amount;
               itemPrices[item].qty += qty;
 
-              const mKey = item + '|' + month;
-              if (!itemMonthly[mKey]) itemMonthly[mKey] = { item, month, qty: 0, revenue: 0 };
-              itemMonthly[mKey].qty += qty;
-              itemMonthly[mKey].revenue += amount;
+              const wKey = item + '|' + week;
+              if (!itemWeekly[wKey]) itemWeekly[wKey] = { item, week, month, qty: 0, revenue: 0 };
+              itemWeekly[wKey].qty += qty;
+              itemWeekly[wKey].revenue += amount;
             }
           } else if (item && qty > 0) {
             const dKey = item + '|' + toISODate(date);
-            if (!purchaseLines[dKey]) purchaseLines[dKey] = { item, date: toISODate(date), qty: 0, sum: 0 };
+            if (!purchaseLines[dKey]) purchaseLines[dKey] = { item, date: toISODate(date), week, qty: 0, sum: 0 };
             purchaseLines[dKey].qty += qty;
             purchaseLines[dKey].sum += amount;
           }
           rowCount++;
         }
 
-        resolve({ fileType, periodStr, byWeek, itemPrices, itemMonthly, purchaseLines, rows: rowCount, name: file.name });
+        resolve({ fileType, periodStr, byWeek, itemPrices, itemWeekly, purchaseLines, rows: rowCount, name: file.name });
       } catch(err) { reject(err); }
     };
     reader.onerror = reject;
@@ -3028,12 +3031,33 @@ async function processUploadedFiles(files) {
 
   // Раздельное объединение: продажи и приход по неделям
   // { '2026-W23': { month:'2026-06', cities:{ 'Алматы': amount } } }
+  //
+  // ЗАЩИТА ОТ ЗАДВОЕНИЯ: если одна и та же неделя (отдельно для Продаж и
+  // отдельно для Прихода) встречается в НЕСКОЛЬКИХ выбранных файлах — раньше
+  // их суммы просто складывались (реальный случай: неделя 23 была и в
+  // "Продажа W1-23", и в "Продажа W23-W26" — вместе задвоили выручку июня).
+  // Теперь: для каждой такой недели побеждает ПОСЛЕДНИЙ файл в порядке
+  // выбора — его данные используются, остальные для этой недели игнорируются
+  // (это касается и выручки/прихода по неделям, и себестоимости по товарам,
+  // и построчной истории приходов — раньше задваивалась только выручка, но
+  // тот же баг был и в остальных трёх местах, просто не всегда заметен).
+  const okResults = results.filter(r => !r.error);
+  const weekOwner = {}; // 'sales|2026-W23' → индекс файла-победителя в okResults
+  okResults.forEach((r, idx) => {
+    Object.values(r.byWeek).forEach(({week}) => { weekOwner[r.fileType + '|' + week] = idx; });
+  });
+
   _mergedData = { sales: {}, purchases: {} };
   _mergedItemPrices = {};
   _mergedItemMonthly = {};
   _mergedPurchaseLines = {};
-  results.filter(r => !r.error).forEach(r => {
+  okResults.forEach((r, idx) => {
     const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
+    const acceptWeek = week => weekOwner[r.fileType + '|' + week] === idx;
+
+    // itemPrices (средняя цена продажи за всё время) недели не различает —
+    // оставляем как есть, это только запасной вариант цены, не влияет на
+    // выручку/себестоимость напрямую.
     if (r.itemPrices) {
       Object.entries(r.itemPrices).forEach(([item, {revenue, qty}]) => {
         if (!_mergedItemPrices[item]) _mergedItemPrices[item] = { revenue: 0, qty: 0 };
@@ -3041,21 +3065,26 @@ async function processUploadedFiles(files) {
         _mergedItemPrices[item].qty += qty;
       });
     }
-    if (r.itemMonthly) {
-      Object.entries(r.itemMonthly).forEach(([mKey, {item, month, qty, revenue}]) => {
+    if (r.itemWeekly) {
+      Object.values(r.itemWeekly).forEach(({item, week, month, qty, revenue}) => {
+        if (!acceptWeek(week)) return; // эта неделя "принадлежит" другому файлу
+        const mKey = item + '|' + month;
         if (!_mergedItemMonthly[mKey]) _mergedItemMonthly[mKey] = { item, month, qty: 0, revenue: 0 };
         _mergedItemMonthly[mKey].qty += qty;
         _mergedItemMonthly[mKey].revenue += revenue;
       });
     }
     if (r.purchaseLines) {
-      Object.entries(r.purchaseLines).forEach(([dKey, {item, date, qty, sum}]) => {
+      Object.values(r.purchaseLines).forEach(({item, date, week, qty, sum}) => {
+        if (!acceptWeek(week)) return;
+        const dKey = item + '|' + date;
         if (!_mergedPurchaseLines[dKey]) _mergedPurchaseLines[dKey] = { item, date, qty: 0, sum: 0 };
         _mergedPurchaseLines[dKey].qty += qty;
         _mergedPurchaseLines[dKey].sum += sum;
       });
     }
     Object.entries(r.byWeek).forEach(([key, {week, month, cities, units}]) => {
+      if (!acceptWeek(week)) return;
       if (!target[key]) target[key] = { week, month, cities: {}, units: {} };
       Object.entries(cities).forEach(([city, amt]) => {
         target[key].cities[city] = (target[key].cities[city] || 0) + amt;
@@ -3099,31 +3128,37 @@ async function processUploadedFiles(files) {
 
   // Предупреждение о задвоении: если одна и та же неделя (отдельно для
   // Продаж и для Прихода) встречается больше чем в ОДНОМ выбранном файле —
-  // при сохранении их суммы СЛОЖАТСЯ, а не заменят друг друга (backend
-  // дедуплицирует по неделе только В ПРЕДЕЛАХ одной загрузки). Реальный
-  // случай: неделя 23 одновременно была и в "Продажа W1-23", и в "Продажа
-  // W23-W26" — вместе они задвоили выручку июня.
+  // выше (weekOwner) она уже автоматически разрешена в пользу ПОСЛЕДНЕГО
+  // файла из выбранных. Это предупреждение — не "почини сам", а отчёт: что
+  // и в пользу какого файла было решено, чтобы можно было проверить и, если
+  // выбор неверный, убрать не тот файл из выбора и загрузить отдельно.
   const overlapWarnings = [];
   ['sales', 'purchase'].forEach(ft => {
     const weekFiles = {};
-    results.filter(r => !r.error && r.fileType === ft).forEach(r => {
+    okResults.filter(r => r.fileType === ft).forEach((r, idxInType) => {
       Object.values(r.byWeek).forEach(({week}) => {
-        if (!weekFiles[week]) weekFiles[week] = new Set();
-        weekFiles[week].add(r.name);
+        if (!weekFiles[week]) weekFiles[week] = [];
+        weekFiles[week].push(r.name);
       });
     });
     Object.entries(weekFiles).forEach(([week, names]) => {
-      if (names.size > 1) overlapWarnings.push({ type: ft, week, files: [...names] });
+      if (names.length > 1) {
+        const winnerIdx = weekOwner[ft + '|' + week];
+        const winnerName = okResults[winnerIdx].name;
+        overlapWarnings.push({ type: ft, week, files: names, winner: winnerName });
+      }
     });
   });
   if (overlapWarnings.length) {
     const typeLbl = { sales: 'Продажи', purchase: 'Приход' };
-    html += `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 14px;margin-bottom:12px">
-      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:6px">&#9888; Одна и та же неделя есть в нескольких файлах — при сохранении их суммы сложатся, а не заменят друг друга</div>
-      <div style="font-size:12px;color:#991b1b;line-height:1.7">
-        ${overlapWarnings.sort((a,b)=>a.week<b.week?-1:1).map(w => `<b>${weekLabel(w.week)}</b> (${typeLbl[w.type]}) — в файлах: ${w.files.join(', ')}`).join('<br>')}
+    html += `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-weight:700;color:#92400e;font-size:13px;margin-bottom:6px">&#9888; Неделя есть в нескольких файлах — взяла данные из последнего, остальные для этой недели пропустила</div>
+      <div style="font-size:12px;color:#92400e;line-height:1.7">
+        ${overlapWarnings.sort((a,b)=>a.week<b.week?-1:1).map(w =>
+          `<b>${weekLabel(w.week)}</b> (${typeLbl[w.type]}) — файлы: ${w.files.join(', ')} → использован: <b>${w.winner}</b>`
+        ).join('<br>')}
       </div>
-      <div style="font-size:11px;color:#7f1d1d;margin-top:6px">Убери из выбора один из файлов с повторяющейся неделей, либо сохрани их по отдельности — сначала один файл, потом следующий (каждая загрузка заменяет свои недели целиком).</div>
+      <div style="font-size:11px;color:#78350f;margin-top:6px">Если это не тот файл, что нужен — убери лишний из выбора и загрузи по отдельности.</div>
     </div>`;
   }
 
