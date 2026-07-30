@@ -1985,12 +1985,17 @@ function groupPurchaseLinesByItem(lines) {
   Object.values(map).forEach(arr => arr.sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0)));
   return map;
 }
-function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
+// Возвращает { cost, matched } — matched=true, если цена посчитана по
+// реальным приходам этого товара; matched=false, если пришлось взять
+// запасной вариант (среднюю цену продажи, т.к. приходов не нашлось).
+// Нужно для диагностики «сколько выручки посчитано по цене прихода, а
+// сколько — приблизительно» (см. диагностику в ОПиУ).
+function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
   const all = linesByItem[item];
   const fallback = (fallbackPriceMap && fallbackPriceMap[item]) || 0;
-  if (!all || !all.length) return fallback;
+  if (!all || !all.length) return { cost: fallback, matched: false };
   const upTo = all.filter(l => l.date <= asOfDate);
-  if (!upTo.length) return fallback;
+  if (!upTo.length) return { cost: fallback, matched: false };
   const lastDate = upTo[upTo.length - 1].date; // upTo отсортирован по возрастанию — последний = самый поздний ≤ asOfDate
   const monthsBack = (dateStr, n) => {
     const d = new Date(dateStr + 'T00:00:00');
@@ -2005,10 +2010,13 @@ function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
     return qty > 0 ? sum / qty : null;
   };
   const c1 = windowAvg(1);
-  if (c1 !== null) return c1;
+  if (c1 !== null) return { cost: c1, matched: true };
   const c3 = windowAvg(3);
-  if (c3 !== null) return c3;
-  return fallback;
+  if (c3 !== null) return { cost: c3, matched: true };
+  return { cost: fallback, matched: false };
+}
+function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
+  return itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap).cost;
 }
 // Последний день месяца "YYYY-MM" → "YYYY-MM-DD" (для себестоимости в ОПиУ:
 // "на дату X" = конец отчётного месяца, а не сегодняшний день).
@@ -2566,6 +2574,10 @@ async function buildOPIU() {
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
   const revM = {}, cogsM = {}, kaspiMkM = {}, kaspiDlM = {};
+  // Диагностика точности себестоимости: сколько из проданного в месяце НЕ
+  // нашло цену прихода и посчитано по запасному варианту (средняя цена
+  // продажи, ≈0% маржи по этому товару) — см. itemCostDetailAsOf.matched.
+  const unmatchedRevM = {}, trackedRevM = {};
   try {
     const [r, r2, r3, r4] = await Promise.all([
       fetch(SCRIPT_URL + '?action=get1CData'),
@@ -2595,8 +2607,10 @@ async function buildOPIU() {
     itemMonthly.forEach(row => {
       const mo = String(row.month||'');
       if (!mo || !row.qty) return;
-      const cost = itemCostAsOf(row.item, monthEndDate(mo), linesByItem, priceMap);
+      const { cost, matched } = itemCostDetailAsOf(row.item, monthEndDate(mo), linesByItem, priceMap);
       cogsM[mo] = (cogsM[mo]||0) + row.qty * cost;
+      trackedRevM[mo] = (trackedRevM[mo]||0) + (+row.revenue||0);
+      if (!matched) unmatchedRevM[mo] = (unmatchedRevM[mo]||0) + (+row.revenue||0);
     });
 
     // Комиссия Kaspi-маркетплейса — загружается отдельно из банковских выписок
@@ -2661,8 +2675,10 @@ async function buildOPIU() {
     const ebit=op-comTotal;
     const shef=C(m,'шеф'), das=C(m,'дастан'), erk=C(m,'еркин'), own=shef+das+erk, net=ebit-own;
     const cred=C(m,'кредит');
+    const unmatchedRev=unmatchedRevM[m]||0, trackedRev=trackedRevM[m]||0;
     return {rev,cogs,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
-            kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred};
+            kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred,
+            unmatchedRev,trackedRev};
   };
 
   const pm = {};
@@ -2732,6 +2748,28 @@ async function buildOPIU() {
     const tc = multi ? `<td class="tc">${pctS(tot[numKey]||0, tot.rev||0)}</td>` : '';
     return `<tr class="rs-pct"><td style="padding-left:16px"><i>${label}</i></td>${cells}${tc}</tr>`;
   };
+  // Диагностика: доля выручки (из проданного за месяц), для которой НЕ нашлось
+  // цены прихода — себестоимость по ней взята приблизительно (= цена продажи,
+  // ≈0% маржи по этому товару). Высокий % = либо реально нет прихода по этим
+  // товарам, либо в базу ещё не загружены/не хватает файлов Приход за этот
+  // период — тогда себестоимость месяца занижена по точности.
+  const diagRow = () => {
+    const cells = cols.map(m => {
+      const { unmatchedRev, trackedRev } = pm[m];
+      if (!trackedRev) return '<td style="color:#cbd5e1">—</td>';
+      const pct = unmatchedRev / trackedRev * 100;
+      const clr = pct >= 30 ? '#dc2626' : (pct >= 10 ? '#d97706' : '#94a3b8');
+      return `<td style="color:${clr};font-size:11px">${fmtK(unmatchedRev)} (${pct.toFixed(0)}%)</td>`;
+    }).join('');
+    const tc = multi ? (() => {
+      const { unmatchedRev, trackedRev } = tot;
+      if (!trackedRev) return '<td class="tc" style="color:#cbd5e1">—</td>';
+      const pct = unmatchedRev / trackedRev * 100;
+      const clr = pct >= 30 ? '#dc2626' : (pct >= 10 ? '#d97706' : '#94a3b8');
+      return `<td class="tc" style="color:${clr};font-size:11px">${fmtK(unmatchedRev)} (${pct.toFixed(0)}%)</td>`;
+    })() : '';
+    return `<tr class="rs-pct"><td style="padding-left:16px"><i>└ из них без цены прихода (по цене продажи)</i></td>${cells}${tc}</tr>`;
+  };
   const periodLbl = multi ? (monthLabel(cols[0]) + ' — ' + monthLabel(cols[cols.length-1])) : monthLabel(period);
 
   html += `<div class="table-wrapper report-wrap">
@@ -2758,6 +2796,7 @@ async function buildOPIU() {
   html += hdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
   html += dRow('Выручка (нетто)  [1С Продажи]', 'rev');
   html += dRow('(-) Себестоимость  [1С Приход]', 'cogs', false, true);
+  html += diagRow();
   html += dRow('(-) Комиссия маркетплейса Kaspi', 'kaspiMk', false, true);
   html += dRow('(-) Доставка Kaspi', 'kaspiDl', false, true);
   html += profRow('▶  ВАЛОВАЯ ПРИБЫЛЬ', 'gp');
