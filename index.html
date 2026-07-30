@@ -3778,8 +3778,19 @@ function parseStockFile(file) {
           return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
         };
 
+        // Ведомость иногда выгружается сразу за НЕСКОЛЬКО периодов подряд —
+        // например снимок остатка на каждую неделю за полгода в одном файле,
+        // а не только на текущий день. Если просто просуммировать все строки,
+        // остаток раздувается в разы (сколько дат в файле — во столько раз).
+        // Поэтому сначала находим самую свежую дату, а дальше берём в расчёт
+        // ТОЛЬКО строки с этой датой — это и есть «текущий остаток».
+        let maxDate = '';
+        for (let i = headerIdx + 1; i < raw.length; i++) {
+          const d = parseSDate((raw[i]||[])[0]);
+          if (d && d > maxDate) maxDate = d;
+        }
+
         const agg = {};
-        let lastDate = '';
         let rowCount = 0;
         for (let i = headerIdx + 1; i < raw.length; i++) {
           const r = raw[i] || [];
@@ -3788,7 +3799,7 @@ function parseStockFile(file) {
           const qty = parseFloat(r[qtyCol]) || 0;
           if (!qty) continue;
           const d = parseSDate(r[0]);
-          if (d) lastDate = d;
+          if (maxDate && d && d !== maxDate) continue; // строка из более старого периода — пропускаем
           // Раньше здесь схлопывали название склада до города (getStockCity) —
           // из-за этого терялась информация, нужная чтобы отличить активный
           // склад от неактивного (isActiveStock сверяется по полному названию).
@@ -3801,7 +3812,7 @@ function parseStockFile(file) {
           rowCount++;
         }
 
-        resolve({ date: lastDate, items: Object.values(agg), rows: rowCount, name: file.name });
+        resolve({ date: maxDate, items: Object.values(agg), rows: rowCount, name: file.name });
       } catch(err) { reject(err); }
     };
     reader.onerror = reject;
