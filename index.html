@@ -1077,6 +1077,35 @@ function acctBankLabel(acc) {
 }
 const BANK_ORDER = ['Kaspi','БЦК','Халык','Жусан','Freedom','Forte','Другое'];
 
+// Классификация складов «Остатка склада» на активные/неактивные — список
+// активных дала Гульмира вручную (остальные склады, которых нет в этом
+// списке, считаются неактивными — брак, тестовые, утерянные и т.п.).
+// Три названия в исходном списке были обрезаны многоточием в UI — для них
+// сравниваем по началу строки (startsWith), остальные — точным совпадением.
+const ACTIVE_STOCK_EXACT = [
+  'АЛМАТЫ КАСПИ ДОСТАВКА',
+  'АЛМАТЫ ОСНОВНОЙ СКЛАД',
+  'АСТАНА КАСПИ ДОСТАВКА',
+  'АСТАНА ОСНОВНОЙ СКЛАД',
+  'ДОСТАВКА ЖУСАН',
+  'ДОСТАВКА ФОРТЕ',
+  'ДОСТАВКА ХАЛЫК',
+  'ОЗОН',
+  'РЕСТОР УРАЛЬСК',
+  'СКЛАД ШЫМКЕНТ',
+  'ШЫМКЕНТ КАСПИ ДОСТАВКА'
+];
+const ACTIVE_STOCK_PREFIXES = [
+  'АЛМАТЫ ВНУТРЕННЯЯ ДОСТАВ',
+  'АСТАНА ВНУТРЕННЯЯ ДОСТАВ',
+  'ШЫМКЕНТ ВНУТРЕННЯЯ ДОСТ'
+];
+function isActiveStock(city) {
+  const c = String(city||'').trim().toUpperCase();
+  if (ACTIVE_STOCK_EXACT.includes(c)) return true;
+  return ACTIVE_STOCK_PREFIXES.some(p => c.startsWith(p));
+}
+
 // Оборачивает список счетов в <optgroup> по банку — в выпадающем списке видно
 // не плоский список, а разделы "Kaspi", "БЦК" и т.д.
 function groupedOptions(accounts) {
@@ -2263,13 +2292,24 @@ async function buildDailyReport() {
   const priceMap = {};
   prices.forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
   const linesByItem = groupPurchaseLinesByItem(purchaseLines);
+  // Итог и оценка в деньгах считаются только по активным складам (список —
+  // ACTIVE_STOCK_EXACT/PREFIXES выше). Неактивные (брак, тест, доставки-в-пути
+  // и т.п.) не входят в итог — выводятся отдельным блоком в конце отчёта.
   let stockValue = 0, stockMatched = 0, stockUnmatched = 0;
   const stockByCity = {};
+  const inactiveStock = {}; // city -> { qty, value }
   stock.forEach(s => {
     const price = itemCostAsOf(resolveItemName(s.product, itemAliasMap), today, linesByItem, priceMap);
-    stockByCity[s.city] = (stockByCity[s.city]||0) + (+s.qty||0);
-    if (price > 0) { stockValue += s.qty * price; stockMatched += s.qty; }
-    else stockUnmatched += s.qty;
+    const val = (+s.qty||0) * price;
+    if (isActiveStock(s.city)) {
+      stockByCity[s.city] = (stockByCity[s.city]||0) + (+s.qty||0);
+      if (price > 0) { stockValue += val; stockMatched += s.qty; }
+      else stockUnmatched += s.qty;
+    } else {
+      if (!inactiveStock[s.city]) inactiveStock[s.city] = { qty: 0, value: 0 };
+      inactiveStock[s.city].qty += (+s.qty||0);
+      inactiveStock[s.city].value += val;
+    }
   });
 
   // ── 7. Итого капитал ──
@@ -2465,6 +2505,28 @@ async function buildDailyReport() {
       <span style="font-size:10px;color:#94a3b8">3+ мес</span>
     </div>
   </div>`;
+
+  // Неактивные склады — справочно, в самом конце отчёта. Не входят в
+  // «Остаток склада» и «Итого капитал» выше — это брак/тест/списанные и
+  // прочие склады, которых нет в списке активных (ACTIVE_STOCK_EXACT/PREFIXES).
+  const inactiveEntries = Object.entries(inactiveStock).sort((a,b) => b[1].qty - a[1].qty);
+  if (inactiveEntries.length) {
+    const inactiveQtyTotal = inactiveEntries.reduce((s,[,v]) => s+v.qty, 0);
+    const inactiveValueTotal = inactiveEntries.reduce((s,[,v]) => s+v.value, 0);
+    html += `<div class="card" style="margin-bottom:16px">
+      <div class="card-label" style="margin-bottom:2px;color:#94a3b8">Неактивные склады — не входят в итог</div>
+      <div style="font-size:11px;color:#cbd5e1;margin-bottom:10px">Брак, тест, списанные и прочие склады не из списка активных</div>
+      ${inactiveEntries.map(([c,v]) => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f8fafc">
+        <span style="font-size:12px;color:#94a3b8">${c}</span>
+        <span style="font-size:12px;color:#94a3b8">${fmt(v.qty)} шт</span>
+        <span style="font-size:12px;color:#94a3b8;min-width:90px;text-align:right">${fK(v.value)}</span>
+      </div>`).join('')}
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between">
+        <span style="font-size:12px;font-weight:700;color:#94a3b8">Итого неактивные</span>
+        <span style="font-size:12px;font-weight:700;color:#94a3b8">${fmt(inactiveQtyTotal)} шт · ${fK(inactiveValueTotal)}</span>
+      </div>
+    </div>`;
+  }
 
   el.innerHTML = html;
 }
