@@ -387,7 +387,7 @@
           <div class="field"><label>Сумма (&#8376;) <span class="required">*</span></label><input type="number" id="f-amount" placeholder="0" min="0" step="0.01"></div>
         </div>
         <div class="form-row">
-          <div class="field">
+          <div class="field" id="field-category-row">
             <label>Категория <span class="required">*</span></label>
             <select id="f-category" onchange="updateTags()">
               <option value="">— Выберите —</option>
@@ -419,6 +419,7 @@
               <option value="еркин">Вывод Еркин</option>
               <option value="ОС">Основные средства (ОС)</option>
               <option value="долг">🤝 Погашение долга</option>
+              <option value="перевод">🔄 Перевод между счетами</option>
               <option value="прочее">Прочее</option>
             </select>
             <div class="auto-tags" id="auto-tags"></div>
@@ -749,6 +750,10 @@ const CATEGORY_MAP = {
   'еркин':           { dds: 'Финансовая',   opiu: '' },
   'ОС':              { dds: 'Инвестиционная', opiu: '' },
   'долг':            { dds: 'Финансовая',   opiu: '' },
+  // Перевод между своими счетами — не расход и не доход компании (см.
+  // movementAmount/balanceGeneric: тип 'перевод' сам по себе исключается
+  // из ОПиУ/ДДС по type, эти dds/opiu значения тут просто для порядка).
+  'перевод':         { dds: 'Операционная', opiu: '' },
   'прочее':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
 };
 
@@ -919,8 +924,11 @@ function movementAmount(row, mode, target) {
   if (row.type === 'доход')  return amt;
   if (row.type === 'расход') return -amt;
   if (row.type === 'перевод') {
-    const internal = row.to_account && isSeededAccount(row.to_account);
-    return internal ? 0 : -amt;
+    // Перевод — деньги остаются внутри компании независимо от того, есть ли
+    // счёт получателя в списке НачальныеОстатки. Форма всегда требует
+    // указать получателя (даже вручную, «Другой»), поэтому наличия текста
+    // в to_account достаточно, чтобы не считать это расходом компании.
+    return row.to_account ? 0 : -amt;
   }
   return 0;
 }
@@ -946,6 +954,20 @@ function seedSum(mode, target) {
 
 function isSeededAccount(acc) { return openingBalances.some(o => o.account === acc); }
 function isSeededCity(city)   { return openingBalances.some(o => o.city === city); }
+
+// Полный список счетов для отображения (Остатки счетов / ДДС Ежедневный) —
+// не только счета-ИСТОЧНИКИ операций (r.account), но и счета-ПОЛУЧАТЕЛИ
+// переводов (r.to_account). Иначе получатель, который ни разу не был
+// источником своей же операции (например «Гульмира», только принимающая
+// переводы), просто не появляется в списке — деньги на него ушли, а
+// строки с остатком нигде не видно.
+function allKnownAccounts() {
+  return [...new Set([
+    ...allData.map(r => r.account).filter(Boolean),
+    ...allData.map(r => r.to_account).filter(Boolean),
+    ...openingBalances.map(o => o.account).filter(Boolean)
+  ])];
+}
 
 // Общая логика остатка "на дату" (cmpDate — компаратор даты строки, задаёт
 // строго-до или включительно). ЖЁСТКИЙ СТАРТ: с даты OPENING_BASE_DATE
@@ -988,8 +1010,10 @@ function balanceGeneric(cmpDate, mode, target) {
     if (r.type === 'доход' && counts(r.account, r.date)) sum += amt;
     else if (r.type === 'расход' && counts(r.account, r.date)) sum -= amt;
     else if (r.type === 'перевод') {
+      // См. movementAmount(total) — получатель не обязан быть «засеян» в
+      // НачальныеОстатки, форма всё равно требует его указать явно.
       if (counts(r.account, r.date)) sum -= amt;
-      if (r.to_account && isSeededAccount(r.to_account) && counts(r.to_account, r.date)) sum += amt;
+      if (r.to_account && counts(r.to_account, r.date)) sum += amt;
     }
   });
   return sum;
@@ -1196,6 +1220,19 @@ function setType(t) {
   document.getElementById('debt-form').style.display = isDebt ? 'block' : 'none';
   document.getElementById('normal-op-form').style.display = isDebt ? 'none' : 'block';
   if (!isDebt) document.getElementById('field-to-account-row').style.display = t === 'перевод' ? 'grid' : 'none';
+  // У перевода нет своей категории дохода/расхода — счёт получателя и так
+  // однозначно фиксирует, что это перевод (см. movementAmount/CATEGORY_MAP).
+  // Поле «Категория» для перевода скрываем и проставляем автоматически,
+  // чтобы не заставлять выбирать что-то не по смыслу («прочее» и т.п.).
+  const catRow = document.getElementById('field-category-row');
+  const catSel = document.getElementById('f-category');
+  if (t === 'перевод') {
+    catRow.style.display = 'none';
+    catSel.value = 'перевод';
+  } else {
+    catRow.style.display = '';
+    if (catSel.value === 'перевод') catSel.value = '';
+  }
   if (document.getElementById('f-category').value === 'долг') populateCloseDebtOptions();
 }
 
@@ -1835,7 +1872,10 @@ function editRow(id) {
   document.getElementById('f-date').value = r.date || '';
   document.getElementById('f-amount').value = r.amount || '';
   document.getElementById('f-name').value = r.name || '';
-  document.getElementById('f-category').value = r.category || '';
+  // Старые строки-переводы могли быть сохранены без категории (или с
+  // «прочее», до того как появилась своя категория «перевод») — не даём
+  // полю остаться пустым, иначе валидация при сохранении не пропустит.
+  document.getElementById('f-category').value = r.category || (r.type === 'перевод' ? 'перевод' : '');
   updateTags();
   document.getElementById('f-city').value = r.city || 'Алматы';
   document.getElementById('f-responsible').value = r.responsible || '';
@@ -1911,10 +1951,7 @@ function findAccountNameIssues() {
 // (acctBucket/acctBankLabel/BANK_ORDER), что и в Отчёте дня, чтобы цифры
 // нигде не расходились.
 function renderBalances() {
-  const accounts = [...new Set([
-    ...allData.map(r => r.account).filter(Boolean),
-    ...openingBalances.map(o => o.account).filter(Boolean)
-  ])];
+  const accounts = allKnownAccounts();
   if (!accounts.length) { document.getElementById('balances-grid').innerHTML = '<div class="empty-state"><div class="emoji">&#128179;</div>Нет данных по счетам</div>'; return; }
 
   const rows = accounts.map(acc => ({
@@ -2217,10 +2254,7 @@ async function buildDailyReport() {
   // ── 1. Остаток по счетам: банки (юр.счета) + Kaspi Gold по держателям + наличка ──
   // Классификация — те же глобальные функции, что и на странице «Остатки
   // счетов» (acctBucket/acctBankLabel), чтобы группировка совпадала везде.
-  const accounts = [...new Set([
-    ...allData.map(r => r.account).filter(Boolean),
-    ...openingBalances.map(o => o.account).filter(Boolean)
-  ])];
+  const accounts = allKnownAccounts();
   let totalBalance = 0;
   const bankBalances = {};      // юр.счета, по банку
   const kaspiGoldBalances = {}; // физ Kaspi Gold, по держателю
@@ -4167,10 +4201,7 @@ function buildDDSDaily() {
   _ddsDailyCharts.forEach(c => { try { c.destroy(); } catch(e){} });
   _ddsDailyCharts = [];
   const today = allData.filter(r => r.date === date);
-  const accounts = [...new Set([
-    ...allData.map(r => r.account).filter(Boolean),
-    ...openingBalances.map(o => o.account).filter(Boolean)
-  ])].sort();
+  const accounts = allKnownAccounts().sort();
   if (!accounts.length) { document.getElementById('dds-daily-result').innerHTML = '<div class="empty-state"><div class="emoji">&#128235;</div>Нет данных</div>'; return; }
 
   const byAcc = {};
