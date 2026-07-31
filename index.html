@@ -391,36 +391,44 @@
             <label>Категория <span class="required">*</span></label>
             <select id="f-category" onchange="updateTags()">
               <option value="">— Выберите —</option>
-              <option value="продажи">💰 Продажи (доход)</option>
-              <option value="остаток">⚙️ Остаток на начало (корректировка счёта)</option>
-              <option value="закуп">📦 Закуп товара у поставщика</option>
-              <option value="аренда">Аренда</option>
-              <option value="ком платежи">Коммунальные платежи</option>
-              <option value="командировочные">Командировочные</option>
-              <option value="зарплата">Зарплата</option>
               <option value="аванс">Аванс</option>
-              <option value="налоги">Налоги</option>
-              <option value="упаковка">Упаковка</option>
-              <option value="логистика">Логистика</option>
-              <option value="комиссия">Комиссия</option>
               <option value="авторасходы">Авторасходы</option>
-              <option value="канц товары">Канц. товары</option>
-              <option value="обед">Обед / питание</option>
-              <option value="компенсация">Компенсация</option>
+              <option value="аренда">Аренда</option>
+              <option value="аренда склада">Аренда склада — сдача (доход)</option>
               <option value="бонусы">Бонусы клиентам</option>
-              <option value="маркетинг">Маркетинг и реклама</option>
-              <option value="уборка">Уборка</option>
-              <option value="наемники">Наёмники</option>
-              <option value="услуги">Услуги</option>
-              <option value="шашу">Шашу (реклама)</option>
-              <option value="кредит">Кредит</option>
-              <option value="шеф">Вывод Шеф (Темирлан)</option>
+              <option value="возврат комиссии kaspi">Возврат комиссии Каспи (доход)</option>
+              <option value="возврат поставщику">Возврат от поставщика (доход)</option>
+              <option value="возврат покупателю">Возврат покупателю (расход)</option>
               <option value="дастан">Вывод Дастан</option>
               <option value="еркин">Вывод Еркин</option>
+              <option value="шеф">Вывод Шеф (Темирлан)</option>
+              <option value="доставка kaspi">Доставка Kaspi</option>
+              <option value="закуп">📦 Закуп товара у поставщика</option>
+              <option value="зарплата">Зарплата</option>
+              <option value="канц товары">Канц. товары</option>
+              <option value="командировочные">Командировочные</option>
+              <option value="комиссия">Комиссия</option>
+              <option value="комиссия kaspi">Комиссия маркетплейса Kaspi</option>
+              <option value="ком платежи">Коммунальные платежи</option>
+              <option value="компенсация">Компенсация</option>
+              <option value="компенсация kaspi">Компенсация Kaspi (доход)</option>
+              <option value="кредит">Кредит</option>
+              <option value="логистика">Логистика</option>
+              <option value="маркетинг">Маркетинг и реклама</option>
+              <option value="наемники">Наёмники</option>
+              <option value="налоги">Налоги</option>
+              <option value="обед">Обед / питание</option>
+              <option value="овернайт">Овернайт — проценты (доход)</option>
               <option value="ОС">Основные средства (ОС)</option>
-              <option value="долг">🤝 Погашение долга</option>
+              <option value="остаток">⚙️ Остаток на начало (корректировка счёта)</option>
               <option value="перевод">🔄 Перевод между счетами</option>
+              <option value="долг">🤝 Погашение долга</option>
+              <option value="продажи">💰 Продажи (доход)</option>
               <option value="прочее">Прочее</option>
+              <option value="уборка">Уборка</option>
+              <option value="упаковка">Упаковка</option>
+              <option value="услуги">Услуги</option>
+              <option value="шашу">Шашу (реклама)</option>
             </select>
             <div class="auto-tags" id="auto-tags"></div>
           </div>
@@ -754,6 +762,28 @@ const CATEGORY_MAP = {
   // movementAmount/balanceGeneric: тип 'перевод' сам по себе исключается
   // из ОПиУ/ДДС по type, эти dds/opiu значения тут просто для порядка).
   'перевод':         { dds: 'Операционная', opiu: '' },
+  // Комиссия/доставка Kaspi — только ДДС. В ОПиУ комиссия уже считается
+  // отдельно, из массовой загрузки "Комиссия Kaspi" (см. buildOPIU,
+  // kaspiMkM/kaspiDlM) — если добавить их сюда тоже, задвоится.
+  'комиссия kaspi':  { dds: 'Операционная', opiu: '' },
+  'доставка kaspi':  { dds: 'Операционная', opiu: '' },
+  // Возвраты — пока тоже только ДДС (по просьбе — сначала посмотреть по
+  // итогам отчёта, потом решить, нужна ли им отдельная корректировка
+  // выручки/себестоимости/комиссии в ОПиУ).
+  'возврат поставщику':      { dds: 'Операционная', opiu: '' },
+  'возврат покупателю':      { dds: 'Операционная', opiu: '' },
+  'возврат комиссии kaspi':  { dds: 'Операционная', opiu: '' },
+  // Овернайт — проценты по остатку на счёте (сумма размещения никуда не
+  // уходит физически, вводим только сумму начисленного процента). Финансовый
+  // доход, не операционная выручка — в ОПиУ пока не включаем.
+  'овернайт':          { dds: 'Финансовая',   opiu: '' },
+  // Аренда склада — сдаём часть площади в аренду, доход. В ДДС операционная
+  // (регулярный доход), в ОПиУ пока не включаем — решим по факту суммы.
+  'аренда склада':     { dds: 'Операционная', opiu: '' },
+  // Компенсация Kaspi — возмещение за товар, повреждённый в дороге.
+  // В ОПиУ пока не включаем: нет отдельной строки "потери от брака", с
+  // которой это нужно было бы сводить, иначе прибыль исказится в плюс.
+  'компенсация kaspi': { dds: 'Операционная', opiu: '' },
   'прочее':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
 };
 
