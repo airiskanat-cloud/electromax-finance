@@ -890,31 +890,24 @@ function normalizeAccountName(acc) {
 }
 
 async function loadData() {
-  try {
-    const r = await fetch(SCRIPT_URL + '?action=getAll');
-    const d = await r.json();
-    allData = d.data || [];
-    allData.forEach(row => {
-      if (row.account) row.account = normalizeAccountName(row.account);
-      if (row.to_account) row.to_account = normalizeAccountName(row.to_account);
-    });
-  } catch(e) { allData = []; }
-  try {
-    const r2 = await fetch(SCRIPT_URL + '?action=getOpeningBalances');
-    const d2 = await r2.json();
-    openingBalances = d2.items || [];
-    openingBalances.forEach(o => { if (o.account) o.account = normalizeAccountName(o.account); });
-  } catch(e) { openingBalances = []; }
-  try {
-    const r3 = await fetch(SCRIPT_URL + '?action=getSuppliers');
-    const d3 = await r3.json();
-    suppliers = d3.items || [];
-  } catch(e) { suppliers = []; }
-  try {
-    const r4 = await fetch(SCRIPT_URL + '?action=getDebts');
-    const d4 = await r4.json();
-    debtsData = d4.items || [];
-  } catch(e) { debtsData = []; }
+  // Раньше эти 4 запроса шли последовательно (каждый ждал предыдущий) —
+  // при подтормаживающем Apps Script задержки складывались. Теперь все 4
+  // уходят одновременно и ждём самый медленный, а не сумму всех четырёх.
+  const [d, d2, d3, d4] = await Promise.all([
+    fetch(SCRIPT_URL + '?action=getAll').then(r => r.json()).catch(() => ({ data: [] })),
+    fetch(SCRIPT_URL + '?action=getOpeningBalances').then(r => r.json()).catch(() => ({ items: [] })),
+    fetch(SCRIPT_URL + '?action=getSuppliers').then(r => r.json()).catch(() => ({ items: [] })),
+    fetch(SCRIPT_URL + '?action=getDebts').then(r => r.json()).catch(() => ({ items: [] }))
+  ]);
+  allData = d.data || [];
+  allData.forEach(row => {
+    if (row.account) row.account = normalizeAccountName(row.account);
+    if (row.to_account) row.to_account = normalizeAccountName(row.to_account);
+  });
+  openingBalances = d2.items || [];
+  openingBalances.forEach(o => { if (o.account) o.account = normalizeAccountName(o.account); });
+  suppliers = d3.items || [];
+  debtsData = d4.items || [];
   await refreshMonthPickers();
   refreshAccountLists();
   refreshSupplierList();
@@ -1430,22 +1423,29 @@ async function saveOperation() {
   try {
     if (editingId) {
       const params = new URLSearchParams({ action: 'updateRow', id: String(editingId), data: JSON.stringify(row) });
-      await fetch(`${SCRIPT_URL}?${params}`);
-      const idx = allData.findIndex(r => r.id === editingId);
+      const r = await fetch(`${SCRIPT_URL}?${params}`);
+      const resp = await r.json();
+      if (!resp || !resp.success) throw new Error('save failed');
+      const idx = allData.findIndex(r2 => r2.id === editingId);
       if (idx >= 0) allData[idx] = { ...row, id: editingId };
     } else {
       const params = new URLSearchParams({ action: 'addRow', data: JSON.stringify(row) });
-      await fetch(`${SCRIPT_URL}?${params}`);
+      const r = await fetch(`${SCRIPT_URL}?${params}`);
+      const resp = await r.json();
+      if (!resp || !resp.success) throw new Error('save failed');
       allData.push({ ...row, id: Date.now() });
     }
-  } catch(e) { /* данные отправлены */ }
-  if (category === 'долг' && closeDebtId) {
-    await closeOrReduceDebt(closeDebtId, parseFloat(amount));
+    if (category === 'долг' && closeDebtId) {
+      await closeOrReduceDebt(closeDebtId, parseFloat(amount));
+    }
+    showToast(editingId ? 'Изменения сохранены!' : 'Операция сохранена!', 'success');
+    clearForm();
+    renderJournal(); renderBalances();
+  } catch(e) {
+    showToast('Не удалось сохранить — проверьте интернет и нажмите "Сохранить" ещё раз', 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Сохранить операцию';
   }
-  showToast(editingId ? 'Изменения сохранены!' : 'Операция сохранена!', 'success');
-  clearForm();
-  btn.disabled = false; btn.textContent = 'Сохранить операцию';
-  renderJournal(); renderBalances();
 }
 
 function clearForm() {
