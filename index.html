@@ -201,9 +201,8 @@
     <nav class="sidebar-nav">
       <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="icon">&#128202;</span> Дашборд</div>
       <div class="nav-item" onclick="showPage('daily-report',this)"><span class="icon">&#128197;</span> Отчёт дня</div>
-      <div class="nav-item" onclick="showPage('entry',this)"><span class="icon">&#10133;</span> Ввод операции</div>
+      <div class="nav-item" onclick="showPage('debt',this)"><span class="icon">&#129309;</span> Долг</div>
       <div class="nav-item" onclick="showPage('journal',this)"><span class="icon">&#128203;</span> Журнал</div>
-      <div class="nav-item" onclick="showPage('reconcile',this)"><span class="icon">&#128269;</span> Сверка выписки</div>
       <div class="nav-item" onclick="showPage('dds-daily',this)"><span class="icon">&#128197;</span> ДДС Ежедневный</div>
       <div class="nav-item" onclick="showPage('dds',this)"><span class="icon">&#128184;</span> ДДС Месячный</div>
       <div class="nav-item" onclick="showPage('opiu',this)"><span class="icon">&#128200;</span> ОПИУ</div>
@@ -347,18 +346,10 @@
         </div>
       </div>
     </div>
-    <div class="page" id="page-entry">
-      <div class="page-title">Ввод операции</div>
+    <div class="page" id="page-debt">
+      <div class="page-title">Долг</div>
       <div class="form-card">
-        <div style="font-size:13px;font-weight:700;color:#475569;margin-bottom:12px;text-transform:uppercase;">Тип операции</div>
-        <div class="type-buttons">
-          <button class="type-btn expense active" onclick="setType('расход')">&#128184; Расход</button>
-          <button class="type-btn income" onclick="setType('доход')">&#128176; Доход</button>
-          <button class="type-btn transfer" onclick="setType('перевод')">&#128260; Перевод</button>
-          <button class="type-btn debt" onclick="setType('долг')">&#129309; Долг</button>
-        </div>
-        <input type="hidden" id="f-type" value="расход">
-        <div class="form-card" id="debt-form" style="display:none;background:#faf5ff;border:1px solid #e9d5ff;margin-bottom:16px">
+        <div class="form-card" id="debt-form" style="background:#faf5ff;border:1px solid #e9d5ff;margin-bottom:16px">
           <div class="form-row">
             <div class="field"><label>Дата <span class="required">*</span></label><input type="date" id="d-date"></div>
             <div class="field"><label>Сумма (&#8376;) <span class="required">*</span></label><input type="number" id="d-amount" placeholder="0" min="0" step="0.01"></div>
@@ -380,226 +371,6 @@
             <button class="btn btn-save" id="btn-save-debt" onclick="saveDebt()">&#10003; Сохранить долг</button>
             <button class="btn btn-clear" onclick="clearDebtForm()">Очистить</button>
           </div>
-        </div>
-        <div id="normal-op-form">
-        <div class="form-row">
-          <div class="field"><label>Дата <span class="required">*</span></label><input type="date" id="f-date"></div>
-          <div class="field"><label>Сумма (&#8376;) <span class="required">*</span></label><input type="number" id="f-amount" placeholder="0" min="0" step="0.01"></div>
-        </div>
-        <div class="form-row">
-          <div class="field" id="field-category-row">
-            <label>Категория <span class="required">*</span></label>
-            <select id="f-category" onchange="updateTags()">
-              <option value="">— Выберите —</option>
-              <option value="аванс">Аванс</option>
-              <option value="авторасходы">Авторасходы</option>
-              <option value="аренда">Аренда</option>
-              <option value="аренда склада">Аренда склада — сдача (доход)</option>
-              <option value="бонусы">Бонусы клиентам</option>
-              <option value="возврат комиссии kaspi">Возврат комиссии Каспи (доход)</option>
-              <option value="возврат поставщику">Возврат от поставщика (доход)</option>
-              <option value="возврат покупателю">Возврат покупателю (расход)</option>
-              <option value="дастан">Вывод Дастан</option>
-              <option value="еркин">Вывод Еркин</option>
-              <option value="шеф">Вывод Шеф (Темирлан)</option>
-              <option value="доставка kaspi">Доставка Kaspi</option>
-              <option value="закуп">📦 Закуп товара у поставщика</option>
-              <option value="зарплата">Зарплата</option>
-              <option value="канц товары">Канц. товары</option>
-              <option value="командировочные">Командировочные</option>
-              <option value="комиссия">Комиссия</option>
-              <option value="комиссия kaspi">Комиссия маркетплейса Kaspi</option>
-              <option value="ком платежи">Коммунальные платежи</option>
-              <option value="компенсация">Компенсация</option>
-              <option value="компенсация kaspi">Компенсация Kaspi (доход)</option>
-              <option value="кредит">Кредит</option>
-              <option value="логистика">Логистика</option>
-              <option value="маркетинг">Маркетинг и реклама</option>
-              <option value="наемники">Наёмники</option>
-              <option value="налоги">Налоги</option>
-              <option value="обед">Обед / питание</option>
-              <option value="овернайт">Овернайт — проценты (доход)</option>
-              <option value="ОС">Основные средства (ОС)</option>
-              <option value="остаток">⚙️ Остаток на начало (корректировка счёта)</option>
-              <option value="перевод">🔄 Перевод между счетами</option>
-              <option value="долг">🤝 Погашение долга</option>
-              <option value="продажи">💰 Продажи (доход)</option>
-              <option value="прочее">Прочее</option>
-              <option value="уборка">Уборка</option>
-              <option value="упаковка">Упаковка</option>
-              <option value="услуги">Услуги</option>
-              <option value="шашу">Шашу (реклама)</option>
-            </select>
-            <div class="auto-tags" id="auto-tags"></div>
-          </div>
-          <div class="field"><label>Название / Назначение <span class="required">*</span></label><input type="text" id="f-name" placeholder="Например: Аренда склада Алматы"></div>
-        </div>
-        <div class="form-row">
-          <div class="field">
-            <label>Тип счёта</label>
-            <select id="f-account-type" onchange="toggleAccountFields()">
-              <option value="юр">Юридический счёт</option>
-              <option value="физ">Физический счёт</option>
-            </select>
-          </div>
-          <div class="field" id="field-legal">
-            <label>Юридический счёт <span class="required">*</span></label>
-            <select id="f-legal-account">
-              <option value="">— Выберите счёт —</option>
-              <option value="Kaspi Phone House">Kaspi Phone House</option>
-              <option value="Kaspi CTD">Kaspi CTD</option>
-              <option value="Kaspi Electromax">Kaspi Electromax</option>
-              <option value="Kaspi Norex">Kaspi Norex</option>
-              <option value="Kaspi Technovision One">Kaspi Technovision One</option>
-              <option value="Kaspi АМДК">Kaspi АМДК</option>
-              <option value="БЦК Phone House">БЦК Phone House</option>
-              <option value="БЦК CTD">БЦК CTD</option>
-              <option value="БЦК Electromax">БЦК Electromax</option>
-              <option value="БЦК Norex">БЦК Norex</option>
-              <option value="Халык CTD">Халык CTD</option>
-              <option value="Жусан CTD">Жусан CTD</option>
-              <option value="Freedom CTD">Freedom CTD</option>
-              <option value="Forte CTD">Forte CTD</option>
-            </select>
-          </div>
-          <div class="field" id="field-physical" style="display:none">
-            <label>Физический счёт <span class="required">*</span></label>
-            <select id="f-physical-account" onchange="toggleKaspi()">
-              <option value="Касса наличными Алматы">Касса наличными Алматы</option>
-              <option value="Касса наличными Астана">Касса наличными Астана</option>
-              <option value="Касса наличными Шымкент">Касса наличными Шымкент</option>
-              <option value="Каспи голд">Kaspi Gold</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-row" id="field-kaspi-row" style="display:none">
-          <div class="field">
-            <label>Чей Gold <span class="required">*</span></label>
-            <select id="f-kaspi-holder" onchange="toggleKaspiOther()">
-              <option value="">— Выберите держателя —</option>
-              <option value="Темирлан">Темирлан</option>
-              <option value="Актоты">Актоты</option>
-              <option value="Дастан">Дастан</option>
-              <option value="Аружан">Аружан</option>
-              <option value="Аббас">Аббас</option>
-              <option value="Алихан">Алихан</option>
-              <option value="Айсултан">Айсултан</option>
-              <option value="Аяжан">Аяжан</option>
-              <option value="Камран">Камран</option>
-              <option value="Другой">Другой Gold (впишу вручную)</option>
-            </select>
-          </div>
-          <div class="field" id="field-kaspi-other" style="display:none">
-            <label>Имя держателя</label>
-            <input type="text" id="f-kaspi-holder-other" placeholder="Введите имя">
-          </div>
-        </div>
-        <div class="form-row" id="field-to-account-row" style="display:none">
-          <div class="field">
-            <label>Счёт получателя <span class="required">*</span></label>
-            <select id="f-to-account" onchange="toggleToAccountOther()">
-              <option value="">— Выберите счёт —</option>
-              <option value="Kaspi Phone House">Kaspi Phone House</option>
-              <option value="Kaspi CTD">Kaspi CTD</option>
-              <option value="Kaspi Electromax">Kaspi Electromax</option>
-              <option value="Kaspi Norex">Kaspi Norex</option>
-              <option value="Kaspi Technovision One">Kaspi Technovision One</option>
-              <option value="Kaspi АМДК">Kaspi АМДК</option>
-              <option value="БЦК Phone House">БЦК Phone House</option>
-              <option value="БЦК CTD">БЦК CTD</option>
-              <option value="БЦК Electromax">БЦК Electromax</option>
-              <option value="БЦК Norex">БЦК Norex</option>
-              <option value="Халык CTD">Халык CTD</option>
-              <option value="Жусан CTD">Жусан CTD</option>
-              <option value="Freedom CTD">Freedom CTD</option>
-              <option value="Forte CTD">Forte CTD</option>
-              <option value="Касса наличными Алматы">Касса наличными Алматы</option>
-              <option value="Касса наличными Астана">Касса наличными Астана</option>
-              <option value="Касса наличными Шымкент">Касса наличными Шымкент</option>
-              <option value="Каспи Темирлан">Каспи Темирлан</option>
-              <option value="Каспи Актоты">Каспи Актоты</option>
-              <option value="Каспи Дастан">Каспи Дастан</option>
-              <option value="Каспи Аружан">Каспи Аружан</option>
-              <option value="Каспи Аббас">Каспи Аббас</option>
-              <option value="Каспи Алихан">Каспи Алихан</option>
-              <option value="Каспи Айсултан">Каспи Айсултан</option>
-              <option value="Каспи Аяжан">Каспи Аяжан</option>
-              <option value="Каспи Камран">Каспи Камран</option>
-              <option value="Другой">Другой (не из списка)</option>
-            </select>
-          </div>
-          <div class="field" id="field-to-account-other" style="display:none">
-            <label>Название счёта / кому</label>
-            <input type="text" id="f-to-account-other" placeholder="Например: Беглан">
-          </div>
-        </div>
-        <div class="form-row" id="field-supplier-row" style="display:none">
-          <div class="field">
-            <label>Поставщик <span class="required">*</span></label>
-            <select id="f-supplier" onchange="toggleSupplierOther()">
-              <option value="">— Выберите поставщика —</option>
-              <option value="Другой">Другой (нет в списке)</option>
-            </select>
-          </div>
-          <div class="field" id="field-supplier-other" style="display:none">
-            <label>Название поставщика</label>
-            <input type="text" id="f-supplier-other" placeholder="Впишите название">
-          </div>
-        </div>
-        <div class="form-row" id="field-close-debt-row" style="display:none">
-          <div class="field">
-            <label>Какой долг закрываем <span class="required">*</span></label>
-            <select id="f-close-debt">
-              <option value="">— Выберите долг —</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-row triple">
-          <div class="field">
-            <label>Город</label>
-            <select id="f-city">
-              <option value="Алматы">Алматы</option>
-              <option value="Астана">Астана</option>
-              <option value="Шымкент">Шымкент</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Ответственный</label>
-            <select id="f-responsible">
-              <option value="">— Выберите —</option>
-              <option value="Темирлан">Темирлан</option>
-              <option value="Актоты">Актоты</option>
-              <option value="Аружан">Аружан</option>
-              <option value="Дастан">Дастан</option>
-              <option value="Аббас">Аббас</option>
-              <option value="Алихан">Алихан</option>
-              <option value="Айсултан">Айсултан</option>
-              <option value="Аяжан">Аяжан</option>
-              <option value="Камран">Камран</option>
-              <option value="Кундыз">Кундыз</option>
-              <option value="Намка">Намка</option>
-              <option value="Нурай">Нурай</option>
-              <option value="Ерик">Ерик</option>
-              <option value="Беглан">Беглан</option>
-              <option value="Бека">Бека</option>
-              <option value="Баха">Баха</option>
-              <option value="Жаксылык">Жаксылык</option>
-              <option value="Ергазы">Ергазы</option>
-              <option value="Марик">Марик</option>
-            </select>
-          </div>
-          <div class="field"><label>Комментарий</label><input type="text" id="f-notes" placeholder="Необязательно"></div>
-        </div>
-        <div class="form-row">
-          <div class="field">
-            <label>Период начисления <span style="font-weight:400;color:#94a3b8;">(если отличается от даты оплаты — напр. зарплата за прошлый месяц)</span></label>
-            <input type="month" id="f-period" placeholder="Оставьте пустым, если совпадает с датой">
-          </div>
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-save" id="btn-save" onclick="saveOperation()">&#10003; Сохранить операцию</button>
-          <button class="btn btn-clear" onclick="clearForm()">Очистить</button>
-        </div>
         </div>
       </div>
     </div>
@@ -638,31 +409,6 @@
         <div id="journal-table"><div class="loading"><div class="spinner"></div>Загрузка данных...</div></div>
         <div class="table-footer" id="journal-totals"></div>
       </div>
-    </div>
-    <div class="page" id="page-reconcile">
-      <div class="page-title">Сверка с выпиской</div>
-      <div class="form-card" style="max-width:100%;margin-bottom:20px;">
-        <p style="color:#64748b;font-size:14px;margin-bottom:16px;">Вставьте данные из банковской выписки (формат: дата;сумма;назначение — каждая строка)</p>
-        <div class="form-row">
-          <div class="field">
-            <label>Счёт для сверки</label>
-            <select id="rec-account">
-              <option value="">— Выберите счёт —</option>
-              <option value="Kaspi CTD">Kaspi CTD</option>
-              <option value="БЦК CTD">БЦК CTD</option>
-              <option value="БЦК Electromax">БЦК Electromax</option>
-              <option value="Халык CTD">Халык CTD</option>
-            </select>
-          </div>
-          <div class="field"><label>Период сверки</label><input type="month" id="rec-month"></div>
-        </div>
-        <div class="field" style="margin-bottom:16px;">
-          <label>Данные выписки</label>
-          <textarea id="rec-data" placeholder="01.06.2026;-150000;Аренда склада" style="min-height:120px;font-family:monospace;font-size:13px;"></textarea>
-        </div>
-        <button class="btn btn-save" onclick="doReconcile()">Сверить</button>
-      </div>
-      <div id="reconcile-result"></div>
     </div>
     <div class="page" id="page-dds-daily">
       <div class="page-title">ДДС Ежедневный — Остатки по счетам</div>
@@ -736,6 +482,9 @@ const CATEGORY_MAP = {
   'аренда':          { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'ком платежи':     { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'командировочные': { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
+  // Появилась в кассе бухгалтера (с августа 2026) — аренда/содержание точки
+  // продаж, подтверждено Гульмирой 12.08 как «Постоянные расходы».
+  'магазин':         { dds: 'Операционная', opiu: 'ПОСТОЯННЫЕ РАСХОДЫ' },
   'зарплата':        { dds: 'Операционная', opiu: 'ФОТ' },
   'аванс':           { dds: 'Операционная', opiu: 'ФОТ' },
   'налоги':          { dds: 'Операционная', opiu: 'ФОТ' },
@@ -787,6 +536,62 @@ const CATEGORY_MAP = {
   'прочее':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
 };
 
+// ── Внешний Журнал (Касса-журнал бухгалтера, с августа 2026) ───────────
+// С этой даты кассу (приход/расход по факту денег) ведёт бухгалтер в
+// отдельной Google-таблице, а не на сайте — форма «Ввод операции» убрана.
+// Сайт только ЧИТАЕТ её лист «Журнал» (через backend-action
+// getExternalJournal) и достраивает по нему дашборд/остатки/ДДС/ОПиУ,
+// как будто это обычные строки нашего Журнала.
+const EXTERNAL_JOURNAL_FROM = '2026-08-01';
+
+// Регистронезависимый поиск по CATEGORY_MAP — там есть один регистрозависимый
+// ключ ('ОС'), поэтому просто .toLowerCase() при чтении был бы неверен.
+const CATEGORY_MAP_LOOKUP = {};
+Object.keys(CATEGORY_MAP).forEach(k => { CATEGORY_MAP_LOOKUP[k.toLowerCase()] = k; });
+
+// Приводит сырые строки внешней таблицы (заголовки: Дата, Название,
+// Тип операции, Категория, Тип счета, Счет, Сумма, Флаг - проверить,
+// Дебиторка, Примечание, Транзит) к формату нашего Журнала. Категории,
+// которых нет в CATEGORY_MAP (бухгалтер завела новую в «Настройке» —
+// например пока не значащуюся у нас), не теряются: строка всё равно
+// попадает в Журнал/ДДС с dds:'Операционная', просто без статьи ОПиУ,
+// пока категорию не добавят в CATEGORY_MAP здесь же, в index.html.
+function mapExternalJournal(rows) {
+  const TYPE_MAP = { 'приход': 'доход', 'расход': 'расход', 'перевод': 'перевод' };
+  return (rows || [])
+    .filter(r => r['Дата'] && String(r['Дата']) >= EXTERNAL_JOURNAL_FROM)
+    .map(r => {
+      const rawType = String(r['Тип операции'] || '').trim().toLowerCase();
+      const type = TYPE_MAP[rawType] || rawType || 'расход';
+      const rawCat = String(r['Категория'] || '').trim().toLowerCase();
+      const canonicalKey = CATEGORY_MAP_LOOKUP[rawCat];
+      const m = (canonicalKey && CATEGORY_MAP[canonicalKey]) || { dds: 'Операционная', opiu: '' };
+      const account = normalizeAccountName(r['Счет'] || '');
+      // «Касса наличными <Город>» — единственный случай, когда город можно
+      // достоверно определить по названию счёта; для остальных счетов
+      // (юр.лица, Kaspi Gold) город не проставляем, как и раньше.
+      const cityMatch = /^Касса наличными (.+)$/i.exec(account);
+      return {
+        id: r.id,
+        date: String(r['Дата']),
+        type,
+        category: canonicalKey || rawCat,
+        name: r['Название'] || '',
+        amount: +r['Сумма'] || 0,
+        account,
+        to_account: '',
+        city: cityMatch ? cityMatch[1] : '',
+        responsible: '',
+        dds: m.dds,
+        opiu: m.opiu,
+        notes: r['Примечание'] || '',
+        supplier: '',
+        period: '',
+        created_by: 'Касса-журнал (бухгалтер)'
+      };
+    });
+}
+
 async function doLogin() {
   const u = document.getElementById('login-username').value.trim();
   const p = document.getElementById('login-password').value;
@@ -812,7 +617,6 @@ async function doLogin() {
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     document.getElementById('user-info').textContent = 'Вы вошли как: ' + u + ' (' + role + ')';
-    setTodayDate();
     document.getElementById('dds-daily-date').value = new Date().toISOString().split('T')[0];
     loadData();
   } else {
@@ -893,11 +697,12 @@ async function loadData() {
   // Раньше эти 4 запроса шли последовательно (каждый ждал предыдущий) —
   // при подтормаживающем Apps Script задержки складывались. Теперь все 4
   // уходят одновременно и ждём самый медленный, а не сумму всех четырёх.
-  const [d, d2, d3, d4] = await Promise.all([
+  const [d, d2, d3, d4, d5] = await Promise.all([
     fetch(SCRIPT_URL + '?action=getAll').then(r => r.json()).catch(() => ({ data: [] })),
     fetch(SCRIPT_URL + '?action=getOpeningBalances').then(r => r.json()).catch(() => ({ items: [] })),
     fetch(SCRIPT_URL + '?action=getSuppliers').then(r => r.json()).catch(() => ({ items: [] })),
-    fetch(SCRIPT_URL + '?action=getDebts').then(r => r.json()).catch(() => ({ items: [] }))
+    fetch(SCRIPT_URL + '?action=getDebts').then(r => r.json()).catch(() => ({ items: [] })),
+    fetch(SCRIPT_URL + '?action=getExternalJournal').then(r => r.json()).catch(() => ({ data: [] }))
   ]);
   allData = d.data || [];
   allData.forEach(row => {
@@ -908,9 +713,10 @@ async function loadData() {
   openingBalances.forEach(o => { if (o.account) o.account = normalizeAccountName(o.account); });
   suppliers = d3.items || [];
   debtsData = d4.items || [];
+  // С августа 2026 касса ведётся бухгалтером во внешней таблице — добавляем
+  // её строки (приведённые к нашему формату) к своим собственным (Jan-Jul).
+  allData = allData.concat(mapExternalJournal(d5.data));
   await refreshMonthPickers();
-  refreshAccountLists();
-  refreshSupplierList();
   buildDashboard(); renderBalances();
 }
 
@@ -1147,110 +953,11 @@ function isActiveStock(city) {
   return ACTIVE_STOCK_PREFIXES.some(p => c.startsWith(p));
 }
 
-// Оборачивает список счетов в <optgroup> по банку — в выпадающем списке видно
-// не плоский список, а разделы "Kaspi", "БЦК" и т.д.
-function groupedOptions(accounts) {
-  const byBank = {};
-  accounts.forEach(a => {
-    const b = acctBankLabel(a);
-    (byBank[b] = byBank[b] || []).push(a);
-  });
-  return BANK_ORDER.filter(b => byBank[b]).map(b =>
-    `<optgroup label="${b}">` +
-    byBank[b].sort().map(a => `<option value="${a}">${a}</option>`).join('') +
-    `</optgroup>`
-  ).join('');
-}
-
-function refreshAccountLists() {
-  const accounts = [...new Set(openingBalances.map(o => o.account).filter(Boolean))];
-  if (!accounts.length) return; // лист ещё не заведён — оставляем как есть
-  const legal = [], kaspiHolders = [], cash = [];
-  accounts.forEach(acc => {
-    const b = acctBucket(acc);
-    if (b.type === 'legal') legal.push(acc);
-    else if (b.type === 'kaspi') kaspiHolders.push(b.name);
-    else if (b.type === 'cash') cash.push(acc);
-  });
-  legal.sort(); kaspiHolders.sort(); cash.sort();
-
-  const setOptions = (id, optsHtml, placeholder) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const prev = el.value;
-    el.innerHTML = placeholder + optsHtml;
-    if ([...el.options].some(o => o.value === prev)) el.value = prev;
-  };
-
-  setOptions('f-legal-account',
-    groupedOptions(legal),
-    '<option value="">— Выберите счёт —</option>');
-
-  setOptions('f-kaspi-holder',
-    kaspiHolders.map(h => `<option value="${h}">${h}</option>`).join('') +
-      '<option value="Другой">Другой Gold (впишу вручную)</option>',
-    '<option value="">— Выберите держателя —</option>');
-
-  setOptions('f-to-account',
-    groupedOptions(legal) +
-      (cash.length ? `<optgroup label="Наличка">${cash.map(a => `<option value="${a}">${a}</option>`).join('')}</optgroup>` : '') +
-      (kaspiHolders.length ? `<optgroup label="Kaspi Gold">${kaspiHolders.map(h => `<option value="Каспи ${h}">Каспи ${h}</option>`).join('')}</optgroup>` : '') +
-      '<option value="Другой">Другой (не из списка)</option>',
-    '<option value="">— Выберите счёт —</option>');
-
-  setOptions('rec-account',
-    groupedOptions(legal),
-    '<option value="">— Выберите счёт —</option>');
-}
-
-// Список поставщиков для категории «Закуп товара» — из листа «Поставщики».
-// Новый поставщик добавляется в лист (одна строка) и сам появляется здесь —
-// код менять не нужно, так же как со счетами (см. refreshAccountLists).
-function refreshSupplierList() {
-  const el = document.getElementById('f-supplier');
-  if (!el) return;
-  const prev = el.value;
-  const names = [...suppliers].sort();
-  el.innerHTML = '<option value="">— Выберите поставщика —</option>' +
-    names.map(s => `<option value="${s}">${s}</option>`).join('') +
-    '<option value="Другой">Другой (нет в списке)</option>';
-  if ([...el.options].some(o => o.value === prev)) el.value = prev;
-}
-
 async function refreshData() {
   showToast('Обновляю данные...', 'success');
   await loadData();
   renderJournal();
   showToast('Данные обновлены (' + allData.length + ' записей)', 'success');
-}
-
-function setTodayDate() {
-  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
-}
-
-function setType(t) {
-  document.getElementById('f-type').value = t;
-  document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
-  const map = { расход:'expense', доход:'income', перевод:'transfer', долг:'debt' };
-  document.querySelector('.type-btn.' + map[t]).classList.add('active');
-  const isDebt = t === 'долг';
-  document.getElementById('debt-form').style.display = isDebt ? 'block' : 'none';
-  document.getElementById('normal-op-form').style.display = isDebt ? 'none' : 'block';
-  if (!isDebt) document.getElementById('field-to-account-row').style.display = t === 'перевод' ? 'grid' : 'none';
-  // У перевода нет своей категории дохода/расхода — счёт получателя и так
-  // однозначно фиксирует, что это перевод (см. movementAmount/CATEGORY_MAP).
-  // Поле «Категория» для перевода скрываем и проставляем автоматически,
-  // чтобы не заставлять выбирать что-то не по смыслу («прочее» и т.п.).
-  const catRow = document.getElementById('field-category-row');
-  const catSel = document.getElementById('f-category');
-  if (t === 'перевод') {
-    catRow.style.display = 'none';
-    catSel.value = 'перевод';
-  } else {
-    catRow.style.display = '';
-    if (catSel.value === 'перевод') catSel.value = '';
-  }
-  if (document.getElementById('f-category').value === 'долг') populateCloseDebtOptions();
 }
 
 async function saveDebt() {
@@ -1288,201 +995,6 @@ function clearDebtForm() {
   document.getElementById('d-notes').value = '';
 }
 
-function toggleToAccountOther() {
-  const v = document.getElementById('f-to-account').value;
-  document.getElementById('field-to-account-other').style.display = v === 'Другой' ? 'block' : 'none';
-}
-
-function toggleSupplierOther() {
-  const v = document.getElementById('f-supplier').value;
-  document.getElementById('field-supplier-other').style.display = v === 'Другой' ? 'block' : 'none';
-}
-
-function toggleAccountFields() {
-  const t = document.getElementById('f-account-type').value;
-  document.getElementById('field-legal').style.display = t === 'юр' ? 'block' : 'none';
-  document.getElementById('field-physical').style.display = t === 'физ' ? 'block' : 'none';
-  document.getElementById('field-kaspi-row').style.display = 'none';
-}
-
-function toggleKaspi() {
-  const v = document.getElementById('f-physical-account').value;
-  document.getElementById('field-kaspi-row').style.display = v === 'Каспи голд' ? 'grid' : 'none';
-  if (v !== 'Каспи голд') {
-    document.getElementById('f-kaspi-holder').value = '';
-    document.getElementById('field-kaspi-other').style.display = 'none';
-  }
-}
-function toggleKaspiOther() {
-  const v = document.getElementById('f-kaspi-holder').value;
-  document.getElementById('field-kaspi-other').style.display = v === 'Другой' ? 'block' : 'none';
-}
-
-function updateTags() {
-  const cat = document.getElementById('f-category').value;
-  const m = CATEGORY_MAP[cat];
-  const el = document.getElementById('auto-tags');
-  if (!m) { el.innerHTML = ''; }
-  else {
-    const noOpiuNote = cat === 'закуп' ? 'Не входит в ОПИУ (себестоимость уже учтена через 1С)' : 'Не входит в ОПИУ';
-    el.innerHTML = '<span class="tag dds">ДДС: ' + m.dds + '</span>' +
-      (m.opiu ? '<span class="tag opiu">ОПИУ: ' + m.opiu + '</span>' : '<span class="tag no-opiu">' + noOpiuNote + '</span>');
-  }
-  const supRow = document.getElementById('field-supplier-row');
-  if (supRow) {
-    supRow.style.display = cat === 'закуп' ? 'grid' : 'none';
-    if (cat !== 'закуп') {
-      document.getElementById('f-supplier').value = '';
-      document.getElementById('field-supplier-other').style.display = 'none';
-    }
-  }
-  const debtRow = document.getElementById('field-close-debt-row');
-  if (debtRow) {
-    debtRow.style.display = cat === 'долг' ? 'grid' : 'none';
-    if (cat === 'долг') populateCloseDebtOptions();
-    else document.getElementById('f-close-debt').value = '';
-  }
-}
-
-// Список открытых долгов для закрытия через обычную операцию (категория
-// «Погашение долга»). Направление зависит от типа операции: доход — нам
-// должны (мы получаем деньги), расход — мы должны (мы платим), перевод —
-// оба варианта сразу (перевод не имеет своего направления доход/расход).
-function populateCloseDebtOptions() {
-  const sel = document.getElementById('f-close-debt');
-  if (!sel) return;
-  const type = document.getElementById('f-type').value;
-  const open = debtsData.filter(d => (d.status||'открыт') !== 'закрыт');
-  let list;
-  if (type === 'доход') list = open.filter(d => d.direction === 'нам должны');
-  else if (type === 'расход') list = open.filter(d => d.direction === 'мы должны');
-  else list = open;
-  const prev = sel.value;
-  sel.innerHTML = '<option value="">— Выберите долг —</option>' +
-    list.map(d => `<option value="${d.id}">${d.counterparty} — ${d.direction}, ${fmt(d.amount)} ₸</option>`).join('');
-  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
-}
-
-async function saveOperation() {
-  const date = document.getElementById('f-date').value;
-  const amount = document.getElementById('f-amount').value;
-  const name = document.getElementById('f-name').value.trim();
-  const category = document.getElementById('f-category').value;
-  if (!date || !amount || !name || !category) { showToast('Заполните обязательные поля', 'error'); return; }
-  const accountType = document.getElementById('f-account-type').value;
-  let account = '';
-  if (accountType === 'юр') {
-    account = document.getElementById('f-legal-account').value;
-  } else {
-    const phys = document.getElementById('f-physical-account').value;
-    if (phys === 'Каспи голд') {
-      let holder = document.getElementById('f-kaspi-holder').value;
-      if (holder === 'Другой') holder = document.getElementById('f-kaspi-holder-other').value.trim();
-      if (!holder) { showToast('Выберите чей Gold', 'error'); return; }
-      account = 'Каспи ' + holder;
-    } else {
-      account = phys;
-    }
-  }
-  const opType = document.getElementById('f-type').value;
-  let toAccount = '';
-  if (opType === 'перевод') {
-    toAccount = document.getElementById('f-to-account').value;
-    if (toAccount === 'Другой') toAccount = document.getElementById('f-to-account-other').value.trim();
-    if (!toAccount) { showToast('Выберите счёт получателя', 'error'); return; }
-    if (toAccount === account) { showToast('Счёт получателя совпадает со счётом-источником', 'error'); return; }
-  }
-  let supplier = '';
-  if (category === 'закуп') {
-    supplier = document.getElementById('f-supplier').value;
-    if (supplier === 'Другой') supplier = document.getElementById('f-supplier-other').value.trim();
-    if (!supplier) { showToast('Выберите поставщика', 'error'); return; }
-  }
-  let closeDebtId = '';
-  if (category === 'долг') {
-    closeDebtId = document.getElementById('f-close-debt').value;
-    if (!closeDebtId) { showToast('Выберите какой долг закрываем', 'error'); return; }
-  }
-  const m = CATEGORY_MAP[category] || { dds: 'Операционная', opiu: '' };
-  const periodInput = document.getElementById('f-period').value; // формат YYYY-MM или пусто
-  const period = periodInput || date.slice(0, 7);
-  const row = {
-    date, type: opType,
-    category, name, amount: parseFloat(amount), account,
-    to_account: toAccount,
-    supplier,
-    city: document.getElementById('f-city').value,
-    responsible: document.getElementById('f-responsible').value,
-    dds: m.dds, opiu: m.opiu,
-    notes: document.getElementById('f-notes').value,
-    period,
-    created_by: currentUser
-  };
-  const btn = document.getElementById('btn-save');
-  btn.disabled = true; btn.textContent = 'Сохранение...';
-  try {
-    if (editingId) {
-      const params = new URLSearchParams({ action: 'updateRow', id: String(editingId), data: JSON.stringify(row) });
-      const r = await fetch(`${SCRIPT_URL}?${params}`);
-      const resp = await r.json();
-      if (!resp || !resp.success) throw new Error('save failed');
-      const idx = allData.findIndex(r2 => r2.id === editingId);
-      if (idx >= 0) allData[idx] = { ...row, id: editingId };
-    } else {
-      const params = new URLSearchParams({ action: 'addRow', data: JSON.stringify(row) });
-      const r = await fetch(`${SCRIPT_URL}?${params}`);
-      const resp = await r.json();
-      if (!resp || !resp.success) throw new Error('save failed');
-      allData.push({ ...row, id: Date.now() });
-    }
-    if (category === 'долг' && closeDebtId) {
-      await closeOrReduceDebt(closeDebtId, parseFloat(amount));
-    }
-    showToast(editingId ? 'Изменения сохранены!' : 'Операция сохранена!', 'success');
-    clearForm();
-    renderJournal(); renderBalances();
-  } catch(e) {
-    showToast('Не удалось сохранить — проверьте интернет и нажмите "Сохранить" ещё раз', 'error');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Сохранить операцию';
-  }
-}
-
-function clearForm() {
-  ['f-amount','f-name','f-notes','f-period'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('f-category').value = '';
-  document.getElementById('auto-tags').innerHTML = '';
-  document.getElementById('field-supplier-row').style.display = 'none';
-  document.getElementById('f-supplier').value = '';
-  document.getElementById('field-supplier-other').style.display = 'none';
-  document.getElementById('field-close-debt-row').style.display = 'none';
-  document.getElementById('f-close-debt').value = '';
-  editingId = null;
-  document.getElementById('btn-save').textContent = 'Сохранить операцию';
-  setType('расход');
-  setTodayDate();
-}
-
-// Закрывает долг полностью, либо (если оплачено меньше остатка) уменьшает
-// его сумму — остальное остаётся открытым. Обновляет и локальный debtsData
-// (чтобы Отчёт дня сразу показал актуальную картину без перезагрузки),
-// и сам лист «Долги» на сервере.
-async function closeOrReduceDebt(debtId, paidAmount) {
-  const debt = debtsData.find(d => String(d.id) === String(debtId));
-  if (!debt) return;
-  const remaining = (+debt.amount || 0) - paidAmount;
-  try {
-    if (remaining <= 0) {
-      const params = new URLSearchParams({ action: 'updateDebtStatus', id: debtId, status: 'закрыт' });
-      await fetch(`${SCRIPT_URL}?${params}`);
-      debt.status = 'закрыт';
-    } else {
-      const params = new URLSearchParams({ action: 'updateDebtAmount', id: debtId, amount: remaining });
-      await fetch(`${SCRIPT_URL}?${params}`);
-      debt.amount = remaining;
-    }
-  } catch(e) { /* данные отправлены */ }
-}
 
 function renderDashboard() {
   const now = new Date();
@@ -1845,12 +1357,17 @@ function buildTable(data, withActions) {
   // чтобы её не перекрывало и не обрезало на узких экранах / поверх других
   // окон: с широкой таблицей (10 колонок) правый край мог уезжать за видимую
   // область, и кнопки казались «пропавшими», хотя код их отрисовывал.
+  // Строки из внешней таблицы «Касса-журнал» (id вида "ext-123") нельзя
+  // удалить с сайта — они не хранятся в нашем листе «Журнал», удалять/
+  // исправлять их нужно прямо в таблице бухгалтера.
+  const isExternalRow = r => String(r.id).startsWith('ext-');
   let rows = data.map(r =>
     '<tr>' +
     (withActions ?
       '<td style="white-space:nowrap">' +
-      '<button onclick="editRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#64748b;font-size:15px;margin-right:8px" title="Редактировать">&#9998;</button>' +
-      '<button onclick="deleteRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px" title="Удалить">&#128465;</button>' +
+      (isExternalRow(r) ?
+        '<span style="color:#94a3b8;font-size:11px" title="Из таблицы бухгалтера — редактируется там">касса</span>' :
+        '<button onclick="deleteRow(' + r.id + ')" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px" title="Удалить">&#128465;</button>') +
       '</td>' : '') +
     '<td>' + fmtDate(r.date) + '</td>' +
     '<td><span class="badge badge-' + (typeMap[r.type]||'transfer') + '">' + (typeLabel[r.type]||r.type) + '</span></td>' +
@@ -1878,64 +1395,6 @@ async function deleteRow(id) {
   fetch(`${SCRIPT_URL}?${delParams}`);
   renderJournal(); renderBalances();
   showToast('Операция удалена', 'success');
-}
-
-// Редактирование строки Журнала — переиспользует форму «Ввод операции»
-// (та же логика юр/физ счёта, Kaspi Gold, поставщика и т.п., только заранее
-// заполненная), чтобы не дублировать её отдельным окном. editingId хранит
-// id строки, которую редактируем; saveOperation() проверяет его и вместо
-// добавления новой строки обновляет существующую.
-let editingId = null;
-
-function editRow(id) {
-  const r = allData.find(x => x.id === id);
-  if (!r) return;
-  editingId = id;
-  showPage('entry', document.querySelector('.nav-item[onclick*="entry"]'));
-  setType(r.type);
-  document.getElementById('f-date').value = r.date || '';
-  document.getElementById('f-amount').value = r.amount || '';
-  document.getElementById('f-name').value = r.name || '';
-  // Старые строки-переводы могли быть сохранены без категории (или с
-  // «прочее», до того как появилась своя категория «перевод») — не даём
-  // полю остаться пустым, иначе валидация при сохранении не пропустит.
-  document.getElementById('f-category').value = r.category || (r.type === 'перевод' ? 'перевод' : '');
-  updateTags();
-  document.getElementById('f-city').value = r.city || 'Алматы';
-  document.getElementById('f-responsible').value = r.responsible || '';
-  document.getElementById('f-notes').value = r.notes || '';
-  document.getElementById('f-period').value = (r.period && r.period !== r.date.slice(0,7)) ? r.period : '';
-
-  // Определяем юр/физ по тому же принципу, что и на странице «Остатки счетов».
-  const isLegal = isLegalAcct(r.account);
-  document.getElementById('f-account-type').value = isLegal ? 'юр' : 'физ';
-  toggleAccountFields();
-  if (isLegal) {
-    document.getElementById('f-legal-account').value = r.account || '';
-  } else {
-    const b = acctBucket(r.account);
-    if (b.type === 'kaspi') {
-      document.getElementById('f-physical-account').value = 'Каспи голд';
-      toggleKaspi();
-      document.getElementById('f-kaspi-holder').value = b.name;
-      if (![...document.getElementById('f-kaspi-holder').options].some(o=>o.value===b.name)) {
-        document.getElementById('f-kaspi-holder').value = 'Другой';
-        toggleKaspiOther();
-        document.getElementById('f-kaspi-holder-other').value = b.name;
-      }
-    } else {
-      document.getElementById('f-physical-account').value = r.account || '';
-    }
-  }
-  if (r.type === 'перевод') {
-    document.getElementById('f-to-account').value = r.to_account || '';
-  }
-  if (r.category === 'закуп') {
-    document.getElementById('f-supplier').value = r.supplier || '';
-  }
-
-  document.getElementById('btn-save').textContent = 'Сохранить изменения';
-  showToast('Редактирование операции — измените поля и сохраните', 'success');
 }
 
 // Юр.счёт — начинается с названия банка (Kaspi латиницей / БЦК / Халык /
@@ -2066,14 +1525,22 @@ function renderBalances() {
 }
 
 // ── ЗАКУПОЧНАЯ СЕБЕСТОИМОСТЬ ТОВАРА «НА ДАТУ X» ─────────────────────
-// Логика бухгалтера (перенесена из модели Power BI 1:1):
-//   1. Берём последний приход этого товара на дату ≤ asOfDate.
-//   2. Средневзвешенная цена (сумма/кол-во) по приходам этого товара за
-//      1 месяц ДО этой даты (включительно по саму дату последнего прихода).
-//   3. Если за 1 месяц приходов не было — то же самое за 3 месяца.
-//   4. Если приходов по товару вообще никогда не было — берём среднюю цену
-//      ПРОДАЖИ этого товара как запасной вариант (закупочную цену взять
-//      неоткуда), см. fallbackPriceMap.
+// Логика бухгалтера (алгоритм подтверждён бухгалтером 11.08 — 3 шага,
+// сопоставление по названию товара, не по артикулу):
+//   Шаг 1. Средневзвешенная цена (сумма/кол-во) по приходам этого товара
+//          за последний 1 месяц ДО asOfDate (даты отчёта).
+//   Шаг 2. Если за 1 месяц приходов не было — то же самое, но за последние
+//          3 месяца ДО asOfDate.
+//   Шаг 3. Если и за 3 месяца приходов не было — берём цену только САМОГО
+//          ПОСЛЕДНЕГО дня прихода (≤ asOfDate), без усреднения с другими
+//          датами, даже если этот приход был давно.
+//   Шаг 4. Если приходов по товару вообще никогда не было — берём среднюю
+//          цену ПРОДАЖИ этого товара как запасной вариант (закупочную цену
+//          взять неоткуда), см. fallbackPriceMap.
+// ВАЖНО: окна в шагах 1-2 считаются от asOfDate (даты отчёта), а НЕ от даты
+// последнего прихода — иначе окно почти всегда попадало в свой же приход
+// (сколь угодно старый) и шаг 3 не срабатывал никогда (был баг, исправлено
+// 11.08 при переходе на этот алгоритм).
 // Используется и в «Остатке склада» (asOfDate = сегодня), и в себестоимости
 // ОПиУ (asOfDate = конец отчётного месяца) — чтобы методология не расходилась.
 function groupPurchaseLinesByItem(lines) {
@@ -2099,9 +1566,12 @@ function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
     d.setMonth(d.getMonth() - n);
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   };
+  // Шаг 1-2: окно считаем от asOfDate (даты отчёта), а не от lastDate —
+  // иначе окно почти всегда захватывает свой же (сколь угодно старый)
+  // последний приход, и шаг 3 не срабатывает вообще никогда.
   const windowAvg = n => {
-    const from = monthsBack(lastDate, n);
-    const win = upTo.filter(l => l.date > from && l.date <= lastDate);
+    const from = monthsBack(asOfDate, n);
+    const win = upTo.filter(l => l.date > from && l.date <= asOfDate);
     const qty = win.reduce((s,l) => s + l.qty, 0);
     const sum = win.reduce((s,l) => s + l.sum, 0);
     return qty > 0 ? sum / qty : null;
@@ -2110,6 +1580,13 @@ function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
   if (c1 !== null) return { cost: c1, matched: true };
   const c3 = windowAvg(3);
   if (c3 !== null) return { cost: c3, matched: true };
+  // Шаг 3: ни за 1, ни за 3 месяца до даты отчёта приходов не было —
+  // берём цену только самого последнего дня прихода (без усреднения
+  // с другими датами), даже если этот приход был давно.
+  const lastDayLines = upTo.filter(l => l.date === lastDate);
+  const lastDayQty = lastDayLines.reduce((s,l) => s + l.qty, 0);
+  const lastDaySum = lastDayLines.reduce((s,l) => s + l.sum, 0);
+  if (lastDayQty > 0) return { cost: lastDaySum / lastDayQty, matched: true };
   return { cost: fallback, matched: false };
 }
 function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
@@ -2593,43 +2070,6 @@ async function buildDailyReport() {
   el.innerHTML = html;
 }
 
-function doReconcile() {
-  const raw = document.getElementById('rec-data').value.trim();
-  if (!raw) { showToast('Вставьте данные выписки', 'error'); return; }
-  const account = document.getElementById('rec-account').value;
-  const month = document.getElementById('rec-month').value;
-  const statement = raw.split('\n').filter(l=>l.trim()).map(l => {
-    const parts = l.split(';');
-    return { date: parts[0]?.trim(), amount: Math.abs(parseFloat((parts[1]||'0').replace(',','.'))), name: parts[2]?.trim()||'' };
-  }).filter(l => l.amount > 0);
-  const journalFiltered = allData.filter(r => (!account||r.account===account) && (!month||r.date?.startsWith(month)));
-  let matched=[], unmatched=[], notInJournal=[];
-  statement.forEach(s => {
-    const found = journalFiltered.find(j => Math.abs(+j.amount - s.amount) < 1);
-    if (found) matched.push({statement:s, journal:found}); else notInJournal.push(s);
-  });
-  journalFiltered.forEach(j => {
-    if (!statement.find(s => Math.abs(+j.amount - s.amount) < 1)) unmatched.push(j);
-  });
-  let html = '<div class="table-wrapper"><div class="table-header"><strong>Результат сверки</strong></div>';
-  html += '<div style="padding:16px 20px;display:flex;gap:20px">' +
-    '<span style="color:#16a34a;font-weight:700">Совпало: ' + matched.length + '</span>' +
-    '<span style="color:#f59e0b;font-weight:700">Не в журнале: ' + notInJournal.length + '</span>' +
-    '<span style="color:#dc2626;font-weight:700">Не в выписке: ' + unmatched.length + '</span></div>';
-  if (notInJournal.length) {
-    html += '<div style="padding:0 20px 16px"><strong style="color:#92400e">Есть в выписке, нет в журнале:</strong><table style="margin-top:8px;width:100%"><thead><tr><th>Дата</th><th>Сумма</th><th>Назначение</th></tr></thead><tbody>';
-    notInJournal.forEach(s => { html += '<tr style="background:#fef3c7"><td>' + s.date + '</td><td style="color:#dc2626">' + fmt(s.amount) + ' ₸</td><td>' + s.name + '</td></tr>'; });
-    html += '</tbody></table></div>';
-  }
-  if (unmatched.length) {
-    html += '<div style="padding:0 20px 16px"><strong style="color:#991b1b">Есть в журнале, нет в выписке:</strong><table style="margin-top:8px;width:100%"><thead><tr><th>Дата</th><th>Категория</th><th>Название</th><th>Сумма</th></tr></thead><tbody>';
-    unmatched.forEach(j => { html += '<tr style="background:#fef2f2"><td>' + fmtDate(j.date) + '</td><td>' + j.category + '</td><td>' + j.name + '</td><td style="color:#dc2626">' + fmt(j.amount) + ' ₸</td></tr>'; });
-    html += '</tbody></table></div>';
-  }
-  html += '</div>';
-  document.getElementById('reconcile-result').innerHTML = html;
-}
-
 function toggleGrp(cls, el) {
   const rows = document.querySelectorAll('.grp-'+cls);
   if (!rows.length) return;
@@ -2682,7 +2122,7 @@ async function buildDDS() {
     const cogs = cogsM[m]||0;
     const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fotNaem=C(m,'наемники'), fotTax=C(m,'налоги');
     const fot  = fotZp+fotAv+fotNaem+fotTax;
-    const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rent=rentA+rentB;
+    const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rentC=C(m,'магазин'), rent=rentA+rentB+rentC;
     const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
           cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
           cKanc=C(m,'канц товары','конц товары'), cUborka=C(m,'уборка'), cOther=C(m,'прочее'),
@@ -2698,7 +2138,7 @@ async function buildDDS() {
     const cred = C(m,'кредит');
     const finOut = own + cred;
     const netFlow = opFlow - finOut;
-    return {rev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rent,
+    return {rev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rentC,rent,
             cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,cKasp,cMark,com,
             oOs,oUpk,oLog,oKom,oKaspiKom,other,
             opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
@@ -2786,6 +2226,7 @@ async function buildDDS() {
   html += grpRow('(-) Аренда и коммунальные', 'rent', 'dds-rent');
   html += subRow('Аренда', 'rentA', 'dds-rent');
   html += subRow('Коммунальные платежи', 'rentB', 'dds-rent');
+  html += subRow('Аренда/содержание магазина', 'rentC', 'dds-rent');
   html += grpRow('(-) Коммерческие расходы', 'com', 'dds-com');
   html += subRow('Шашу — бонусы ретейлерам', 'cShashu', 'dds-com');
   html += subRow('Бонусы клиентам', 'cKasp', 'dds-com');
@@ -2919,7 +2360,7 @@ async function buildOPIU() {
     const gp=rev-cogs-kaspiMk-kaspiDl;
     const kom=C(m,'комиссия'), log_=C(m,'логистика'), upk=C(m,'упаковка');
     const varE=kom+log_+upk, mp=gp-varE;
-    const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rent=rentA+rentB;
+    const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rentC=C(m,'магазин'), rent=rentA+rentB+rentC;
     const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fot=fotZp+fotAv;
     const naem=C(m,'наемники'), tax=C(m,'налоги'), os_=C(m,'ос');
     const fix=rent+fot+naem+tax+os_, op=mp-fix;
@@ -2933,7 +2374,7 @@ async function buildOPIU() {
     const shef=C(m,'шеф'), das=C(m,'дастан'), erk=C(m,'еркин'), own=shef+das+erk, net=ebit-own;
     const cred=C(m,'кредит');
     const unmatchedRev=unmatchedRevM[m]||0, trackedRev=trackedRevM[m]||0;
-    return {rev,cogs,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
+    return {rev,cogs,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rentC,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
             kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred,
             unmatchedRev,trackedRev};
   };
@@ -2952,6 +2393,19 @@ async function buildOPIU() {
     return fmt(n)+' ₸';
   };
 
+  // Категории, встретившиеся в Журнале за выбранный период, для которых нет
+  // статьи в CATEGORY_MAP — их сумма НЕ входит ни в одну строку ОПиУ ниже
+  // (не «размазана» по существующим статьям, а просто выпадает целиком).
+  // Раньше так произошло с категорией «магазин» из кассы бухгалтера — теперь
+  // такая ситуация подсвечивается сразу, а не тихо теряется в отчёте.
+  const unknownCats = {};
+  cols.forEach(m => {
+    Object.keys(catM[m] || {}).forEach(c => {
+      if (c && !CATEGORY_MAP_LOOKUP[c]) unknownCats[c] = (unknownCats[c]||0) + catM[m][c];
+    });
+  });
+  const unknownCatsList = Object.entries(unknownCats).filter(([,v]) => v).sort((a,b) => b[1]-a[1]);
+
   // KPI cards
   const kpiCard = (lbl, val, cls, sub) =>
     `<div class="kpi-card ${cls}">
@@ -2960,7 +2414,15 @@ async function buildOPIU() {
       ${sub ? `<div class="kpi-sub">${sub} · <b>${pctS(val,tot.rev)}</b></div>` : ''}
     </div>`;
 
-  let html = `<div class="kpi-strip">
+  let html = '';
+  if (unknownCatsList.length) {
+    html += '<div class="card" style="margin-bottom:16px;background:#fffbeb;border:1px solid #fde68a">' +
+      '<div style="font-weight:700;color:#92400e;margin-bottom:8px">&#9888; Новые категории без статьи в ОПиУ (' + unknownCatsList.length + ')</div>' +
+      '<div style="font-size:12px;color:#92400e;line-height:1.7">' +
+      unknownCatsList.map(([c,v]) => 'Категория «<b>' + c + '</b>» — ' + fmt(v) + ' ₸ за период. Не входит ни в одну статью ниже — скажи, куда её отнести, я добавлю в код.').join('<br>') +
+      '</div></div>';
+  }
+  html += `<div class="kpi-strip">
     ${kpiCard('Выручка за период', tot.rev, '', '')}
     ${kpiCard('Валовая прибыль', tot.gp, 'g', 'от выручки')}
     ${kpiCard('Маргинальная прибыль', tot.mp, 'g', 'от выручки')}
@@ -3072,6 +2534,7 @@ async function buildOPIU() {
   html += grpRow('(-) Аренда и коммунальные платежи', 'rent', 'opiu-rent');
   html += subRow('Аренда', 'rentA', 'opiu-rent');
   html += subRow('Коммунальные платежи', 'rentB', 'opiu-rent');
+  html += subRow('Аренда/содержание магазина', 'rentC', 'opiu-rent');
   html += grpRow('(-) ФОТ (зарплата + авансы)', 'fot', 'opiu-fot');
   html += subRow('Зарплата', 'fotZp', 'opiu-fot');
   html += subRow('Авансы', 'fotAv', 'opiu-fot');
