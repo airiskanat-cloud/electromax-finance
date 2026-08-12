@@ -201,7 +201,6 @@
     <nav class="sidebar-nav">
       <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="icon">&#128202;</span> Дашборд</div>
       <div class="nav-item" onclick="showPage('daily-report',this)"><span class="icon">&#128197;</span> Отчёт дня</div>
-      <div class="nav-item" onclick="showPage('debt',this)"><span class="icon">&#129309;</span> Долг</div>
       <div class="nav-item" onclick="showPage('journal',this)"><span class="icon">&#128203;</span> Журнал</div>
       <div class="nav-item" onclick="showPage('dds-daily',this)"><span class="icon">&#128197;</span> ДДС Ежедневный</div>
       <div class="nav-item" onclick="showPage('dds',this)"><span class="icon">&#128184;</span> ДДС Месячный</div>
@@ -298,22 +297,6 @@
         <div id="stock-upload-preview"></div>
       </div>
 
-      <!-- ── TRANSIT ORDERS UPLOAD ── -->
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-label">🚚 Транзитные заказы Kaspi (по магазинам)</div>
-        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Загрузи выгрузки заказов из личного кабинета Kaspi по магазинам (Техно/СТД, Сана Стор, Норекс, Байноу) — магазин узнаётся по имени файла. Можно сразу несколько файлов.</p>
-        <label id="transit-drop-zone" style="display:block;border:2px dashed #fed7aa;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#fff7ed;transition:background .2s"
-          ondragover="event.preventDefault();this.style.background='#ffedd5'"
-          ondragleave="this.style.background='#fff7ed'"
-          ondrop="handleTransitFileDrop(event)">
-          <input type="file" id="transit-upload-input" accept=".xlsx,.xls" multiple style="display:none" onchange="processTransitFiles(Array.from(this.files))">
-          <div style="font-size:36px;margin-bottom:10px">🚚</div>
-          <div style="font-weight:700;color:#7c2d12;font-size:15px">Нажми или перетащи файлы сюда</div>
-          <div style="font-size:12px;color:#94a3b8;margin-top:6px">.xlsx, .xls — можно несколько магазинов сразу</div>
-        </label>
-        <div id="transit-upload-preview"></div>
-      </div>
-
       <!-- ── MANUAL ENTRY (collapsed) ── -->
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleManualEntry()">
@@ -343,34 +326,6 @@
           <b>Журнал</b> — все расходы (категории, суммы, даты, ответственный)<br>
           <b>Продажи</b> — выручка и себестоимость по месяцам из 1С<br>
           <b>Пользователи</b> — логины, пароли, роли
-        </div>
-      </div>
-    </div>
-    <div class="page" id="page-debt">
-      <div class="page-title">Долг</div>
-      <div class="form-card">
-        <div class="form-card" id="debt-form" style="background:#faf5ff;border:1px solid #e9d5ff;margin-bottom:16px">
-          <div class="form-row">
-            <div class="field"><label>Дата <span class="required">*</span></label><input type="date" id="d-date"></div>
-            <div class="field"><label>Сумма (&#8376;) <span class="required">*</span></label><input type="number" id="d-amount" placeholder="0" min="0" step="0.01"></div>
-          </div>
-          <div class="form-row">
-            <div class="field">
-              <label>Направление <span class="required">*</span></label>
-              <select id="d-direction">
-                <option value="нам должны">Нам должны (дебиторка)</option>
-                <option value="мы должны">Мы должны (кредиторка)</option>
-              </select>
-            </div>
-            <div class="field"><label>Контрагент <span class="required">*</span></label><input type="text" id="d-counterparty" placeholder="Например: Поставщик Электрон"></div>
-          </div>
-          <div class="form-row">
-            <div class="field"><label>Комментарий</label><input type="text" id="d-notes" placeholder="Необязательно"></div>
-          </div>
-          <div class="btn-row">
-            <button class="btn btn-save" id="btn-save-debt" onclick="saveDebt()">&#10003; Сохранить долг</button>
-            <button class="btn btn-clear" onclick="clearDebtForm()">Очистить</button>
-          </div>
         </div>
       </div>
     </div>
@@ -468,7 +423,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwGYuQOspFqyj7Ejs7ANxe2q265hZvN0uSHr9cINXo4do8k95h6jJWyw_0AgHqt3F5atQ/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyNg-oIg6ixqCVooMD2IpVUkV782sQLce5STuee8IkRo5NstbvqqKZOZElRzF23CpmcYQ/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -560,6 +515,14 @@ function mapExternalJournal(rows) {
   const TYPE_MAP = { 'приход': 'доход', 'расход': 'расход', 'перевод': 'перевод' };
   return (rows || [])
     .filter(r => r['Дата'] && String(r['Дата']) >= EXTERNAL_JOURNAL_FROM)
+    // Строки без «Тип операции» (пусты Тип операции/Категория/Счёт, заполнена
+    // только «Дебиторка» + сумма) — это заметки о долге, а не реальное
+    // движение денег (пример: «караман» 900 000, «ася» 7 800 — 02.08/01.08).
+    // Без этого фильтра такие строки ошибочно считались бы расходом и
+    // искажали ДДС/остатки. Они просто не попадают в Журнал сайта; сама
+    // дебиторка/кредиторка по ним отслеживается в самой кассе (столбец
+    // «Дебиторка»), а не через страницу «Долг» на сайте.
+    .filter(r => String(r['Тип операции'] || '').trim())
     .map(r => {
       const rawType = String(r['Тип операции'] || '').trim().toLowerCase();
       const type = TYPE_MAP[rawType] || rawType || 'расход';
@@ -590,6 +553,24 @@ function mapExternalJournal(rows) {
         created_by: 'Касса-журнал (бухгалтер)'
       };
     });
+}
+
+// Дебиторка/Транзит из кассы на конкретный день — считаем по ВСЕМ её сырым
+// строкам (externalJournalRaw), а не по allData: сюда, в отличие от Журнала
+// сайта, попадают и «пустые по типу операции» заметки о долге (например
+// «караман» 900 000 без Тип операции/Категории — только Дебиторка+Сумма).
+// Логика 1:1 повторяет Отчёт дня внутри самой кассы (см. Отчет_дня_скрипт.gs).
+function kassaDayAgg(dateStr) {
+  const byDebitDir = {}, byTransit = {};
+  externalJournalRaw.forEach(r => {
+    if (String(r['Дата']) !== dateStr) return;
+    const sum = +r['Сумма'] || 0;
+    const debit = String(r['Дебиторка'] || '').trim();
+    const transit = String(r['Транзит'] || '').trim();
+    if (debit) byDebitDir[debit] = (byDebitDir[debit] || 0) + sum;
+    if (transit) byTransit[transit] = (byTransit[transit] || 0) + sum;
+  });
+  return { byDebitDir, byTransit };
 }
 
 async function doLogin() {
@@ -659,7 +640,13 @@ function currentMonth() {
 const OPENING_BASE_DATE = '2026-07-20';
 let openingBalances = []; // [{account, city, balance}] — заполняется вручную в Google Sheets
 let suppliers = []; // [name, ...] — заполняется вручную в листе «Поставщики»
-let debtsData = []; // [{id, date, counterparty, direction, amount, notes, status}] — лист «Долги»
+// Сырые строки кассы (Дата, Название, Тип операции, Категория, Тип счета,
+// Счет, Сумма, Дебиторка, Примечание, Транзит), с августа 2026 — отдельно от
+// allData, потому что сюда, в отличие от Журнала, попадают ВСЕ строки кассы,
+// включая заметки о долге без «Тип операции» (см. mapExternalJournal). Нужны
+// для Отчёта дня — Дебиторка/Транзит там считаются по всей кассе, а не
+// только по «настоящим» операциям расход/приход. См. kassaDayAgg().
+let externalJournalRaw = [];
 
 // Приводит название счёта Kaspi Gold (личного) к единому виду «Каспи Имя»
 // независимо от того, как его набрали руками: «Темирлан Каспи голд»,
@@ -694,14 +681,13 @@ function normalizeAccountName(acc) {
 }
 
 async function loadData() {
-  // Раньше эти 4 запроса шли последовательно (каждый ждал предыдущий) —
-  // при подтормаживающем Apps Script задержки складывались. Теперь все 4
-  // уходят одновременно и ждём самый медленный, а не сумму всех четырёх.
-  const [d, d2, d3, d4, d5] = await Promise.all([
+  // Раньше эти запросы шли последовательно (каждый ждал предыдущий) —
+  // при подтормаживающем Apps Script задержки складывались. Теперь все
+  // уходят одновременно и ждём самый медленный, а не сумму всех.
+  const [d, d2, d3, d5] = await Promise.all([
     fetch(SCRIPT_URL + '?action=getAll').then(r => r.json()).catch(() => ({ data: [] })),
     fetch(SCRIPT_URL + '?action=getOpeningBalances').then(r => r.json()).catch(() => ({ items: [] })),
     fetch(SCRIPT_URL + '?action=getSuppliers').then(r => r.json()).catch(() => ({ items: [] })),
-    fetch(SCRIPT_URL + '?action=getDebts').then(r => r.json()).catch(() => ({ items: [] })),
     fetch(SCRIPT_URL + '?action=getExternalJournal').then(r => r.json()).catch(() => ({ data: [] }))
   ]);
   allData = d.data || [];
@@ -712,9 +698,12 @@ async function loadData() {
   openingBalances = d2.items || [];
   openingBalances.forEach(o => { if (o.account) o.account = normalizeAccountName(o.account); });
   suppliers = d3.items || [];
-  debtsData = d4.items || [];
   // С августа 2026 касса ведётся бухгалтером во внешней таблице — добавляем
   // её строки (приведённые к нашему формату) к своим собственным (Jan-Jul).
+  // Долг и Транзит на сайте теперь тоже считаются из неё (см. kassaDayAgg,
+  // используется в Отчёте дня) — своей страницы «Долг» и загрузки
+  // «Транзитные заказы» на сайте больше нет.
+  externalJournalRaw = (d5.data || []).filter(r => r['Дата'] && String(r['Дата']) >= EXTERNAL_JOURNAL_FROM);
   allData = allData.concat(mapExternalJournal(d5.data));
   await refreshMonthPickers();
   buildDashboard(); renderBalances();
@@ -959,42 +948,6 @@ async function refreshData() {
   renderJournal();
   showToast('Данные обновлены (' + allData.length + ' записей)', 'success');
 }
-
-async function saveDebt() {
-  const date = document.getElementById('d-date').value;
-  const amount = document.getElementById('d-amount').value;
-  const counterparty = document.getElementById('d-counterparty').value.trim();
-  const direction = document.getElementById('d-direction').value;
-  if (!date || !amount || !counterparty) { showToast('Заполните обязательные поля', 'error'); return; }
-  const debt = {
-    date, amount: parseFloat(amount), counterparty, direction,
-    notes: document.getElementById('d-notes').value,
-    status: 'открыт', created_by: currentUser
-  };
-  const btn = document.getElementById('btn-save-debt');
-  btn.disabled = true; btn.textContent = 'Сохранение...';
-  try {
-    const params = new URLSearchParams({ action: 'addDebt', data: JSON.stringify(debt) });
-    const r = await fetch(`${SCRIPT_URL}?${params}`);
-    const d = await r.json();
-    if (!d.success) throw new Error(d.error || 'Ошибка сервера');
-    debtsData.push({ ...debt, id: d.id || Date.now() });
-    showToast('Долг сохранён!', 'success');
-    clearDebtForm();
-  } catch(e) {
-    showToast('Ошибка сохранения: ' + e.message, 'error');
-  }
-  btn.disabled = false; btn.textContent = 'Сохранить долг';
-}
-
-function clearDebtForm() {
-  document.getElementById('d-date').value = '';
-  document.getElementById('d-amount').value = '';
-  document.getElementById('d-counterparty').value = '';
-  document.getElementById('d-direction').value = 'нам должны';
-  document.getElementById('d-notes').value = '';
-}
-
 
 function renderDashboard() {
   const now = new Date();
@@ -1724,18 +1677,16 @@ async function buildDailyReport() {
   const el = document.getElementById('daily-report-content');
   el.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка отчёта...</div>';
 
-  let stock = [], prices = [], transit = [], purchaseLines = [], aliases = [];
+  let stock = [], prices = [], purchaseLines = [], aliases = [];
   try {
-    const [r1, r2, r3, r4, r5] = await Promise.all([
+    const [r1, r2, r4, r5] = await Promise.all([
       fetch(SCRIPT_URL + '?action=getStockBalance'),
       fetch(SCRIPT_URL + '?action=getItemPrices'),
-      fetch(SCRIPT_URL + '?action=getTransit'),
       fetch(SCRIPT_URL + '?action=getPurchaseLines'),
       fetch(SCRIPT_URL + '?action=getItemAliases')
     ]);
     stock   = (await r1.json()).items || [];
     prices  = (await r2.json()).items || [];
-    transit = (await r3.json()).items || [];
     purchaseLines = (await r4.json()).items || [];
     aliases = (await r5.json()).items || [];
   } catch(e) {}
@@ -1798,27 +1749,30 @@ async function buildDailyReport() {
   const avgMajorMonthly = lastMonths.length ? lastMonths.reduce((s,m)=>s+byMonth[m],0)/lastMonths.length : 0;
   const runwayMonths = avgMajorMonthly > 0 ? totalBalance / avgMajorMonthly : null;
 
-  // ── 4. Долги: нам должны / мы должны ──
-  const openDebts = debtsData.filter(d => (d.status||'открыт') !== 'закрыт');
-  const weOwed = openDebts.filter(d => d.direction === 'нам должны');
-  const weOwe  = openDebts.filter(d => d.direction === 'мы должны');
-  const daysSince = dateStr => {
-    if (!dateStr) return 0;
-    const d1 = new Date(dateStr), d2 = new Date(today);
-    return Math.max(0, Math.round((d2 - d1) / 86400000));
-  };
-  const receivablesSum = weOwed.reduce((s,d)=>s+(+d.amount||0),0);
-  const payablesSum = weOwe.reduce((s,d)=>s+(+d.amount||0),0);
+  // ── 4. Долги: нам должны / мы должны — из кассы (столбец «Дебиторка»),
+  // за сегодня, точно так же, как считает собственный Отчёт дня внутри
+  // самой кассы (см. kassaDayAgg). Своей страницы «Долг» на сайте больше
+  // нет — единственный источник теперь касса бухгалтера.
+  const kassaToday = kassaDayAgg(today);
+  const receivablesSum = kassaToday.byDebitDir['Нам должен'] || 0;
+  const payablesSum = kassaToday.byDebitDir['Мы должны'] || 0;
+  // Детали — сами строки кассы за сегодня с заполненной «Дебиторка». В кассе
+  // нет отдельного поля «контрагент», поэтому показываем «Название» операции —
+  // это то же, что видит бухгалтер в своей таблице.
+  const weOwed = externalJournalRaw
+    .filter(r => String(r['Дата']) === today && String(r['Дебиторка']||'').trim() === 'Нам должен')
+    .map(r => ({ counterparty: r['Название'] || '—', amount: +r['Сумма'] || 0, notes: r['Примечание'] || '' }));
+  const weOwe = externalJournalRaw
+    .filter(r => String(r['Дата']) === today && String(r['Дебиторка']||'').trim() === 'Мы должны')
+    .map(r => ({ counterparty: r['Название'] || '—', amount: +r['Сумма'] || 0, notes: r['Примечание'] || '' }));
 
-  // ── 5. Транзитные заказы по магазинам ──
-  // «Ожидает передачи курьеру» — заказ ещё не сдан в доставку, физически
-  // лежит на складе продавца, поэтому не считается «в транзите» и не входит
-  // ни в сумму, ни в количество (по просьбе — из учёта транзита убрать).
-  const transitActive = transit.filter(t => t.status !== 'Ожидает передачи курьеру');
-  const transitByStore = {};
-  transitActive.forEach(t => { transitByStore[t.store] = (transitByStore[t.store]||0) + (+t.amount||0); });
+  // ── 5. Транзит по партнёрам (Санго/АМДК/Техно) — из кассы (столбец
+  // «Транзит»), за сегодня, сумма денег без статусов заказов — так решили
+  // 12.08: отдельная загрузка Kaspi-заказов по магазинам больше не нужна,
+  // бухгалтер и так проставляет транзит-партнёра прямо в кассе.
+  const transitByStore = kassaToday.byTransit;
   const transitTotal = Object.values(transitByStore).reduce((a,b)=>a+b,0);
-  const transitCount = transitActive.length;
+  const transitCount = externalJournalRaw.filter(r => String(r['Дата']) === today && String(r['Транзит']||'').trim()).length;
 
   // ── 6. Остаток склада: кол-во × закупочная цена «на сегодня» ──
   // Закупочная цена — по логике бухгалтера (см. itemCostAsOf): средневзвешенная
@@ -1899,7 +1853,6 @@ async function buildDailyReport() {
 
   const maxCityQty = Math.max(1, ...Object.values(stockByCity));
   const stockDate = fmtDate(stock.reduce((max,s) => (s.date && s.date > max ? s.date : max), ''));
-  const transitDate = fmtDate(transit.reduce((max,t) => (t.date && t.date > max ? t.date : max), ''));
 
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
     <div class="card">
@@ -1974,8 +1927,8 @@ async function buildDailyReport() {
 
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
     <div class="card">
-      <div class="card-label" style="margin-bottom:2px">Транзит по магазинам — ${transitCount} шт</div>
-      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">${transitDate!=='—' ? 'Данные на '+transitDate : 'Нет загруженных заказов'}</div>
+      <div class="card-label" style="margin-bottom:2px">Транзит по партнёрам — операций сегодня: ${transitCount}</div>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Из кассы, за ${fmtDate(today)}</div>
       ${Object.keys(transitByStore).length ? Object.entries(transitByStore).sort((a,b)=>b[1]-a[1]).map(([s,v]) => {
         const pct = Math.min(100, v/maxTransit*100);
         return `<div style="display:grid;grid-template-columns:70px 1fr 90px;align-items:center;gap:8px;margin-bottom:8px">
@@ -1983,10 +1936,10 @@ async function buildDailyReport() {
           <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:#8b5cf6;border-radius:4px"></div></div>
           <span style="font-size:12px;text-align:right;font-weight:700;color:#1e3a5f">${fK(v)}</span>
         </div>`;
-      }).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных транзитных заказов</div>'}
+      }).join('') : '<div style="font-size:12px;color:#94a3b8">Нет операций с транзит-партнёром сегодня</div>'}
     </div>
     <div class="card">
-      <div class="card-label" style="margin-bottom:12px">Долги</div>
+      <div class="card-label" style="margin-bottom:12px">Долги — за сегодня (касса)</div>
       <div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#16a34a">Нам должны</span><span style="font-size:12px;font-weight:700;color:#16a34a">${fK(receivablesSum)}</span></div>
         <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,receivablesSum/maxDebt*100)}%;height:100%;background:#16a34a;border-radius:4px"></div></div>
@@ -1999,11 +1952,11 @@ async function buildDailyReport() {
     </div>
   </div>`;
 
-  // Развёрнутые списки долгов (кому конкретно) — под графиком, компактно
+  // Развёрнутые списки долгов за сегодня (что именно) — под графиком, компактно
   const debtRow = d => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9">
     <div>
       <div style="font-size:13px;color:#1e3a5f">${d.counterparty}</div>
-      <div style="font-size:11px;color:#94a3b8">${d.notes||''} · ${daysSince(d.date)} дн.</div>
+      ${d.notes ? `<div style="font-size:11px;color:#94a3b8">${d.notes}</div>` : ''}
     </div>
     <div style="font-size:13px;font-weight:700">${fmt(d.amount)} ₸</div>
   </div>`;
@@ -3403,166 +3356,6 @@ async function confirmAndSaveStock() {
     msg.textContent = `✓ Сохранено: ${d.rows} позиций`;
     msg.style.color = '#16a34a';
     showToast('Остаток склада сохранён!', 'success');
-  } catch(e) {
-    msg.textContent = '✗ Ошибка: ' + e.message;
-    msg.style.color = '#dc2626';
-  }
-}
-
-// ── ТРАНЗИТНЫЕ ЗАКАЗЫ (выгрузка заказов Kaspi по магазинам) ────────
-// Магазин определяется по имени файла (в самой выгрузке нет колонки
-// юрлица/магазина). Каждая загрузка заменяет заказы ТОЛЬКО этого магазина.
-let _mergedTransit = {}; // { store: [{orderId,status,amount,date}] }
-
-const TRANSIT_STORE_MAP = [
-  [/техно|стд/i,      'Техно'],
-  [/сана|санг/i,       'Санго'],
-  [/норекс|norex/i,    'Норех'],
-  [/байноу|buynow/i,   'Байноу']
-];
-
-function parseTransitFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      try {
-        const wb = XLSX.read(e.target.result, {type:'array', raw:true});
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
-
-        let headerIdx = -1;
-        for (let i = 0; i < Math.min(raw.length, 5); i++) {
-          const cells = (raw[i]||[]).map(c => String(c||''));
-          if (cells.some(c=>c.includes('№ заказа')) && cells.some(c=>c.includes('Статус'))) { headerIdx = i; break; }
-        }
-        if (headerIdx === -1) {
-          resolve({error:`Не найден заголовок таблицы заказов ("№ заказа"/"Статус"). Проверь формат файла.`, name: file.name});
-          return;
-        }
-        let store = '';
-        // .normalize('NFC') — на macOS имена файлов с буквами вроде "й" иногда
-        // приходят в "разложенном" юникоде (и + отдельный значок), и обычное
-        // сравнение строк их не совпадает с "й" в регулярке. Нормализация чинит это.
-        const fileNameNFC = String(file.name||'').normalize('NFC');
-        for (const [re, name] of TRANSIT_STORE_MAP) { if (re.test(fileNameNFC)) { store = name; break; } }
-        if (!store) {
-          resolve({error:`Не распознан магазин по имени файла. Ожидались слова: техно/стд, сана, норекс, байноу.`, name: file.name});
-          return;
-        }
-
-        const hdr = raw[headerIdx].map(c => String(c||''));
-        const idCol     = hdr.findIndex(c => c.includes('№ заказа'));
-        const dateCol   = hdr.findIndex(c => c.includes('Дата поступления'));
-        const amtCol    = hdr.findIndex(c => c.includes('Сумма'));
-        const statusCol = hdr.findIndex(c => c.includes('Статус') && !c.includes('измен'));
-
-        const parseTDate = s => {
-          const m = String(s||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
-          return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
-        };
-
-        const items = [];
-        for (let i = headerIdx + 1; i < raw.length; i++) {
-          const r = raw[i] || [];
-          const orderId = r[idCol];
-          if (!orderId) continue;
-          items.push({
-            orderId: String(orderId),
-            status: String(r[statusCol]||''),
-            amount: parseFloat(r[amtCol]) || 0,
-            date: parseTDate(r[dateCol])
-          });
-        }
-        resolve({ store, items, rows: items.length, name: file.name });
-      } catch(err) { reject(err); }
-    };
-    reader.onerror = reject;
-    reader.readAsArrayBuffer(file);
-  });
-}
-
-function handleTransitFileDrop(event) {
-  event.preventDefault();
-  document.getElementById('transit-drop-zone').style.background = '#fff7ed';
-  const files = Array.from(event.dataTransfer.files).filter(f => /\.xlsx?$/i.test(f.name));
-  if (files.length) processTransitFiles(files);
-}
-
-async function processTransitFiles(files) {
-  const preview = document.getElementById('transit-upload-preview');
-  preview.innerHTML = '<div style="margin-top:12px"><div class="loading"><div class="spinner"></div>Обрабатываю заказы...</div></div>';
-
-  const results = [];
-  for (const file of files) {
-    try { results.push(await parseTransitFile(file)); }
-    catch(e) { results.push({error: e.message, name: file.name}); }
-  }
-
-  results.filter(r => !r.error).forEach(r => { _mergedTransit[r.store] = r.items; });
-
-  const fM = v => v >= 1e6 ? (v/1e6).toFixed(1)+' млн' : Math.round(v/1e3)+' тыс';
-  let html = '<div style="margin-top:14px">';
-  results.forEach(r => {
-    if (r.error) {
-      html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:12px"><b>❌ ${r.name}</b>: ${r.error}</div>`;
-    } else {
-      const total = r.items.reduce((s,it)=>s+it.amount,0);
-      html += `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 14px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <b style="color:#7c2d12;font-size:13px">🚚 ${r.store} · ${r.name}</b>
-          <span style="color:#c2410c">✓ ${r.rows} заказов</span>
-        </div>
-        <div style="font-size:11px;color:#9a3412;margin-top:4px">На сумму: <b>${fM(total)} ₸</b></div>
-      </div>`;
-    }
-  });
-
-  const stores = Object.keys(_mergedTransit);
-  if (stores.length) {
-    let grand = 0;
-    html += `<div class="report-wrap"><table style="border-collapse:collapse;font-size:12px;width:100%">
-    <thead><tr style="background:#7c2d12;color:white">
-      <th style="padding:7px 10px;text-align:left">Магазин</th>
-      <th style="padding:7px 10px;text-align:right">Заказов</th>
-      <th style="padding:7px 10px;text-align:right">Сумма</th>
-    </tr></thead><tbody>`;
-    stores.forEach((s, idx) => {
-      const items = _mergedTransit[s];
-      const sum = items.reduce((a,it)=>a+it.amount,0);
-      grand += sum;
-      html += `<tr style="background:${idx%2?'white':'#fffbeb'}">
-        <td style="padding:6px 10px;font-weight:700;color:#7c2d12">${s}</td>
-        <td style="padding:6px 10px;text-align:right">${items.length}</td>
-        <td style="padding:6px 10px;text-align:right;font-weight:700">${fM(sum)} ₸</td>
-      </tr>`;
-    });
-    html += `</tbody></table></div>
-    <div style="display:flex;align-items:center;gap:14px;margin-top:16px">
-      <button class="btn btn-save" onclick="confirmAndSaveTransit()" style="width:auto">⬆ Сохранить транзитные заказы</button>
-      <div id="transit-upload-save-msg" style="font-size:13px"></div>
-    </div>
-    <div style="font-size:11px;color:#64748b;margin-top:6px">
-      ℹ️ Итого в транзите: <b>${fM(grand)} ₸</b>. Загрузка заменяет заказы только этого магазина, остальные не затронутся.
-    </div>`;
-  }
-
-  html += '</div>';
-  preview.innerHTML = html;
-}
-
-async function confirmAndSaveTransit() {
-  const msg = document.getElementById('transit-upload-save-msg');
-  msg.textContent = 'Сохранение...'; msg.style.color = '#64748b';
-  const rows = [];
-  Object.entries(_mergedTransit).forEach(([store, items]) => {
-    items.forEach(it => rows.push({ store, orderId: it.orderId, status: it.status, amount: Math.round(it.amount), date: it.date }));
-  });
-  try {
-    const d = await postAction('saveTransit', rows);
-    if (!d.success) throw new Error(d.error || 'Ошибка сервера');
-    msg.textContent = `✓ Сохранено: ${d.rows} заказов`;
-    msg.style.color = '#16a34a';
-    showToast('Транзитные заказы сохранены!', 'success');
   } catch(e) {
     msg.textContent = '✗ Ошибка: ' + e.message;
     msg.style.color = '#dc2626';
