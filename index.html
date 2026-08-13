@@ -423,7 +423,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxUgLeh5fzqK86nrOLQ1qszE4xRhji2qWct6F6hs3VmL2o4K2pFD-m8CpOg5pOlqoQNbg/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxpVAqQXFUGBXhU32Y9w2WIEx0WlRxPMtxBpSzLR7WU7rE0JkAElQsmbLBo5PWShGpR2g/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -3018,12 +3018,19 @@ async function confirmAndSave() {
   // именно построчный молча не проходил).
   const chunkedPost = async (action, rows, label) => {
     const CHUNK = 800;
+    let last = null;
     for (let i = 0; i < rows.length; i += CHUNK) {
       const chunk = rows.slice(i, i + CHUNK);
       msg.textContent = `Сохранение ${label}... ${Math.min(i + CHUNK, rows.length)}/${rows.length}`;
       const d = await postAction(action, chunk);
       if (!d || !d.success) throw new Error(`${label}: ` + (d && d.error || 'сервер не подтвердил сохранение'));
+      last = d;
     }
+    // last.totalRows — сколько всего строк в листе на бэкенде ПОСЛЕ записи
+    // (не только в этой порции). Позволяет сразу на экране проверить, что
+    // построчные данные реально дошли до Google Sheets, а не просто
+    // получили "success" от промежуточного шага (см. Task #124/#126).
+    return last;
   };
 
   const warnings = [];
@@ -3048,9 +3055,10 @@ async function confirmAndSave() {
     // КРИТИЧНО для себестоимости — если не сохранится, ОПиУ станет считать
     // её неверно (по запасной цене продажи вместо реальной цены прихода),
     // поэтому ошибку здесь показываем пользователю, а не прячем.
+    let dailyResult = null, purchaseResult = null;
     const dailyRows = Object.values(_mergedItemDaily);
     if (dailyRows.length) {
-      await chunkedPost('saveItemDaily', dailyRows, 'продажи по дням');
+      dailyResult = await chunkedPost('saveItemDaily', dailyRows, 'продажи по дням');
     }
 
     // Построчная история приходов (товар+дата+кол-во+сумма) — по ней считается
@@ -3058,13 +3066,22 @@ async function confirmAndSave() {
     // Тоже критично для себестоимости — см. комментарий выше.
     const purchaseLineRows = Object.values(_mergedPurchaseLines);
     if (purchaseLineRows.length) {
-      await chunkedPost('savePurchaseLines', purchaseLineRows, 'приходы по дням');
+      purchaseResult = await chunkedPost('savePurchaseLines', purchaseLineRows, 'приходы по дням');
     }
 
     // savedWeeks теперь хранит пары "неделя|месяц" (дедуп на бэкенде — см.
     // saveWeekSales/saveWeekPurchases), для отображения берём только неделю.
     const uniqueWeeks = [...new Set(savedWeeks.map(w => String(w).split('|')[0]))].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
-    msg.innerHTML = `✓ Сохранено: ${uniqueWeeks}` + (warnings.length ? `<br><span style="color:#d97706">⚠ ${warnings.join('; ')}</span>` : '');
+    // Диагностика (добавлено 13.08, Task #126): показываем сколько строк
+    // реально лежит в ПродажиПозицииДневные/ПриходПозиции на сервере ПОСЛЕ
+    // этой загрузки — чтобы сразу на экране было видно, ушли ли данные, а
+    // не только "неделя сохранена" (недели сохраняются отдельным, более
+    // надёжным путём и не гарантируют, что построчные данные тоже дошли).
+    const diagParts = [];
+    if (dailyResult) diagParts.push(`продажи по товарам в базе: ${dailyResult.totalRows}`);
+    if (purchaseResult) diagParts.push(`приходы по товарам в базе: ${purchaseResult.totalRows}`);
+    const diagLine = diagParts.length ? `<br><span style="color:#6b7280;font-size:12px">${diagParts.join(' · ')}</span>` : '';
+    msg.innerHTML = `✓ Сохранено: ${uniqueWeeks}` + diagLine + (warnings.length ? `<br><span style="color:#d97706">⚠ ${warnings.join('; ')}</span>` : '');
     msg.style.color = '#16a34a';
     showToast('Данные 1С сохранены в Google Sheets!', 'success');
   } catch(e) {
