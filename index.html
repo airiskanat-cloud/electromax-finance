@@ -1522,9 +1522,23 @@ function groupPurchaseLinesByItem(lines) {
 // запасной вариант (среднюю цену продажи, т.к. приходов не нашлось).
 // Нужно для диагностики «сколько выручки посчитано по цене прихода, а
 // сколько — приблизительно» (см. диагностику в ОПиУ).
-function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
+//
+// ВАЖНО (баг найден и исправлен 13.08): для поиска приходов (linesByItem)
+// нужно ЗАКУПОЧНОЕ имя товара (после resolveItemName), а для запасной цены
+// (fallbackPriceMap = «ЦеныТоваров») — наоборот, ИСХОДНОЕ ПРОДАННОЕ имя, т.к.
+// этот словарь заполняется на бэкенде только из файлов ПРОДАЖ и алиасы к нему
+// никогда не применяются. Раньше оба поиска шли по одному и тому же (уже
+// подменённому на закупочное) имени — для товаров с подтверждённым алиасом,
+// у которых при этом не нашлось ни одного прихода (шаги 1-3 не сработали),
+// запасная цена искалась по несуществующему в словаре закупочному имени и
+// молча превращалась в 0 вместо реальной средней цены продажи — себестоимость
+// такой продажи занижалась до нуля, а валовая прибыль завышалась на всю
+// сумму этой продажи. soldItem — необязательный параметр с исходным
+// (проданным) именем; если не передан, используется item как раньше.
+function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem) {
   const all = linesByItem[item];
-  const fallback = (fallbackPriceMap && fallbackPriceMap[item]) || 0;
+  const fallbackKey = soldItem !== undefined ? soldItem : item;
+  const fallback = (fallbackPriceMap && fallbackPriceMap[fallbackKey]) || 0;
   if (!all || !all.length) return { cost: fallback, matched: false };
   const upTo = all.filter(l => l.date <= asOfDate);
   if (!upTo.length) return { cost: fallback, matched: false };
@@ -1577,8 +1591,8 @@ function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
   if (lastDayQty > 0) return { cost: lastDaySum / lastDayQty, matched: true };
   return { cost: fallback, matched: false };
 }
-function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap) {
-  return itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap).cost;
+function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem) {
+  return itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem).cost;
 }
 // Последний день месяца "YYYY-MM" → "YYYY-MM-DD" (для себестоимости в ОПиУ:
 // "на дату X" = конец отчётного месяца, а не сегодняшний день).
@@ -1823,7 +1837,7 @@ async function buildDailyReport() {
   const stockByCity = {};
   const inactiveStock = {}; // city -> { qty, value }
   stock.forEach(s => {
-    const price = itemCostAsOf(resolveItemName(s.product, itemAliasMap), today, linesByItem, priceMap);
+    const price = itemCostAsOf(resolveItemName(s.product, itemAliasMap), today, linesByItem, priceMap, s.product);
     const val = (+s.qty||0) * price;
     if (isActiveStock(s.city)) {
       // Для отображения активные склады сворачиваются в укрупнённый «город»
@@ -2299,7 +2313,7 @@ async function buildOPIU() {
       const dt = String(row.date||'');
       const mo = dt.slice(0,7);
       if (!mo || !row.qty) return;
-      const { cost, matched } = itemCostDetailAsOf(resolveItemName(row.item, itemAliasMap), dt, linesByItem, priceMap);
+      const { cost, matched } = itemCostDetailAsOf(resolveItemName(row.item, itemAliasMap), dt, linesByItem, priceMap, row.item);
       cogsM[mo] = (cogsM[mo]||0) + row.qty * cost;
       trackedRevM[mo] = (trackedRevM[mo]||0) + (+row.revenue||0);
       if (!matched) unmatchedRevM[mo] = (unmatchedRevM[mo]||0) + (+row.revenue||0);
@@ -2992,37 +3006,65 @@ async function confirmAndSave() {
     return savedWeeks;
   };
 
+  // Отправляет построчные данные (item+дата, гораздо больше строк, чем
+  // недель) порциями по CHUNK штук — одним запросом за весь файл раньше
+  // рисковали упереться в лимиты Apps Script на большой POST (особенно
+  // при загрузке файла сразу за много недель, напр. "Week 1-20") и запрос
+  // тихо падал: try/catch вокруг него проглатывал ошибку молча, а
+  // ПродажиПозицииДневные/ПриходПозиции оставались пустыми без каких-либо
+  // признаков проблемы на экране (баг найден и исправлен 13.08, когда
+  // пользователь показала пустой лист ПриходПозиции при том, что суммы по
+  // неделям сохранялись нормально — оказалось, это два разных запроса, и
+  // именно построчный молча не проходил).
+  const chunkedPost = async (action, rows, label) => {
+    const CHUNK = 800;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK);
+      msg.textContent = `Сохранение ${label}... ${Math.min(i + CHUNK, rows.length)}/${rows.length}`;
+      const d = await postAction(action, chunk);
+      if (!d || !d.success) throw new Error(`${label}: ` + (d && d.error || 'сервер не подтвердил сохранение'));
+    }
+  };
+
+  const warnings = [];
   try {
     let savedWeeks = [];
     if (flatSales.length)     savedWeeks = savedWeeks.concat(await batchSave('saveWeekSales',     flatSales));
     if (flatPurchases.length) savedWeeks = savedWeeks.concat(await batchSave('saveWeekPurchases', flatPurchases));
 
     // Попутно копим среднюю цену продажи по товару — запасной вариант оценки
-    // остатка склада, если по товару вообще не было приходов.
+    // остатка склада, если по товару вообще не было приходов. Это
+    // действительно не критично (просто откат к менее точной оценке),
+    // поэтому ошибку тут по-прежнему не считаем фатальной, но в предупреждения
+    // выводим, чтобы не прятать молча.
     const priceRows = Object.entries(_mergedItemPrices).map(([product, {revenue, qty}]) => ({ product, revenue, qty }));
     if (priceRows.length) {
-      try { await postAction('saveItemPrices', priceRows); } catch(e) { /* не критично для основного сохранения */ }
+      try { await postAction('saveItemPrices', priceRows); } catch(e) { warnings.push('Средние цены продажи: ' + e.message); }
     }
 
     // Продажи по товару по дням — для себестоимости в ОПиУ (кол-во продано
     // в этот день × закупочная цена товара на дату ЭТОЙ конкретной продажи —
     // так же, как считает Power BI, подтверждено их разработчиком 12.08).
+    // КРИТИЧНО для себестоимости — если не сохранится, ОПиУ станет считать
+    // её неверно (по запасной цене продажи вместо реальной цены прихода),
+    // поэтому ошибку здесь показываем пользователю, а не прячем.
     const dailyRows = Object.values(_mergedItemDaily);
     if (dailyRows.length) {
-      try { await postAction('saveItemDaily', dailyRows); } catch(e) { /* не критично для основного сохранения */ }
+      await chunkedPost('saveItemDaily', dailyRows, 'продажи по дням');
     }
 
     // Построчная история приходов (товар+дата+кол-во+сумма) — по ней считается
     // закупочная цена «на дату X» (последний приход → взвеш. цена за 1/3 мес.).
+    // Тоже критично для себестоимости — см. комментарий выше.
     const purchaseLineRows = Object.values(_mergedPurchaseLines);
     if (purchaseLineRows.length) {
-      try { await postAction('savePurchaseLines', purchaseLineRows); } catch(e) { /* не критично для основного сохранения */ }
+      await chunkedPost('savePurchaseLines', purchaseLineRows, 'приходы по дням');
     }
 
     // savedWeeks теперь хранит пары "неделя|месяц" (дедуп на бэкенде — см.
     // saveWeekSales/saveWeekPurchases), для отображения берём только неделю.
     const uniqueWeeks = [...new Set(savedWeeks.map(w => String(w).split('|')[0]))].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
-    msg.textContent = `✓ Сохранено: ${uniqueWeeks}`;
+    msg.innerHTML = `✓ Сохранено: ${uniqueWeeks}` + (warnings.length ? `<br><span style="color:#d97706">⚠ ${warnings.join('; ')}</span>` : '');
     msg.style.color = '#16a34a';
     showToast('Данные 1С сохранены в Google Sheets!', 'success');
   } catch(e) {
