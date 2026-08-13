@@ -423,7 +423,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw8E5rF8PeXdcZi6rVZQilUYwPXz1YvqXv4LVJlc--2gQGEwHb76Wssdkj02SP41ngRfg/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw8pXnkVRn6oIY62Ya8ZmjhAz0CZnzE9xr9g_KzQQu0rPnUVdsALkMH3jF7yHTXM6hCSg/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -2999,7 +2999,9 @@ async function confirmAndSave() {
       try { await postAction('savePurchaseLines', purchaseLineRows); } catch(e) { /* не критично для основного сохранения */ }
     }
 
-    const uniqueWeeks = [...new Set(savedWeeks)].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
+    // savedWeeks теперь хранит пары "неделя|месяц" (дедуп на бэкенде — см.
+    // saveWeekSales/saveWeekPurchases), для отображения берём только неделю.
+    const uniqueWeeks = [...new Set(savedWeeks.map(w => String(w).split('|')[0]))].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
     msg.textContent = `✓ Сохранено: ${uniqueWeeks}`;
     msg.style.color = '#16a34a';
     showToast('Данные 1С сохранены в Google Sheets!', 'success');
