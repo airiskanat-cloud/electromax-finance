@@ -423,12 +423,27 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyNg-oIg6ixqCVooMD2IpVUkV782sQLce5STuee8IkRo5NstbvqqKZOZElRzF23CpmcYQ/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw8E5rF8PeXdcZi6rVZQilUYwPXz1YvqXv4LVJlc--2gQGEwHb76Wssdkj02SP41ngRfg/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
 let allData = [];
 let _dc = []; // Chart.js instances for dashboard
+
+// Надёжный разбор суммы. Обычно row.amount уже число (введено через форму
+// сайта), но при ручной вставке в Google Sheets (bulk-копирование из Excel,
+// правки бухгалтера) ячейка иногда превращается в ТЕКСТ вида "1 200 000"
+// (обычный пробел или неразрывный, как разделитель тысяч) или "1,200,000" —
+// тогда простое +val даёт NaN, и такая сумма молча исчезает из ОПиУ/ДДС
+// (обнаружено 12.08: зарплата/аренда/налоги за все месяцы обнулились именно
+// так, при этом мелкие суммы, введённые через форму, остались целы).
+// toNum() убирает пробелы/неразрывные пробелы/запятые перед парсингом,
+// поэтому такие строки тоже считаются как надо.
+function toNum(val) {
+  if (typeof val === 'number') return val;
+  const n = +String(val ?? '').replace(/[\s ,]/g, '');
+  return isNaN(n) ? 0 : n;
+}
 
 const CATEGORY_MAP = {
   'остаток':         { dds: 'Остаток на начало', opiu: '' },
@@ -721,7 +736,7 @@ async function loadData() {
 //                    Деньги просто сменили счёт внутри компании, общий
 //                    капитал компании от этого не меняется — точка.
 function movementAmount(row, mode, target) {
-  const amt = +row.amount || 0;
+  const amt = toNum(row.amount);
   if (mode === 'account') {
     if (row.type === 'доход')  return row.account === target ? amt : 0;
     if (row.type === 'расход') return row.account === target ? -amt : 0;
@@ -797,7 +812,7 @@ function balanceGeneric(cmpDate, mode, target) {
     let sum = seedSum('account', target);
     const counts = (accName, rowDate) => cmpDate(rowDate) && rowDate > OPENING_BASE_DATE;
     allData.forEach(r => {
-      const amt = +r.amount || 0;
+      const amt = toNum(r.amount);
       if (r.type === 'доход' && r.account === target && counts(target, r.date)) sum += amt;
       else if (r.type === 'расход' && r.account === target && counts(target, r.date)) sum -= amt;
       else if (r.type === 'перевод') {
@@ -812,7 +827,7 @@ function balanceGeneric(cmpDate, mode, target) {
     const counts = rowDate => cmpDate(rowDate) && rowDate > OPENING_BASE_DATE;
     allData.forEach(r => {
       if (r.city !== target) return;
-      const amt = +r.amount || 0;
+      const amt = toNum(r.amount);
       if (r.type === 'доход' && counts(r.date)) sum += amt;
       else if (r.type === 'расход' && counts(r.date)) sum -= amt;
     });
@@ -822,7 +837,7 @@ function balanceGeneric(cmpDate, mode, target) {
   let sum = openingBalances.reduce((s,o) => s + (+o.balance||0), 0);
   const counts = (accName, rowDate) => cmpDate(rowDate) && rowDate > OPENING_BASE_DATE;
   allData.forEach(r => {
-    const amt = +r.amount || 0;
+    const amt = toNum(r.amount);
     if (r.type === 'доход' && counts(r.account, r.date)) sum += amt;
     else if (r.type === 'расход' && counts(r.account, r.date)) sum -= amt;
     // Перевод общий капитал не меняет никогда (см. movementAmount total) —
@@ -953,8 +968,8 @@ function renderDashboard() {
   const now = new Date();
   const monthStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
   const monthData = allData.filter(r => r.date && r.date.startsWith(monthStr));
-  const expense = monthData.filter(r => r.type === 'расход').reduce((s,r) => s + (+r.amount||0), 0);
-  const income = monthData.filter(r => r.type === 'доход').reduce((s,r) => s + (+r.amount||0), 0);
+  const expense = monthData.filter(r => r.type === 'расход').reduce((s,r) => s + (toNum(r.amount)), 0);
+  const income = monthData.filter(r => r.type === 'доход').reduce((s,r) => s + (toNum(r.amount)), 0);
   const net = income - expense;
   const months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
   document.getElementById('dash-expense').textContent = fmt(expense) + ' ₸';
@@ -1009,7 +1024,7 @@ async function buildDashboard() {
     const mo = r.date ? r.date.slice(0,7) : null;
     const city = r.city || 'Прочие';
     const c = (r.category||'прочее').toLowerCase();
-    const amt = +r.amount||0;
+    const amt = toNum(r.amount);
     if (mo) { if(!catM[mo]) catM[mo]={}; catM[mo][c]=(catM[mo][c]||0)+amt; }
     if(!cityExp[city]) cityExp[city]={};
     cityExp[city][c]=(cityExp[city][c]||0)+amt;
@@ -1295,8 +1310,8 @@ function renderJournal() {
   if (search) data = data.filter(r => (r.name||'').toLowerCase().includes(search) || (r.category||'').toLowerCase().includes(search));
   data.sort((a,b) => b.date > a.date ? 1 : -1);
   document.getElementById('journal-table').innerHTML = data.length ? buildTable(data, currentRole === 'admin') : '<div class="empty-state"><div class="emoji">&#128269;</div>Ничего не найдено</div>';
-  const exp = data.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
-  const inc = data.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
+  const exp = data.filter(r=>r.type==='расход').reduce((s,r)=>s+(toNum(r.amount)),0);
+  const inc = data.filter(r=>r.type==='доход').reduce((s,r)=>s+(toNum(r.amount)),0);
   document.getElementById('journal-totals').innerHTML =
     '<span style="color:#dc2626">Расходы: ' + fmt(exp) + ' ₸</span>' +
     '<span style="color:#16a34a">Доходы: ' + fmt(inc) + ' ₸</span>' +
@@ -1731,7 +1746,7 @@ async function buildDailyReport() {
   const todayRows = allData.filter(r => r.date === today);
   const inCats = {}, outCats = {};
   todayRows.forEach(r => {
-    const amt = +r.amount || 0;
+    const amt = toNum(r.amount);
     if (r.type === 'доход') inCats[r.category||'прочее'] = (inCats[r.category||'прочее']||0) + amt;
     else if (r.type === 'расход') outCats[r.category||'прочее'] = (outCats[r.category||'прочее']||0) + amt;
   });
@@ -1742,7 +1757,7 @@ async function buildDailyReport() {
   allData.filter(r => r.type==='расход' && majorCats.includes((r.category||'').toLowerCase())).forEach(r => {
     const m = r.date ? r.date.slice(0,7) : null;
     if (!m) return;
-    byMonth[m] = (byMonth[m]||0) + (+r.amount||0);
+    byMonth[m] = (byMonth[m]||0) + (toNum(r.amount));
   });
   const monthKeys = Object.keys(byMonth).sort().filter(m => m !== today.slice(0,7)); // без текущего неполного месяца
   const lastMonths = monthKeys.slice(-3);
@@ -2066,7 +2081,7 @@ async function buildDDS() {
     if(!m) return;
     if(!catM[m]) catM[m] = {};
     const c = (r.category||'').toLowerCase();
-    catM[m][c] = (catM[m][c]||0) + (+r.amount||0);
+    catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
   });
   const C = (m,...cs) => cs.reduce((s,c) => s+(catM[m]?.[c]||0), 0);
 
@@ -2227,7 +2242,7 @@ async function buildOPIU() {
     const [r, r2, r3, r4, r5] = await Promise.all([
       fetch(SCRIPT_URL + '?action=get1CData'),
       fetch(SCRIPT_URL + '?action=getPurchaseLines'),
-      fetch(SCRIPT_URL + '?action=getItemMonthly'),
+      fetch(SCRIPT_URL + '?action=getItemDaily'),
       fetch(SCRIPT_URL + '?action=getItemPrices'),
       fetch(SCRIPT_URL + '?action=getItemAliases')
     ]);
@@ -2237,16 +2252,21 @@ async function buildOPIU() {
       if (mo) revM[mo] = (revM[mo]||0) + (+s.revenue||0);
     });
 
-    // Себестоимость проданного (по просьбе бухгалтера) = для каждого товара,
-    // проданного в месяце, (кол-во продано) × (его закупочная цена на конец
-    // месяца — см. itemCostAsOf: последний приход, взвеш. цена за 1/3 мес.).
+    // Себестоимость проданного (по просьбе бухгалтера, методология сверена с
+    // Power BI 12.08) = для каждого товара, проданного в конкретный день,
+    // (кол-во продано в этот день) × (его закупочная цена НА ДАТУ ЭТОЙ
+    // ПРОДАЖИ — см. itemCostAsOf: последний приход, взвеш. цена за 1/3 мес.
+    // от даты продажи, не от конца месяца). Раньше все продажи месяца брали
+    // одну и ту же цену «на конец месяца» — при резком изменении закупочной
+    // цены в течение месяца это расходилось с Power BI (у них тоже 1/3 мес.,
+    // но от даты каждой сделки), сильнее всего разъезжалось в марте (+19.8%).
     // НЕ сумма закупок (Приход), попавших в этот же период — раньше товар,
     // купленный в одном месяце и проданный в другом, искажал себестоимость
     // именно того месяца, где физически была закупка, а не продажа.
     // Строка «Поставщикам — закупки товаров» в ДДС на эту логику НЕ переведена —
     // там кассовый метод (реальные платежи), это осознанно другая метрика.
     const purchaseLines = (await r2.json()).items || [];
-    const itemMonthly   = (await r3.json()).items || [];
+    const itemDaily     = (await r3.json()).items || [];
     const priceMap = {};
     ((await r4.json()).items || []).forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
     // Подтверждённые пары «продаётся как → закупается как» (страница
@@ -2255,10 +2275,11 @@ async function buildOPIU() {
     const itemAliasMap = {};
     ((await r5.json()).items || []).forEach(a => { if (a.status === 'confirmed' && a.purchaseName) itemAliasMap[a.soldName] = a.purchaseName; });
     const linesByItem = groupPurchaseLinesByItem(purchaseLines);
-    itemMonthly.forEach(row => {
-      const mo = String(row.month||'');
+    itemDaily.forEach(row => {
+      const dt = String(row.date||'');
+      const mo = dt.slice(0,7);
       if (!mo || !row.qty) return;
-      const { cost, matched } = itemCostDetailAsOf(resolveItemName(row.item, itemAliasMap), monthEndDate(mo), linesByItem, priceMap);
+      const { cost, matched } = itemCostDetailAsOf(resolveItemName(row.item, itemAliasMap), dt, linesByItem, priceMap);
       cogsM[mo] = (cogsM[mo]||0) + row.qty * cost;
       trackedRevM[mo] = (trackedRevM[mo]||0) + (+row.revenue||0);
       if (!matched) unmatchedRevM[mo] = (unmatchedRevM[mo]||0) + (+row.revenue||0);
@@ -2300,7 +2321,7 @@ async function buildOPIU() {
     if(!m) return;
     if(!catM[m]) catM[m] = {};
     const c = (r.category||'').toLowerCase();
-    catM[m][c] = (catM[m][c]||0) + (+r.amount||0);
+    catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
   });
   const C = (m,...cs) => cs.reduce((s,c) => s+(catM[m]?.[c]||0), 0);
 
@@ -2540,7 +2561,7 @@ async function buildOPIU() {
 // ── FILE UPLOAD ─────────────────────────────────────
 let _mergedData = {}; // {month: {city: {revenue, cogs}}}
 let _mergedItemPrices = {}; // {товар: {revenue, qty}} — из файлов продаж, для оценки склада
-let _mergedItemMonthly = {}; // {'товар|месяц': {item, month, qty, revenue}} — продажи по товару помесячно (для себестоимости в ОПиУ)
+let _mergedItemDaily = {}; // {'товар|дата': {item, date, qty, revenue}} — продажи по товару по дням (для себестоимости в ОПиУ, на дату каждой продажи — как в Power BI)
 let _mergedPurchaseLines = {}; // {'товар|дата': {item, date, qty, sum}} — построчная история приходов (для закупочной цены «на дату»)
 
 // Универсальный POST-запрос к Apps Script (для крупных данных — избегаем
@@ -2616,12 +2637,17 @@ function parse1CFile(file) {
         // остаётся как запасной вариант оценки остатка склада, если по товару
         // ни разу не было прихода (закупочную цену взять неоткуда).
         const itemPrices = {};
-        // Кол-во и выручка по товару ПО НЕДЕЛЯМ (только sales) — не сразу по
-        // месяцу: неделя нужна отдельно, чтобы при слиянии НЕСКОЛЬКИХ файлов в
-        // одной загрузке можно было отличить пересекающиеся недели и не
-        // задвоить себестоимость (см. защиту от задвоения в processUploadedFiles).
-        // К месяцу агрегируется уже ПОСЛЕ этой защиты.
-        const itemWeekly = {};
+        // Кол-во и выручка по товару ПО ДНЯМ (только sales, точная дата
+        // продажи, не месяц) — себестоимость в ОПиУ считается на дату КАЖДОЙ
+        // конкретной продажи (так же, как в Power BI — подтверждено их
+        // разработчиком 12.08), а не одной ценой "на конец месяца" для всех
+        // продаж месяца сразу (старая версия — расходилась с Power BI,
+        // сильнее всего в марте, до +19.8%, если цена прихода менялась в
+        // течение месяца). Неделя внутри записи нужна для защиты от
+        // задвоения при слиянии НЕСКОЛЬКИХ файлов в одной загрузке (см.
+        // processUploadedFiles) — по ней же, как и раньше, определяем,
+        // какой файл "владеет" датой при пересечении недель.
+        const itemDaily = {};
         // Построчная история приходов (только purchase): item + дата дня +
         // неделя + кол-во + сумма — по ней считается средневзвешенная
         // закупочная цена «на дату X», как в модели бухгалтера (itemCostAsOf).
@@ -2669,10 +2695,10 @@ function parse1CFile(file) {
               itemPrices[item].revenue += amount;
               itemPrices[item].qty += qty;
 
-              const wKey = item + '|' + week;
-              if (!itemWeekly[wKey]) itemWeekly[wKey] = { item, week, month, qty: 0, revenue: 0 };
-              itemWeekly[wKey].qty += qty;
-              itemWeekly[wKey].revenue += amount;
+              const dKeySale = item + '|' + toISODate(date);
+              if (!itemDaily[dKeySale]) itemDaily[dKeySale] = { item, date: toISODate(date), week, month, qty: 0, revenue: 0 };
+              itemDaily[dKeySale].qty += qty;
+              itemDaily[dKeySale].revenue += amount;
             }
           } else if (item && qty > 0) {
             const dKey = item + '|' + toISODate(date);
@@ -2683,7 +2709,7 @@ function parse1CFile(file) {
           rowCount++;
         }
 
-        resolve({ fileType, periodStr, byWeek, itemPrices, itemWeekly, purchaseLines, rows: rowCount, name: file.name });
+        resolve({ fileType, periodStr, byWeek, itemPrices, itemDaily, purchaseLines, rows: rowCount, name: file.name });
       } catch(err) { reject(err); }
     };
     reader.onerror = reject;
@@ -2722,7 +2748,7 @@ async function processUploadedFiles(files) {
 
   _mergedData = { sales: {}, purchases: {} };
   _mergedItemPrices = {};
-  _mergedItemMonthly = {};
+  _mergedItemDaily = {};
   _mergedPurchaseLines = {};
   okResults.forEach((r, idx) => {
     const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
@@ -2738,13 +2764,13 @@ async function processUploadedFiles(files) {
         _mergedItemPrices[item].qty += qty;
       });
     }
-    if (r.itemWeekly) {
-      Object.values(r.itemWeekly).forEach(({item, week, month, qty, revenue}) => {
+    if (r.itemDaily) {
+      Object.values(r.itemDaily).forEach(({item, date, week, qty, revenue}) => {
         if (!acceptWeek(week)) return; // эта неделя "принадлежит" другому файлу
-        const mKey = item + '|' + month;
-        if (!_mergedItemMonthly[mKey]) _mergedItemMonthly[mKey] = { item, month, qty: 0, revenue: 0 };
-        _mergedItemMonthly[mKey].qty += qty;
-        _mergedItemMonthly[mKey].revenue += revenue;
+        const dKey = item + '|' + date;
+        if (!_mergedItemDaily[dKey]) _mergedItemDaily[dKey] = { item, date, qty: 0, revenue: 0 };
+        _mergedItemDaily[dKey].qty += qty;
+        _mergedItemDaily[dKey].revenue += revenue;
       });
     }
     if (r.purchaseLines) {
@@ -2941,11 +2967,12 @@ async function confirmAndSave() {
       try { await postAction('saveItemPrices', priceRows); } catch(e) { /* не критично для основного сохранения */ }
     }
 
-    // Продажи по товару помесячно — для себестоимости в ОПиУ (кол-во продано
-    // в месяце × закупочная цена товара на тот момент).
-    const monthlyRows = Object.values(_mergedItemMonthly);
-    if (monthlyRows.length) {
-      try { await postAction('saveItemMonthly', monthlyRows); } catch(e) { /* не критично для основного сохранения */ }
+    // Продажи по товару по дням — для себестоимости в ОПиУ (кол-во продано
+    // в этот день × закупочная цена товара на дату ЭТОЙ конкретной продажи —
+    // так же, как считает Power BI, подтверждено их разработчиком 12.08).
+    const dailyRows = Object.values(_mergedItemDaily);
+    if (dailyRows.length) {
+      try { await postAction('saveItemDaily', dailyRows); } catch(e) { /* не критично для основного сохранения */ }
     }
 
     // Построчная история приходов (товар+дата+кол-во+сумма) — по ней считается
@@ -3627,8 +3654,8 @@ function cityDashboardBlock(month) {
   DDS_CITIES.forEach(city => {
     const within = allData.filter(r => r.type !== 'перевод' && r.city === city && r.date >= monthStart && r.date <= monthEnd);
     const opening = balanceBefore(monthStart, 'city', city);
-    const inc = within.filter(r=>r.type==='доход').reduce((s,r)=>s+(+r.amount||0),0);
-    const out = within.filter(r=>r.type==='расход').reduce((s,r)=>s+(+r.amount||0),0);
+    const inc = within.filter(r=>r.type==='доход').reduce((s,r)=>s+(toNum(r.amount)),0);
+    const out = within.filter(r=>r.type==='расход').reduce((s,r)=>s+(toNum(r.amount)),0);
     stats[city] = { opening, inc, out, closing: opening + inc - out };
   });
 
@@ -3766,14 +3793,14 @@ function exportJournal() {
   data.sort((a,b) => b.date > a.date ? 1 : -1);
   const rows = [
     ['Дата','Тип','Категория','Название','Сумма (₸)','Счёт','Город','Ответственный','Блок ДДС','Группа ОПИУ','Комментарий'],
-    ...data.map(r => [fmtDate(r.date), r.type, r.category, r.name, +r.amount||0, r.account, r.city, r.responsible, r.dds, r.opiu, r.notes])
+    ...data.map(r => [fmtDate(r.date), r.type, r.category, r.name, toNum(r.amount), r.account, r.city, r.responsible, r.dds, r.opiu, r.notes])
   ];
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = [{wch:12},{wch:10},{wch:18},{wch:35},{wch:14},{wch:26},{wch:10},{wch:14},{wch:20},{wch:22},{wch:20}];
   XLSX.utils.book_append_sheet(wb, ws, 'Журнал');
   const summary = {};
-  data.filter(r=>r.type==='расход').forEach(r => { const k=r.category||'Прочее'; summary[k]=(summary[k]||0)+(+r.amount||0); });
+  data.filter(r=>r.type==='расход').forEach(r => { const k=r.category||'Прочее'; summary[k]=(summary[k]||0)+(toNum(r.amount)); });
   const ws2 = XLSX.utils.aoa_to_sheet([['Категория','Сумма расходов (₸)'], ...Object.entries(summary).sort((a,b)=>b[1]-a[1])]);
   ws2['!cols'] = [{wch:22},{wch:20}];
   XLSX.utils.book_append_sheet(wb, ws2, 'Сводка расходов');
