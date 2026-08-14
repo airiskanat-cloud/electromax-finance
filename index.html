@@ -423,7 +423,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyM7Zp3GqF2Uy5qpk0_EKJmCQvGUcO6c815ZAVVm_AtEBZXxatyP4n1HfuIaW6Mua54Ag/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyt8h4v2XafDXliSHWBNrtq5q9Lv18uV9Kj69zX72U0XVKgM-WhJkDWmVg1-gAUm0uHYg/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -2986,7 +2986,14 @@ async function confirmAndSave() {
     });
   });
 
-  // Отправляем батчами по 5 недель — URL не переполняется даже при больших файлах
+  // Отправляем батчами по 5 недель — через POST (postAction), НЕ через GET.
+  // ВАЖНО (баг найден и исправлен 14.08): раньше здесь был fetch(SCRIPT_URL +
+  // '?action=...&data=' + encodeURIComponent(...)) — весь чанк уходил в query
+  // string. Кириллица (город, "загрузка 1С") и служебные символы JSON после
+  // encodeURIComponent раздуваются в разы — при CHUNK=5 недель × до 3 городов
+  // ссылка легко перерастала практический лимит длины URL веб-приложения Apps
+  // Script, запрос обрывался ДО ответа, браузер ловил это как "Load failed".
+  // postAction() шлёт данные в теле POST-запроса — лимита на длину URL нет.
   const batchSave = async (action, rows) => {
     // Группируем по неделям
     const byWeek = {};
@@ -2998,9 +3005,8 @@ async function confirmAndSave() {
     for (let i = 0; i < weekKeys.length; i += CHUNK) {
       const chunk = weekKeys.slice(i, i + CHUNK).flatMap(wk => byWeek[wk]);
       msg.textContent = `Сохранение... ${i + Math.min(CHUNK, weekKeys.length - i)}/${weekKeys.length} недель`;
-      const r = await fetch(`${SCRIPT_URL}?action=${action}&data=${encodeURIComponent(JSON.stringify(chunk))}`);
-      const d = await r.json();
-      if (!d.success) throw new Error(d.error || 'Ошибка сервера');
+      const d = await postAction(action, chunk);
+      if (!d || !d.success) throw new Error((d && d.error) || 'Ошибка сервера');
       savedWeeks.push(...(d.weeks || []));
     }
     return savedWeeks;
@@ -3296,21 +3302,24 @@ async function confirmAndSaveKaspi() {
   const byWeek = {};
   flat.forEach(r => { if (!byWeek[r.week]) byWeek[r.week] = []; byWeek[r.week].push(r); });
   const weekKeys = Object.keys(byWeek).sort();
-  // ВАЖНО: тут на 1 неделю приходится до 3 юрлиц × 2 статьи = до 6 строк
-  // (в отличие от загрузки 1С, где 1 неделя = 1-3 строки). Кириллица в
-  // account/category/source сильно раздувает длину URL при encodeURIComponent
-  // (в 6 раз на символ). При CHUNK=5 (как для 1С) ссылка выходила ~9000
-  // символов и обрезалась сервером — грузим строго по 1 неделе за запрос.
-  const CHUNK = 1;
+  // ВАЖНО (баг найден и исправлен 14.08): раньше этот запрос шёл через GET
+  // (?action=saveWeekCommissions&data=encodeURIComponent(...)) — на 1 неделю
+  // тут до 3 юрлиц × 2 статьи = до 6 строк (больше, чем в загрузке 1С), а
+  // кириллица в account/category/source сильно раздувает длину URL. При
+  // CHUNK=5 ссылка выходила ~9000 символов и обрезалась — запрос обрывался
+  // ДО ответа, браузер ловил это как "Load failed". Тогда временно обошли
+  // уменьшением CHUNK до 1, не убрав причину. Теперь используем postAction()
+  // (POST, данные в теле запроса) — лимита на длину URL больше нет, CHUNK
+  // снова можно поднять до 5 недель за запрос.
+  const CHUNK = 5;
 
   try {
     const savedWeeks = [];
     for (let i = 0; i < weekKeys.length; i += CHUNK) {
       const chunk = weekKeys.slice(i, i + CHUNK).flatMap(wk => byWeek[wk]);
       msg.textContent = `Сохранение... ${i + Math.min(CHUNK, weekKeys.length - i)}/${weekKeys.length} недель`;
-      const r = await fetch(`${SCRIPT_URL}?action=saveWeekCommissions&data=${encodeURIComponent(JSON.stringify(chunk))}`);
-      const d = await r.json();
-      if (!d.success) throw new Error(d.error || 'Ошибка сервера');
+      const d = await postAction('saveWeekCommissions', chunk);
+      if (!d || !d.success) throw new Error((d && d.error) || 'Ошибка сервера');
       savedWeeks.push(...(d.weeks || []));
     }
     const uniqueWeeks = [...new Set(savedWeeks)].sort().map(w => w.replace(/^\d{4}-/,'')).join(', ');
