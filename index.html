@@ -423,7 +423,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyt8h4v2XafDXliSHWBNrtq5q9Lv18uV9Kj69zX72U0XVKgM-WhJkDWmVg1-gAUm0uHYg/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzxzgrNzO69IL_JMtCvpSmwElWau9qRL0fdqCUloIPO4TjKW9qqqunAr7mnWuZ5MUKBMQ/exec';
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -1702,17 +1702,40 @@ function escJs(s) {
 }
 
 async function confirmItemAlias(soldName, purchaseName, cardId) {
+  // ВАЖНО (баг найден 14.08, "зависают кнопки"): раньше здесь был голый
+  // fetch() без таймаута и БЕЗ проверки ответа сервера — если Apps Script
+  // отвечал медленно (или вообще завис — за сегодня туда ушла куча тяжёлых
+  // запросов, дневная квота на выполнение скриптов у бесплатных аккаунтов
+  // ограничена) промис просто вечно висел: карточка не пропадала, тост не
+  // показывался, кнопка выглядела "залипшей", но ошибки тоже не было видно.
+  // Теперь: явный таймаут (15с) + отключение кнопок карточки на время
+  // сохранения + проверка d.success перед тем как убрать карточку.
   const status = purchaseName ? 'confirmed' : 'skipped';
   const card = document.getElementById(cardId);
+  const buttons = card ? card.querySelectorAll('button') : [];
+  buttons.forEach(b => b.disabled = true);
   if (card) card.style.opacity = '0.5';
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const params = new URLSearchParams({ action: 'saveItemAlias', soldName, purchaseName, status });
-    await fetch(`${SCRIPT_URL}?${params}`);
+    const r = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action: 'saveItemAlias', data: { soldName, purchaseName, status } }),
+      signal: controller.signal
+    });
+    const d = await r.json();
+    if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
     if (card) card.remove();
     showToast(purchaseName ? 'Сопоставлено' : 'Пропущено', 'success');
   } catch(e) {
-    if (card) card.style.opacity = '1';
-    showToast('Не удалось сохранить, попробуй ещё раз', 'error');
+    if (card) { card.style.opacity = '1'; }
+    buttons.forEach(b => b.disabled = false);
+    const reason = e.name === 'AbortError' ? 'сервер не ответил за 15 секунд' : e.message;
+    showToast('Не удалось сохранить (' + reason + '), попробуй ещё раз', 'error');
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -2954,7 +2977,7 @@ async function processUploadedFiles(files) {
 
   if (hasSales || hasPurch) {
     html += `<div style="display:flex;align-items:center;gap:14px;margin-top:16px">
-      <button class="btn btn-save" onclick="confirmAndSave()" style="width:auto">⬆ Добавить в Google Sheets</button>
+      <button id="upload-save-btn" class="btn btn-save" onclick="confirmAndSave()" style="width:auto">⬆ Добавить в Google Sheets</button>
       <div id="upload-save-msg" style="font-size:13px"></div>
     </div>
     <div style="font-size:11px;color:#64748b;margin-top:6px">
@@ -2966,7 +2989,22 @@ async function processUploadedFiles(files) {
   preview.innerHTML = html;
 }
 
+let _saveInProgress = false;
 async function confirmAndSave() {
+  // Защита от двойного/повторного клика (найдено 14.08): Apps Script
+  // ПРОДОЛЖАЕТ выполняться на сервере даже после того, как браузер показал
+  // "Load failed" (клиент разорвал соединение, но серверный скрипт не
+  // прерывается) — если в этот момент нажать кнопку ещё раз (решив, что
+  // сохранение не удалось), уходит ВТОРОЙ полноценный запрос поверх ПЕРВОГО,
+  // который может доработать позже — и тогда часть приходов/продаж
+  // сохраняется дважды (это одна из вероятных причин задвоенной
+  // себестоимости, наравне с сериями ошибок и повторных загрузок за
+  // сегодня). Пока идёт сохранение — кнопка блокируется.
+  if (_saveInProgress) return;
+  _saveInProgress = true;
+  const btn = document.getElementById('upload-save-btn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+
   const msg = document.getElementById('upload-save-msg');
   msg.textContent = 'Сохранение...'; msg.style.color = '#64748b';
 
@@ -3093,6 +3131,9 @@ async function confirmAndSave() {
   } catch(e) {
     msg.textContent = '✗ Ошибка: ' + e.message;
     msg.style.color = '#dc2626';
+  } finally {
+    _saveInProgress = false;
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
   }
 }
 
