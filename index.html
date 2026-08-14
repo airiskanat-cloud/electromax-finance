@@ -206,7 +206,6 @@
       <div class="nav-item" onclick="showPage('dds',this)"><span class="icon">&#128184;</span> ДДС Месячный</div>
       <div class="nav-item" onclick="showPage('opiu',this)"><span class="icon">&#128200;</span> ОПИУ</div>
       <div class="nav-item" onclick="showPage('balances',this)"><span class="icon">&#128176;</span> Остатки счетов</div>
-      <div class="nav-item" onclick="showPage('item-matching',this)"><span class="icon">&#128269;</span> Товары без цены</div>
       <div class="nav-item" onclick="showPage('load',this)"><span class="icon">&#128228;</span> Загрузка данных</div>
     </nav>
     <div class="sidebar-footer">
@@ -413,11 +412,6 @@
     <div class="page" id="page-balances">
       <div class="page-title">Остатки счетов</div>
       <div id="balances-grid"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
-    </div>
-    <div class="page" id="page-item-matching">
-      <div class="page-title">Товары без цены</div>
-      <p style="font-size:13px;color:#64748b;margin:-10px 0 16px">Товары, проданные по одному названию, но закупленные под слегка другим (обновилась карточка у поставщика/на Kaspi) — из-за этого себестоимость по ним считается приблизительно. Подтверди пары ниже, и расчёт станет точнее — правку самой 1С делать не нужно.</p>
-      <div id="item-matching-content"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
     </div>
   </div>
 </div>
@@ -645,7 +639,6 @@ function showPage(name, el) {
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
-  if (name === 'item-matching') buildItemMatching();
 }
 
 function currentMonth() {
@@ -1608,136 +1601,11 @@ function resolveItemName(item, aliasMap) {
   return (aliasMap && aliasMap[item]) || item;
 }
 
-// ── ТОВАРЫ БЕЗ ЦЕНЫ (ручное сопоставление названий продажа↔приход) ──
-//
-// Часть проданных товаров не находит закупочную цену не потому что их не
-// закупали, а потому что название чуть отличается (обновилась карточка
-// товара у поставщика/на Kaspi). Проверено на реальных данных: похожесть
-// текста тут ненадёжна для АВТОматического сопоставления — модели вроде
-// "Samsung QE85..." и "Samsung QE65..." (85 vs 65 дюймов, РАЗНЫЕ товары)
-// текстуально почти идентичны. Поэтому только подсказки, решение — человек.
-function bigrams(s) {
-  s = String(s||'').toLowerCase();
-  const set = new Set();
-  for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i+2));
-  return set;
-}
-function diceSim(a, b) {
-  const A = bigrams(a), B = bigrams(b);
-  if (!A.size || !B.size) return 0;
-  let inter = 0;
-  A.forEach(bg => { if (B.has(bg)) inter++; });
-  return 2 * inter / (A.size + B.size);
-}
-
-async function buildItemMatching() {
-  const el = document.getElementById('item-matching-content');
-  el.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу товары без цены и подбираю кандидатов...</div></div>';
-
-  let prices = [], purchaseLines = [], aliases = [];
-  try {
-    const [r1, r2, r3] = await Promise.all([
-      fetch(SCRIPT_URL + '?action=getItemPrices'),
-      fetch(SCRIPT_URL + '?action=getPurchaseLines'),
-      fetch(SCRIPT_URL + '?action=getItemAliases')
-    ]);
-    prices = (await r1.json()).items || [];
-    purchaseLines = (await r2.json()).items || [];
-    aliases = (await r3.json()).items || [];
-  } catch(e) {}
-
-  const purchaseNames = [...new Set(purchaseLines.map(p => p.item).filter(Boolean))];
-  const purchaseSet = new Set(purchaseNames);
-  const reviewed = new Set(aliases.map(a => a.soldName)); // и confirmed, и skipped — больше не показываем
-
-  const unmatched = prices
-    .filter(p => p.product && !purchaseSet.has(p.product) && !reviewed.has(p.product))
-    .map(p => ({ product: p.product, revenue: +p.sumRevenue||0, qty: +p.sumQty||0 }))
-    .sort((a,b) => b.revenue - a.revenue);
-
-  if (!unmatched.length) {
-    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все проданные товары либо нашли цену прихода, либо уже проверены</div>';
-    return;
-  }
-
-  const totalRev = unmatched.reduce((s,u)=>s+u.revenue,0);
-  const fK = v => Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+' млн ₸' : fmt(v)+' ₸';
-
-  const cardHtml = u => {
-    const candidates = purchaseNames
-      .map(name => ({ name, sim: diceSim(u.product, name) }))
-      .filter(c => c.sim >= 0.55)
-      .sort((a,b) => b.sim - a.sim)
-      .slice(0, 3);
-    const idAttr = btoa(unescape(encodeURIComponent(u.product))).replace(/[^a-zA-Z0-9]/g,'');
-    return `<div class="card" id="im-${idAttr}" style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
-        <span style="font-size:14px;font-weight:600">${u.product}</span>
-        <span style="font-size:14px;font-weight:600;white-space:nowrap">${fK(u.revenue)}</span>
-      </div>
-      <div style="font-size:12px;color:#94a3b8;margin:2px 0 10px">Продано ${fmt(u.qty)} шт · цены прихода нет</div>
-      ${candidates.length ? `
-        <div style="font-size:11px;color:#64748b;margin-bottom:6px">Похожие товары в приходах:</div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          ${candidates.map(c => `
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px">
-              <span style="font-size:12.5px;flex:1">${c.name}</span>
-              <div style="display:flex;gap:6px;white-space:nowrap">
-                <button class="btn btn-save" style="padding:4px 10px;font-size:11px" onclick="confirmItemAlias('${escJs(u.product)}','${escJs(c.name)}','im-${idAttr}')">Это тот же</button>
-              </div>
-            </div>`).join('')}
-        </div>` : `<div style="font-size:12px;color:#94a3b8">Похожих товаров в приходах не нашлось</div>`}
-      <button class="btn btn-clear" style="padding:4px 10px;font-size:11px;margin-top:10px" onclick="confirmItemAlias('${escJs(u.product)}','','im-${idAttr}')">Пропустить (это точно другой товар)</button>
-    </div>`;
-  };
-
-  el.innerHTML =
-    `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unmatched.length} товаров · ${fK(totalRev)} суммарно · отсортировано по сумме продаж</div>` +
-    unmatched.map(cardHtml).join('');
-}
-
-// Экранирует строку для безопасной вставки в одинарные кавычки onclick-атрибута.
-function escJs(s) {
-  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-}
-
-async function confirmItemAlias(soldName, purchaseName, cardId) {
-  // ВАЖНО (баг найден 14.08, "зависают кнопки"): раньше здесь был голый
-  // fetch() без таймаута и БЕЗ проверки ответа сервера — если Apps Script
-  // отвечал медленно (или вообще завис — за сегодня туда ушла куча тяжёлых
-  // запросов, дневная квота на выполнение скриптов у бесплатных аккаунтов
-  // ограничена) промис просто вечно висел: карточка не пропадала, тост не
-  // показывался, кнопка выглядела "залипшей", но ошибки тоже не было видно.
-  // Теперь: явный таймаут (15с) + отключение кнопок карточки на время
-  // сохранения + проверка d.success перед тем как убрать карточку.
-  const status = purchaseName ? 'confirmed' : 'skipped';
-  const card = document.getElementById(cardId);
-  const buttons = card ? card.querySelectorAll('button') : [];
-  buttons.forEach(b => b.disabled = true);
-  if (card) card.style.opacity = '0.5';
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const r = await fetch(SCRIPT_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: JSON.stringify({ action: 'saveItemAlias', data: { soldName, purchaseName, status } }),
-      signal: controller.signal
-    });
-    const d = await r.json();
-    if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
-    if (card) card.remove();
-    showToast(purchaseName ? 'Сопоставлено' : 'Пропущено', 'success');
-  } catch(e) {
-    if (card) { card.style.opacity = '1'; }
-    buttons.forEach(b => b.disabled = false);
-    const reason = e.name === 'AbortError' ? 'сервер не ответил за 15 секунд' : e.message;
-    showToast('Не удалось сохранить (' + reason + '), попробуй ещё раз', 'error');
-  } finally {
-    clearTimeout(timeout);
-  }
-}
+// Страница "Товары без цены" (ручное сопоставление названий продажа↔приход)
+// убрана по просьбе пользователя 14.08 — к этому моменту доля непокрытых
+// товаров упала до единичных % почти везде. Уже подтверждённые пары
+// (лист СоответствиеТоваров) продолжают применяться через resolveItemName()
+// выше — это не трогали, чтобы не откатить уже сделанную точность.
 
 // ── ОТЧЁТ ДНЯ (сводный ежедневный отчёт для заказчика) ─────────────
 function todayStr() {
@@ -2498,28 +2366,6 @@ async function buildOPIU() {
     const tc = multi ? `<td class="tc">${pctS(tot[numKey]||0, tot.rev||0)}</td>` : '';
     return `<tr class="rs-pct"><td style="padding-left:16px"><i>${label}</i></td>${cells}${tc}</tr>`;
   };
-  // Диагностика: доля выручки (из проданного за месяц), для которой НЕ нашлось
-  // цены прихода — себестоимость по ней взята приблизительно (= цена продажи,
-  // ≈0% маржи по этому товару). Высокий % = либо реально нет прихода по этим
-  // товарам, либо в базу ещё не загружены/не хватает файлов Приход за этот
-  // период — тогда себестоимость месяца занижена по точности.
-  const diagRow = () => {
-    const cells = cols.map(m => {
-      const { unmatchedRev, trackedRev } = pm[m];
-      if (!trackedRev) return '<td style="color:#cbd5e1">—</td>';
-      const pct = unmatchedRev / trackedRev * 100;
-      const clr = pct >= 30 ? '#dc2626' : (pct >= 10 ? '#d97706' : '#94a3b8');
-      return `<td style="color:${clr};font-size:11px">${fmtK(unmatchedRev)} (${pct.toFixed(0)}%)</td>`;
-    }).join('');
-    const tc = multi ? (() => {
-      const { unmatchedRev, trackedRev } = tot;
-      if (!trackedRev) return '<td class="tc" style="color:#cbd5e1">—</td>';
-      const pct = unmatchedRev / trackedRev * 100;
-      const clr = pct >= 30 ? '#dc2626' : (pct >= 10 ? '#d97706' : '#94a3b8');
-      return `<td class="tc" style="color:${clr};font-size:11px">${fmtK(unmatchedRev)} (${pct.toFixed(0)}%)</td>`;
-    })() : '';
-    return `<tr class="rs-pct"><td style="padding-left:16px"><i>└ из них без цены прихода (по цене продажи)</i></td>${cells}${tc}</tr>`;
-  };
   const periodLbl = multi ? (monthLabel(cols[0]) + ' — ' + monthLabel(cols[cols.length-1])) : monthLabel(period);
 
   html += `<div class="table-wrapper report-wrap">
@@ -2546,7 +2392,6 @@ async function buildOPIU() {
   html += hdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
   html += dRow('Выручка (нетто)  [1С Продажи]', 'rev');
   html += dRow('(-) Себестоимость  [1С Приход]', 'cogs', false, true);
-  html += diagRow();
   html += dRow('(-) Комиссия маркетплейса Kaspi', 'kaspiMk', false, true);
   html += dRow('(-) Доставка Kaspi', 'kaspiDl', false, true);
   html += profRow('▶  ВАЛОВАЯ ПРИБЫЛЬ', 'gp');
