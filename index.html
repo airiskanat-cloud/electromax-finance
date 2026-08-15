@@ -1761,17 +1761,32 @@ async function buildItemMatching() {
   const el = document.getElementById('item-matching-content');
   el.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу товары без цены и подбираю кандидатов...</div></div>';
 
+  // ИСПРАВЛЕНО 15.08: раньше здесь не было ни таймаута, ни обработки ошибки —
+  // если бэкенд не отвечал (перегруз, зависший деплой, квота), спиннер
+  // "Ищу товары..." висел вечно без единого сообщения, и со стороны это
+  // выглядело как "кнопка не работает", хотя на самом деле страница даже
+  // не успевала загрузиться. Теперь при таймауте/ошибке — понятное сообщение
+  // с кнопкой повтора, по аналогии с confirmItemAlias().
   let prices = [], purchaseLines = [], aliases = [];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
   try {
     const [r1, r2, r3] = await Promise.all([
-      fetch(SCRIPT_URL + '?action=getItemPrices'),
-      fetch(SCRIPT_URL + '?action=getPurchaseLines'),
-      fetch(SCRIPT_URL + '?action=getItemAliases')
+      fetch(SCRIPT_URL + '?action=getItemPrices', {signal: controller.signal}),
+      fetch(SCRIPT_URL + '?action=getPurchaseLines', {signal: controller.signal}),
+      fetch(SCRIPT_URL + '?action=getItemAliases', {signal: controller.signal})
     ]);
+    if (!r1.ok || !r2.ok || !r3.ok) throw new Error('сервер ответил с ошибкой (HTTP ' + [r1.status,r2.status,r3.status].join('/') + ')');
     prices = (await r1.json()).items || [];
     purchaseLines = (await r2.json()).items || [];
     aliases = (await r3.json()).items || [];
-  } catch(e) {}
+  } catch(e) {
+    const reason = e.name === 'AbortError' ? 'сервер не ответил за 25 секунд (похоже на перегруз Apps Script)' : e.message;
+    el.innerHTML = `<div class="empty-state"><div class="emoji">&#9888;</div>Не удалось загрузить: ${reason}<br><button class="btn btn-save" style="margin-top:10px" onclick="buildItemMatching()">Повторить</button></div>`;
+    return;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const purchaseNames = [...new Set(purchaseLines.map(p => p.item).filter(Boolean))];
   const purchaseSet = new Set(purchaseNames);
