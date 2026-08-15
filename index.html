@@ -1759,27 +1759,38 @@ function diceSim(a, b) {
 
 async function buildItemMatching() {
   const el = document.getElementById('item-matching-content');
-  el.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу товары без цены и подбираю кандидатов...</div></div>';
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу товары без цены и подбираю кандидатов...</div>';
 
   // ИСПРАВЛЕНО 15.08: раньше здесь не было ни таймаута, ни обработки ошибки —
-  // если бэкенд не отвечал (перегруз, зависший деплой, квота), спиннер
-  // "Ищу товары..." висел вечно без единого сообщения, и со стороны это
-  // выглядело как "кнопка не работает", хотя на самом деле страница даже
-  // не успевала загрузиться. Теперь при таймауте/ошибке — понятное сообщение
-  // с кнопкой повтора, по аналогии с confirmItemAlias().
-  let prices = [], purchaseLines = [], aliases = [];
+  // если бэкенд не отвечал, спиннер "Ищу товары..." висел вечно без единого
+  // сообщения — со стороны выглядело как "кнопка не работает". Теперь при
+  // таймауте/ошибке — понятное сообщение с кнопкой повтора.
+  //
+  // ИСПРАВЛЕНО 15.08 (главное): раньше "непроверенным" считался товар только
+  // если его названия НИ РАЗУ не было в приходе (purchaseSet.has). Это не то
+  // же самое, что реально "нет цены" — в itemCostDetailAsOf (та же логика,
+  // что в ОПиУ) matched=false ЕЩЁ и когда товар покупали, но ПОЗЖЕ даты этой
+  // конкретной продажи (старый остаток, купленный ещё до того, как начали
+  // вести приход в системе) — old upTo пустой. Из-за этого расхождения
+  // страница показывала "всё проверено", хотя в ОПиУ висело 306 млн ₸
+  // "слепой" выручки — эта страница их просто не видела. Теперь строим
+  // список ТЕМ ЖЕ способом, что и диагностика в ОПиУ (по каждой продаже
+  // конкретной датой), гарантированно совпадает.
+  let purchaseLines = [], itemDaily = [], priceRows = [], aliases = [];
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
   try {
-    const [r1, r2, r3] = await Promise.all([
-      fetch(SCRIPT_URL + '?action=getItemPrices', {signal: controller.signal}),
+    const [r1, r2, r3, r4] = await Promise.all([
       fetch(SCRIPT_URL + '?action=getPurchaseLines', {signal: controller.signal}),
+      fetch(SCRIPT_URL + '?action=getItemDaily', {signal: controller.signal}),
+      fetch(SCRIPT_URL + '?action=getItemPrices', {signal: controller.signal}),
       fetch(SCRIPT_URL + '?action=getItemAliases', {signal: controller.signal})
     ]);
-    if (!r1.ok || !r2.ok || !r3.ok) throw new Error('сервер ответил с ошибкой (HTTP ' + [r1.status,r2.status,r3.status].join('/') + ')');
-    prices = (await r1.json()).items || [];
-    purchaseLines = (await r2.json()).items || [];
-    aliases = (await r3.json()).items || [];
+    if (!r1.ok || !r2.ok || !r3.ok || !r4.ok) throw new Error('сервер ответил с ошибкой (HTTP ' + [r1.status,r2.status,r3.status,r4.status].join('/') + ')');
+    purchaseLines = (await r1.json()).items || [];
+    itemDaily     = (await r2.json()).items || [];
+    priceRows     = (await r3.json()).items || [];
+    aliases       = (await r4.json()).items || [];
   } catch(e) {
     const reason = e.name === 'AbortError' ? 'сервер не ответил за 25 секунд (похоже на перегруз Apps Script)' : e.message;
     el.innerHTML = `<div class="empty-state"><div class="emoji">&#9888;</div>Не удалось загрузить: ${reason}<br><button class="btn btn-save" style="margin-top:10px" onclick="buildItemMatching()">Повторить</button></div>`;
@@ -1788,43 +1799,62 @@ async function buildItemMatching() {
     clearTimeout(timeout);
   }
 
-  const purchaseNames = [...new Set(purchaseLines.map(p => p.item).filter(Boolean))];
-  const purchaseSet = new Set(purchaseNames);
-  const reviewed = new Set(aliases.map(a => a.soldName)); // и confirmed, и skipped — больше не показываем
-
-  const unmatched = prices
-    .filter(p => p.product && !purchaseSet.has(p.product) && !reviewed.has(p.product))
-    .map(p => ({ product: p.product, revenue: +p.sumRevenue||0, qty: +p.sumQty||0 }))
-    .sort((a,b) => b.revenue - a.revenue);
-
   const fK = v => Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+' млн ₸' : fmt(v)+' ₸';
+  const purchaseNames = [...new Set(purchaseLines.map(p => p.item).filter(Boolean))];
+  const linesByItem = groupPurchaseLinesByItem(purchaseLines);
+  const priceMap = {}; priceRows.forEach(p => { if (p.product) priceMap[p.product] = p.avgPrice || 0; });
+  const qtyByProduct = {}; priceRows.forEach(p => { if (p.product) qtyByProduct[p.product] = +p.sumQty||0; });
 
-  // Добавлено 15.08: раньше "Пропустить" просто убирал товар со страницы
-  // навсегда, без следа — не было видно, какие именно товары так и остались
-  // без цены прихода (и сколько это в деньгах), только общий % в ОПиУ.
-  // Показываем список уже пропущенных товаров отдельно, только для справки
-  // (без кнопок действий) — отсортирован по выручке, чтобы было видно, по
-  // каким конкретно стоит поднять старый приходный документ вручную, а какие
-  // мелкие и можно оставить как есть.
-  const priceByProduct = {};
-  prices.forEach(p => { if (p.product) priceByProduct[p.product] = p; });
-  const skippedList = aliases
-    .filter(a => a.status === 'skipped' && priceByProduct[a.soldName])
-    .map(a => { const p = priceByProduct[a.soldName]; return { product: a.soldName, revenue: +p.sumRevenue||0, qty: +p.sumQty||0, date: a.date }; })
+  const aliasStatus = {}, aliasTarget = {}, aliasDate = {};
+  aliases.forEach(a => {
+    aliasStatus[a.soldName] = a.status;
+    aliasDate[a.soldName] = a.date;
+    if (a.status === 'confirmed' && a.purchaseName) aliasTarget[a.soldName] = a.purchaseName;
+  });
+
+  // Пересчёт по каждой продаже конкретной датой — та же формула, что в
+  // диагностике ОПиУ (itemCostDetailAsOf), сгруппировано по исходному
+  // ПРОДАННОМУ названию, чтобы решение "это тот же товар" принималось по
+  // тому имени, которое реально видно в 1С Продажах.
+  const blindRevByProduct = {}, blindQtyByProduct = {};
+  itemDaily.forEach(row => {
+    if (!row.item || !row.qty) return;
+    const resolved = resolveItemName(row.item, aliasTarget);
+    const { matched } = itemCostDetailAsOf(resolved, String(row.date||''), linesByItem, priceMap, row.item);
+    if (matched) return;
+    blindRevByProduct[row.item] = (blindRevByProduct[row.item]||0) + (+row.revenue||0);
+    blindQtyByProduct[row.item] = (blindQtyByProduct[row.item]||0) + (+row.qty||0);
+  });
+
+  const allBlind = Object.keys(blindRevByProduct)
+    .map(product => ({
+      product,
+      revenue: blindRevByProduct[product],
+      qty: blindQtyByProduct[product] || qtyByProduct[product] || 0,
+      status: aliasStatus[product] || 'new'
+    }))
     .sort((a,b) => b.revenue - a.revenue);
-  const skippedTotal = skippedList.reduce((s,u)=>s+u.revenue,0);
-  const skippedBlock = skippedList.length ? `
+
+  const unmatched = allBlind.filter(u => u.status === 'new');
+  // "confirmed" здесь означает: пара подтверждена, но даже у неё нет прихода
+  // РАНЬШЕ даты продажи — привязка не поможет, нужен именно старый документ
+  // прихода. "skipped" — вручную подтверждено, что это другой товар и прихода
+  // для него нет вообще. Обе группы — просто справка, без кнопок действий.
+  const reviewedBlind = allBlind.filter(u => u.status !== 'new');
+  const reviewedTotal = reviewedBlind.reduce((s,u)=>s+u.revenue,0);
+
+  const reviewedBlock = reviewedBlind.length ? `
     <div class="card" style="margin-top:20px;background:#f8fafc;border:1px solid #e2e8f0">
-      <div style="font-weight:700;color:#475569;margin-bottom:4px">Ранее помечено «Пропустить» — прихода для них нет нигде (${skippedList.length} шт · ${fK(skippedTotal)} суммарно)</div>
-      <div style="font-size:12px;color:#94a3b8;margin-bottom:10px">Справочно, без действий. По самым крупным суммам ниже имеет смысл вручную поднять старый приходный документ, если он существует.</div>
+      <div style="font-weight:700;color:#475569;margin-bottom:4px">Уже проверено, но прихода раньше даты продажи всё равно нет (${reviewedBlind.length} шт · ${fK(reviewedTotal)} суммарно)</div>
+      <div style="font-size:12px;color:#94a3b8;margin-bottom:10px">Справочно, без действий — переподтверждение не поможет. Это либо старый остаток, купленный до начала ведения прихода в системе, либо товар с пометкой «Пропустить». По крупным суммам ниже имеет смысл вручную поднять старый приходный документ, если он существует.</div>
       <div style="font-size:12.5px;line-height:2">
-        ${skippedList.slice(0,30).map(u => `<div style="display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9;padding:3px 0"><span>${u.product}</span><span style="white-space:nowrap;color:#64748b">${fK(u.revenue)}</span></div>`).join('')}
-        ${skippedList.length>30 ? `<div style="color:#94a3b8;padding-top:6px">…и ещё ${skippedList.length-30}, суммарно мельче</div>` : ''}
+        ${reviewedBlind.slice(0,30).map(u => `<div style="display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9;padding:3px 0"><span>${u.product} <span style="color:#cbd5e1">· ${u.status === 'confirmed' ? 'подтверждён, но старый' : 'пропущен'}</span></span><span style="white-space:nowrap;color:#64748b">${fK(u.revenue)}</span></div>`).join('')}
+        ${reviewedBlind.length>30 ? `<div style="color:#94a3b8;padding-top:6px">…и ещё ${reviewedBlind.length-30}, суммарно мельче</div>` : ''}
       </div>
     </div>` : '';
 
   if (!unmatched.length) {
-    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все проданные товары либо нашли цену прихода, либо уже проверены</div>' + skippedBlock;
+    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все проданные товары либо нашли цену прихода, либо уже проверены</div>' + reviewedBlock;
     return;
   }
 
@@ -1860,7 +1890,7 @@ async function buildItemMatching() {
 
   el.innerHTML =
     `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unmatched.length} товаров · ${fK(totalRev)} суммарно · отсортировано по сумме продаж</div>` +
-    unmatched.map(cardHtml).join('') + skippedBlock;
+    unmatched.map(cardHtml).join('') + reviewedBlock;
 }
 
 // Экранирует строку для безопасной вставки в onclick-атрибут: и для JS-строки
