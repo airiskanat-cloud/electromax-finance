@@ -385,9 +385,19 @@
         </div>
       </div>
       <div id="dds-month-dash"></div>
-      <div class="form-card" style="max-width:520px;margin-bottom:20px;">
-        <div style="color:#64748b;font-size:13px;margin-bottom:12px">Полная таблица по месяцам · Январь — 14 Июня 2026 · KZT · Косвенный метод (упрощённый)</div>
-        <button class="btn btn-save" onclick="buildDDS()">&#128200; Сформировать ДДС по месяцам (таблица)</button>
+      <div class="form-card" style="max-width:560px;margin-bottom:20px;">
+        <div style="color:#64748b;font-size:13px;margin-bottom:12px">Полная таблица по месяцам · KZT · Косвенный метод (упрощённый)</div>
+        <div class="form-row">
+          <div class="field">
+            <label>Период</label>
+            <select id="dds-period">
+              <option value="all">Весь период</option>
+            </select>
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button class="btn btn-save" onclick="buildDDS()" style="width:100%;">&#128200; Сформировать ДДС по месяцам (таблица)</button>
+          </div>
+        </div>
       </div>
       <div id="dds-result"></div>
     </div>
@@ -997,6 +1007,19 @@ async function refreshMonthPickers() {
     sel.innerHTML = '<option value="all">Весь период (' + monthLabel(months[0]) + ' — ' + monthLabel(months[months.length-1]) + ')</option>' +
       months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
     sel.value = (prev && (prev === 'all' || months.includes(prev))) ? prev : 'all';
+  }
+  // ДДС по месяцам: те же месяцы, но плюс "Весь <год>" — по умолчанию
+  // открывается последний год из данных (сейчас это всегда 2026).
+  const selDds = document.getElementById('dds-period');
+  if (selDds) {
+    const prevD = selDds.value;
+    const years = [...new Set(months.map(m => m.slice(0,4)))];
+    let optsDds = '<option value="all">Весь период (' + monthLabel(months[0]) + ' — ' + monthLabel(months[months.length-1]) + ')</option>';
+    optsDds += years.map(y => `<option value="year:${y}">Весь ${y} год</option>`).join('');
+    optsDds += months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+    selDds.innerHTML = optsDds;
+    const valid = prevD === 'all' || prevD.startsWith('year:') || months.includes(prevD);
+    selDds.value = (prevD && valid) ? prevD : ('year:' + years[years.length-1]);
   }
   const picker = document.getElementById('dds-month-pick');
   if (picker) {
@@ -2289,6 +2312,7 @@ function toggleGrp(cls, el) {
 }
 
 async function buildDDS() {
+  const period = document.getElementById('dds-period') ? document.getElementById('dds-period').value : 'all';
   const resultEl = document.getElementById('dds-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
@@ -2315,6 +2339,12 @@ async function buildDDS() {
 
   const MONTHS = getAvailableMonths(revM, cogsM);
   const MLbl = {}; MONTHS.forEach(m => { MLbl[m] = RU_MONTH_FULL[m.slice(5,7)] || m; });
+  // Фильтр периода: "all" — все месяцы, "year:YYYY" — все месяцы этого года,
+  // иначе — конкретный месяц 'YYYY-MM' (по аналогии с opiu-period).
+  const cols = (!period || period === 'all') ? MONTHS
+    : period.startsWith('year:') ? MONTHS.filter(m => m.startsWith(period.slice(5)))
+    : MONTHS.filter(m => m === period);
+  const COLS = cols.length ? cols : MONTHS;
 
   const dynamicMap = await loadCategoryOverrides();
   const catM = {};
@@ -2358,14 +2388,14 @@ async function buildDDS() {
   };
 
   const pm = {};
-  MONTHS.forEach(m => { pm[m] = calc(m); });
+  COLS.forEach(m => { pm[m] = calc(m); });
   const tot = {};
-  Object.keys(calc(MONTHS[0])).forEach(k => { tot[k] = MONTHS.reduce((s,m) => s+(pm[m][k]||0), 0); });
+  Object.keys(calc(COLS[0])).forEach(k => { tot[k] = COLS.reduce((s,m) => s+(pm[m][k]||0), 0); });
 
-  const NC = MONTHS.length + 2;
+  const NC = COLS.length + 2;
   const hdr = (label, cls='rs-sec') => `<tr class="${cls}"><td colspan="${NC}">${label}</td></tr>`;
   const dRow = (label, key, indent=false, negate=false) => {
-    const cells = MONTHS.map(m => {
+    const cells = COLS.map(m => {
       const v = pm[m][key]||0;
       return `<td>${v ? (negate && v>0 ? `(${fmt(v)})` : fmt(v)) : '—'}</td>`;
     }).join('');
@@ -2373,7 +2403,7 @@ async function buildDDS() {
     return `<tr class="rs-data"><td style="${indent?'padding-left:22px':''}">${label}</td>${cells}<td class="tc">${tv ? (negate && tv>0 ? `(${fmt(tv)})` : fmt(tv)) : '—'}</td></tr>`;
   };
   const grpRow = (label, key, cls) => {
-    const cells = MONTHS.map(m => {
+    const cells = COLS.map(m => {
       const v = pm[m][key]||0;
       return `<td>${v ? fmt(v)==='0' ? '—' : `(${fmt(v)})` : '—'}</td>`;
     }).join('');
@@ -2381,7 +2411,7 @@ async function buildDDS() {
     return `<tr class="rs-data" style="cursor:pointer" onclick="toggleGrp('${cls}',this)"><td style="padding-left:22px"><span class="grp-ic" style="display:inline-block;width:13px;color:#94a3b8">▸</span>${label}</td>${cells}<td class="tc">${tv?`(${fmt(tv)})`:'—'}</td></tr>`;
   };
   const subRow = (label, key, cls) => {
-    const cells = MONTHS.map(m => {
+    const cells = COLS.map(m => {
       const v = pm[m][key]||0;
       return `<td>${v ? `(${fmt(v)})` : '—'}</td>`;
     }).join('');
@@ -2389,7 +2419,7 @@ async function buildDDS() {
     return `<tr class="rs-data grp-${cls}" style="display:none"><td style="padding-left:36px;color:#64748b;font-size:11.5px">${label}</td>${cells}<td class="tc" style="color:#94a3b8">${tv?`(${fmt(tv)})`:'—'}</td></tr>`;
   };
   const sumRow = (label, key, cls='rs-fin') => {
-    const cells = MONTHS.map(m => `<td>${fmt(pm[m][key]||0)}</td>`).join('');
+    const cells = COLS.map(m => `<td>${fmt(pm[m][key]||0)}</td>`).join('');
     return `<tr class="${cls}"><td><b>${label}</b></td>${cells}<td class="tc">${fmt(tot[key]||0)}</td></tr>`;
   };
 
@@ -2410,16 +2440,17 @@ async function buildDDS() {
     ${kpiCard('НЕТТО изменение ДС', tot.netFlow, tot.netFlow>=0?'g':'o')}
   </div>`;
 
+  const periodLbl = COLS.length > 1 ? (monthLabel(COLS[0]) + ' — ' + monthLabel(COLS[COLS.length-1])) : monthLabel(COLS[0]);
   html += `<div class="table-wrapper report-wrap">
     <div class="table-header">
-      <strong>ДДС — ${monthLabel(MONTHS[0])} — ${monthLabel(MONTHS[MONTHS.length-1])}</strong>
+      <strong>ДДС — ${periodLbl}</strong>
       <span style="font-size:12px;color:#64748b">Косвенный метод (упрощённый) · KZT</span>
     </div>
     <table class="rt">
       <thead>
         <tr>
           <th>Статья</th>
-          ${MONTHS.map(m=>`<th>${MLbl[m]}</th>`).join('')}
+          ${COLS.map(m=>`<th>${MLbl[m]}</th>`).join('')}
           <th class="tc">ИТОГО</th>
         </tr>
       </thead>
@@ -2565,6 +2596,19 @@ async function buildOPIU() {
     // все найденные на июль 2026 случаи (февраль→март, март→апрель, апрель→май) с суммами.
     const m = r.period ? String(r.period).slice(0,7) : (r.date ? r.date.slice(0,7) : null);
     if(!m) return;
+    // Найдено 15.08: в кассе бухгалтера встречаются переводы между своими
+    // счетами, заведённые Тип операции="Расход" + Категория="прочее" вместо
+    // Тип операции="Перевод" (например перевод 79 млн ₸ в августе, из-за
+    // него "Прочее" за август было раздуто в ~100 раз против обычного —
+    // и вся ОПИУ месяца ушла в глубокий минус). Перевод — не расход
+    // компании, в ОПиУ входить не должен, а вот в ДДС это по-прежнему
+    // движение денег, там его и оставляем (buildDDS катM строит отдельно,
+    // этот фильтр его не касается). Опознаём по слову «перевод» в Названии —
+    // это подстраховка на случай, если Тип операции указан неверно; если
+    // бухгалтер в будущем будет ставить Тип операции="Перевод" правильно,
+    // такие строки и так не считаются расходом (allData.filter выше) —
+    // тогда этот фильтр просто не сработает ни для одной строки.
+    if (/перевод/i.test(r.name||'')) return;
     if(!catM[m]) catM[m] = {};
     const c = (r.category||'').toLowerCase();
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
