@@ -1797,13 +1797,38 @@ async function buildItemMatching() {
     .map(p => ({ product: p.product, revenue: +p.sumRevenue||0, qty: +p.sumQty||0 }))
     .sort((a,b) => b.revenue - a.revenue);
 
+  const fK = v => Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+' млн ₸' : fmt(v)+' ₸';
+
+  // Добавлено 15.08: раньше "Пропустить" просто убирал товар со страницы
+  // навсегда, без следа — не было видно, какие именно товары так и остались
+  // без цены прихода (и сколько это в деньгах), только общий % в ОПиУ.
+  // Показываем список уже пропущенных товаров отдельно, только для справки
+  // (без кнопок действий) — отсортирован по выручке, чтобы было видно, по
+  // каким конкретно стоит поднять старый приходный документ вручную, а какие
+  // мелкие и можно оставить как есть.
+  const priceByProduct = {};
+  prices.forEach(p => { if (p.product) priceByProduct[p.product] = p; });
+  const skippedList = aliases
+    .filter(a => a.status === 'skipped' && priceByProduct[a.soldName])
+    .map(a => { const p = priceByProduct[a.soldName]; return { product: a.soldName, revenue: +p.sumRevenue||0, qty: +p.sumQty||0, date: a.date }; })
+    .sort((a,b) => b.revenue - a.revenue);
+  const skippedTotal = skippedList.reduce((s,u)=>s+u.revenue,0);
+  const skippedBlock = skippedList.length ? `
+    <div class="card" style="margin-top:20px;background:#f8fafc;border:1px solid #e2e8f0">
+      <div style="font-weight:700;color:#475569;margin-bottom:4px">Ранее помечено «Пропустить» — прихода для них нет нигде (${skippedList.length} шт · ${fK(skippedTotal)} суммарно)</div>
+      <div style="font-size:12px;color:#94a3b8;margin-bottom:10px">Справочно, без действий. По самым крупным суммам ниже имеет смысл вручную поднять старый приходный документ, если он существует.</div>
+      <div style="font-size:12.5px;line-height:2">
+        ${skippedList.slice(0,30).map(u => `<div style="display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9;padding:3px 0"><span>${u.product}</span><span style="white-space:nowrap;color:#64748b">${fK(u.revenue)}</span></div>`).join('')}
+        ${skippedList.length>30 ? `<div style="color:#94a3b8;padding-top:6px">…и ещё ${skippedList.length-30}, суммарно мельче</div>` : ''}
+      </div>
+    </div>` : '';
+
   if (!unmatched.length) {
-    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все проданные товары либо нашли цену прихода, либо уже проверены</div>';
+    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все проданные товары либо нашли цену прихода, либо уже проверены</div>' + skippedBlock;
     return;
   }
 
   const totalRev = unmatched.reduce((s,u)=>s+u.revenue,0);
-  const fK = v => Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+' млн ₸' : fmt(v)+' ₸';
 
   const cardHtml = u => {
     const candidates = purchaseNames
@@ -1835,7 +1860,7 @@ async function buildItemMatching() {
 
   el.innerHTML =
     `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unmatched.length} товаров · ${fK(totalRev)} суммарно · отсортировано по сумме продаж</div>` +
-    unmatched.map(cardHtml).join('');
+    unmatched.map(cardHtml).join('') + skippedBlock;
 }
 
 // Экранирует строку для безопасной вставки в onclick-атрибут: и для JS-строки
