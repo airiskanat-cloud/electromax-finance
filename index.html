@@ -1666,7 +1666,23 @@ function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldI
   const fallback = (fallbackPriceMap && fallbackPriceMap[fallbackKey]) || 0;
   if (!all || !all.length) return { cost: fallback, matched: false };
   const upTo = all.filter(l => l.date <= asOfDate);
-  if (!upTo.length) return { cost: fallback, matched: false };
+  if (!upTo.length) {
+    // ДОБАВЛЕНО 15.08 по просьбе: товар покупали, но ПОЗЖЕ этой конкретной
+    // продажи (старый остаток, купленный ещё до начала ведения прихода в
+    // системе) — раньше в этом случае считалось matched=false и себестоимость
+    // бралась как цена ПРОДАЖИ (≈0% маржи, явно неверно — товар точно стоил
+    // денег). Теперь берём цену САМОЙ РАННЕЙ доступной закупки (ближайшей по
+    // времени к продаже, пусть и позже неё) — это единственная реальная цена,
+    // которая вообще есть на этот товар, и она куда точнее нуля. matched
+    // остаётся true — "непроверенным"/"без цены" теперь считается только
+    // товар, по которому прихода нет ВООБЩЕ ни разу, ни раньше, ни позже.
+    const earliestDate = all[0].date; // all отсортирован по возрастанию даты
+    const earliestLines = all.filter(l => l.date === earliestDate);
+    const eQty = earliestLines.reduce((s,l) => s + l.qty, 0);
+    const eSum = earliestLines.reduce((s,l) => s + l.sum, 0);
+    if (eQty > 0) return { cost: eSum / eQty, matched: true };
+    return { cost: fallback, matched: false };
+  }
   const lastDate = upTo[upTo.length - 1].date; // upTo отсортирован по возрастанию — последний = самый поздний ≤ asOfDate
   // ВАЖНО (баг найден и исправлен 13.08): "N месяцев назад" через голый
   // d.setMonth(d.getMonth()-n) в JS ломается на датах конца месяца — если
@@ -1836,19 +1852,22 @@ async function buildItemMatching() {
     .sort((a,b) => b.revenue - a.revenue);
 
   const unmatched = allBlind.filter(u => u.status === 'new');
-  // "confirmed" здесь означает: пара подтверждена, но даже у неё нет прихода
-  // РАНЬШЕ даты продажи — привязка не поможет, нужен именно старый документ
-  // прихода. "skipped" — вручную подтверждено, что это другой товар и прихода
-  // для него нет вообще. Обе группы — просто справка, без кнопок действий.
+  // ИЗМЕНЕНО 15.08: раньше сюда попадали и "подтверждён, но старый" (пара
+  // сопоставлена, но приход датирован позже продажи), и "пропущен". После
+  // того как itemCostDetailAsOf научили брать цену САМОЙ РАННЕЙ доступной
+  // закупки, если более ранней нет (см. комментарий там же), "подтверждён,
+  // но старый" больше НЕ попадает сюда — для него теперь есть настоящая
+  // цена. Остаются только "пропущен" — реально нет ни одного прихода под
+  // этим товаром ни разу, ни раньше, ни позже.
   const reviewedBlind = allBlind.filter(u => u.status !== 'new');
   const reviewedTotal = reviewedBlind.reduce((s,u)=>s+u.revenue,0);
 
   const reviewedBlock = reviewedBlind.length ? `
     <div class="card" style="margin-top:20px;background:#f8fafc;border:1px solid #e2e8f0">
-      <div style="font-weight:700;color:#475569;margin-bottom:4px">Уже проверено, но прихода раньше даты продажи всё равно нет (${reviewedBlind.length} шт · ${fK(reviewedTotal)} суммарно)</div>
-      <div style="font-size:12px;color:#94a3b8;margin-bottom:10px">Справочно, без действий — переподтверждение не поможет. Это либо старый остаток, купленный до начала ведения прихода в системе, либо товар с пометкой «Пропустить». По крупным суммам ниже имеет смысл вручную поднять старый приходный документ, если он существует.</div>
+      <div style="font-weight:700;color:#475569;margin-bottom:4px">Пропущено ранее — прихода для них нет нигде, ни разу (${reviewedBlind.length} шт · ${fK(reviewedTotal)} суммарно)</div>
+      <div style="font-size:12px;color:#94a3b8;margin-bottom:10px">Справочно, без действий. Себестоимость по ним по-прежнему считается как цена продажи (≈0% маржи), потому что вообще ни одной закупки этого товара в системе нет — ни раньше продажи, ни позже. Если знаешь, что товар точно закупался — стоит вручную поднять старый приходный документ.</div>
       <div style="font-size:12.5px;line-height:2">
-        ${reviewedBlind.slice(0,30).map(u => `<div style="display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9;padding:3px 0"><span>${u.product} <span style="color:#cbd5e1">· ${u.status === 'confirmed' ? 'подтверждён, но старый' : 'пропущен'}</span></span><span style="white-space:nowrap;color:#64748b">${fK(u.revenue)}</span></div>`).join('')}
+        ${reviewedBlind.slice(0,30).map(u => `<div style="display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9;padding:3px 0"><span>${u.product}${u.status === 'confirmed' ? ' <span style="color:#cbd5e1">· подтверждён, но приход всё равно не нашёлся</span>' : ''}</span><span style="white-space:nowrap;color:#64748b">${fK(u.revenue)}</span></div>`).join('')}
         ${reviewedBlind.length>30 ? `<div style="color:#94a3b8;padding-top:6px">…и ещё ${reviewedBlind.length-30}, суммарно мельче</div>` : ''}
       </div>
     </div>` : '';
@@ -2779,7 +2798,7 @@ async function buildOPIU() {
       .join('<br>');
     html += '<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">' +
       '<div style="font-weight:700;color:#991b1b;margin-bottom:8px">&#9888; Себестоимость части продаж посчитана "вслепую" — ' + pctS(tot.unmatchedRev, tot.trackedRev) + ' от отслеживаемой выручки за период (' + fmt(tot.unmatchedRev) + ' ₸)</div>' +
-      '<div style="font-size:12px;color:#991b1b;line-height:1.7">Для этих товаров не нашлось ни одного прихода по имени — ни за 1 мес, ни за 3 мес, ни разово. Себестоимость взята как средняя цена продажи (≈0% маржи по ним) — это занижает валовую прибыль ровно на эту сумму. Устраняется на странице «Товары без цены»: привяжи их к похожим товарам из приходов (опечатки/другое написание одного и того же товара).<br><br>' + perMonth + '</div></div>';
+      '<div style="font-size:12px;color:#991b1b;line-height:1.7">Для этих товаров нет ни одного прихода в системе вообще — ни раньше даты продажи, ни позже (с 15.08 цена ближайшей по времени закупки, даже если она задним числом позже продажи, уже используется автоматически — здесь остались только по-настоящему "без единого прихода"). Себестоимость взята как средняя цена продажи (≈0% маржи по ним) — это занижает валовую прибыль ровно на эту сумму. Устраняется на странице «Товары без цены»: привяжи их к похожим товарам из приходов (опечатки/другое написание одного и того же товара).<br><br>' + perMonth + '</div></div>';
   }
   html += `<div class="kpi-strip">
     ${kpiCard('Выручка за период', tot.rev, '', '')}
