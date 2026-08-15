@@ -207,6 +207,7 @@
       <div class="nav-item" onclick="showPage('opiu',this)"><span class="icon">&#128200;</span> ОПИУ</div>
       <div class="nav-item" onclick="showPage('balances',this)"><span class="icon">&#128176;</span> Остатки счетов</div>
       <div class="nav-item" onclick="showPage('item-matching',this)"><span class="icon">&#128269;</span> Товары без цены</div>
+      <div class="nav-item" onclick="showPage('cat-mapping',this)"><span class="icon">&#128209;</span> Категории без статьи</div>
       <div class="nav-item" onclick="showPage('load',this)"><span class="icon">&#128228;</span> Загрузка данных</div>
     </nav>
     <div class="sidebar-footer">
@@ -419,11 +420,16 @@
       <p style="font-size:13px;color:#64748b;margin:-10px 0 16px">Товары, проданные по одному названию, но закупленные под слегка другим (обновилась карточка у поставщика/на Kaspi) — из-за этого себестоимость по ним считается приблизительно. Подтверди пары ниже, и расчёт станет точнее — правку самой 1С делать не нужно.</p>
       <div id="item-matching-content"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
     </div>
+    <div class="page" id="page-cat-mapping">
+      <div class="page-title">Категории без статьи</div>
+      <p style="font-size:13px;color:#64748b;margin:-10px 0 16px">Новые категории расходов из кассы бухгалтера, для которых ещё не указано, в какую строку ОПиУ их относить (или что они вообще не входят в ОПиУ). Пока категория тут — её сумма учитывается только в ДДС, в ОПиУ не входит.</p>
+      <div id="cat-mapping-content"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw1JDW6q6pzrChMyDpbvGpwV52CmVq_Nfw77qXAqyKGoKnmXQnad24RDIDW82y85hI2/exec'; // 15.08: переезд на Workspace (gulmira@goodfinbusiness.com)
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzx5TkjDDQx4AYUj2e5-p1AoyMvPN75Phuy0YmRth0EAoyRfwWHBFVFW0b0xdKixu_R/exec'; // 15.08: обновлённый деплой (Категории без статьи)
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -504,11 +510,102 @@ const CATEGORY_MAP = {
   // которой это нужно было бы сводить, иначе прибыль исказится в плюс.
   'компенсация kaspi': { dds: 'Операционная', opiu: '' },
   'прочее':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
-  // Добавлены 15.08 — новые категории из кассы бухгалтера. Суммы попадают
-  // в строку "Прочее" раздела IV (см. calc() в buildOPIU/buildDDS, cOther).
+  // Добавлены 15.08 — новые категории из кассы бухгалтера.
+  // 'проценты' — реальный расход, попадает в строку "Прочее" раздела IV
+  // (см. OPIU_TARGET_DEFAULTS.cOther). 'обналичка' — по уточнению 15.08 это
+  // не расход компании (обмен безнала на нал), в ОПиУ не входит (opiu: '',
+  // как 'кредит'/'шеф' и т.п.) — но в ДДС учитывается как отток.
   'проценты':        { dds: 'Финансовая',   opiu: 'Коммерческие расходы' },
-  'обналичка':       { dds: 'Операционная', opiu: 'Коммерческие расходы' },
+  'обналичка':       { dds: 'Операционная', opiu: '' },
 };
+
+// ── Категории ОПиУ — динамическая часть (страница "Категории без статьи") ──
+// CATEGORY_MAP выше — это только графа dds/opiu (какой раздел вообще, и
+// нужно ли предупреждение о "новой категории"). OPIU_TARGET_DEFAULTS —
+// это уже КОНКРЕТНАЯ строка ОПиУ/ДДС ("бакет"), в который суммируется
+// сумма — так исторически было зашито в calc() buildOPIU/buildDDS.
+// Начиная с 15.08 бухгалтер может заводить в кассе любую новую категорию —
+// вместо того чтобы каждый раз просить поправить код, Гульмира один раз
+// назначает такой категории строку ОПиУ (или "не входит в ОПиУ") на
+// странице "Категории без статьи" — это сохраняется в лист КатегорииОПиУ
+// на бэкенде и подмешивается поверх дефолтов при каждом расчёте (см.
+// bucketSum). Ручное назначение всегда сильнее дефолта.
+const OPIU_TARGET_DEFAULTS = {
+  kom:     ['комиссия'],
+  log:     ['логистика'],
+  upk:     ['упаковка'],
+  rentA:   ['аренда'],
+  rentB:   ['ком платежи'],
+  rentC:   ['магазин'],
+  fotZp:   ['зарплата'],
+  fotAv:   ['аванс'],
+  naem:    ['наемники'],
+  tax:     ['налоги'],
+  os:      ['ос'],
+  cShashu: ['шашу'],
+  cKom:    ['командировочные'],
+  cAvto:   ['авторасходы'],
+  cObed:   ['обед'],
+  cUsl:    ['услуги','услуга'],
+  cKomp:   ['компенсация'],
+  cKanc:   ['канц товары','конц товары'],
+  cUborka: ['уборка'],
+  cOther:  ['прочее','проценты'],
+  kasp:    ['бонусы'],
+  mark:    ['маркетинг'],
+  shef:    ['шеф'],
+  das:     ['дастан'],
+  erk:     ['еркин'],
+  cred:    ['кредит'],
+};
+
+// Человекочитаемые подписи целей — для выпадающего списка на странице
+// "Категории без статьи".
+const OPIU_TARGET_LABELS = {
+  kom: 'II. Банковские комиссии и сборы', log: 'II. Логистика (доставка)', upk: 'II. Упаковочные материалы',
+  rentA: 'III. Аренда', rentB: 'III. Коммунальные платежи', rentC: 'III. Аренда/содержание магазина',
+  fotZp: 'III. Зарплата', fotAv: 'III. Авансы', naem: 'III. Наёмники', tax: 'III. Налоги и социальные взносы', os: 'III. ОС / Лизинг',
+  cShashu: 'IV. Шашу — бонусы ретейлерам', cKom: 'IV. Командировочные расходы', cAvto: 'IV. Авторасходы',
+  cObed: 'IV. Обед / питание', cUsl: 'IV. Услуги', cKomp: 'IV. Компенсация', cKanc: 'IV. Канц. товары', cUborka: 'IV. Уборка',
+  cOther: 'IV. Прочее', kasp: 'IV. Бонусы клиентам', mark: 'IV. Маркетинг и реклама',
+  shef: 'V. Шеф — Темирлан ага', das: 'V. Дастан ага', erk: 'V. Еркин', cred: 'Справочно: кредиты/займы (не в ОПиУ)',
+  excluded: '— Не входит в ОПиУ',
+};
+
+// Сумма по категориям месяца m, отнесённым к бакету key — по дефолтным
+// литералам (OPIU_TARGET_DEFAULTS) ИЛИ по ручному назначению со страницы
+// "Категории без статьи" (dynamicMap). Ручное назначение всегда сильнее
+// дефолта — так можно и переназначить категорию в другую строку, если
+// раньше она молчком падала не туда. target==='excluded' нигде не
+// суммируется — категория просто не входит ни в один бакет ОПиУ.
+function bucketSum(catM, m, key, dynamicMap) {
+  const cats = catM[m];
+  if (!cats) return 0;
+  const defaults = OPIU_TARGET_DEFAULTS[key] || [];
+  let sum = 0;
+  Object.keys(cats).forEach(c => {
+    const override = dynamicMap ? dynamicMap[c] : undefined;
+    const target = override !== undefined ? override : (defaults.includes(c) ? key : null);
+    if (target === key) sum += cats[c];
+  });
+  return sum;
+}
+
+// Кэш ручных назначений категорий (лист КатегорииОПиУ) — грузится один раз
+// за сессию (не за каждый рендер ОПиУ/ДДС), сбрасывается после сохранения
+// нового назначения на странице "Категории без статьи".
+let _categoryOverridesCache = null;
+async function loadCategoryOverrides() {
+  if (_categoryOverridesCache) return _categoryOverridesCache;
+  const map = {};
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getCategoryMappings');
+    const d = await r.json();
+    (d.items||[]).forEach(x => { if (x.category) map[x.category] = x.target; });
+  } catch(e) {}
+  _categoryOverridesCache = map;
+  return map;
+}
 
 // ── Внешний Журнал (Касса-журнал бухгалтера, с августа 2026) ───────────
 // С этой даты кассу (приход/расход по факту денег) ведёт бухгалтер в
@@ -650,6 +747,7 @@ function showPage(name, el) {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
   if (name === 'item-matching') buildItemMatching();
+  if (name === 'cat-mapping') buildCategoryMapping();
 }
 
 function currentMonth() {
@@ -1740,6 +1838,91 @@ async function confirmItemAlias(soldName, purchaseName, cardId) {
   }
 }
 
+// ── КАТЕГОРИИ БЕЗ СТАТЬИ (какую строку ОПиУ давать новым категориям
+// из кассы бухгалтера — вместо того чтобы каждый раз просить поправить
+// код, см. OPIU_TARGET_DEFAULTS/bucketSum/loadCategoryOverrides выше) ──
+async function buildCategoryMapping() {
+  const el = document.getElementById('cat-mapping-content');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу категории без статьи...</div>';
+
+  const dynamicMap = await loadCategoryOverrides();
+  const sums = {}, counts = {};
+  allData.filter(r => r.type === 'расход').forEach(r => {
+    const c = (r.category||'').toLowerCase().trim();
+    if (!c) return;
+    sums[c] = (sums[c]||0) + toNum(r.amount);
+    counts[c] = (counts[c]||0) + 1;
+  });
+
+  const unclassified = Object.keys(sums)
+    .filter(c => !CATEGORY_MAP_LOOKUP[c] && dynamicMap[c] === undefined)
+    .map(c => ({ category: c, sum: sums[c], count: counts[c] }))
+    .sort((a,b) => b.sum - a.sum);
+
+  if (!unclassified.length) {
+    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все категории расходов уже определены</div>';
+    return;
+  }
+
+  const fK = v => Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+' млн ₸' : fmt(v)+' ₸';
+  const optionsHtml = Object.entries(OPIU_TARGET_LABELS)
+    .map(([key,label]) => `<option value="${key}">${label}</option>`).join('');
+
+  const cardHtml = u => {
+    const idAttr = 'cm-' + btoa(unescape(encodeURIComponent(u.category))).replace(/[^a-zA-Z0-9]/g,'');
+    const opCount = u.count===1 ? 'операция' : (u.count<5 ? 'операции' : 'операций');
+    return `<div class="card" id="${idAttr}" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+        <span style="font-size:14px;font-weight:600;text-transform:capitalize">${u.category}</span>
+        <span style="font-size:14px;font-weight:600;white-space:nowrap">${fK(u.sum)}</span>
+      </div>
+      <div style="font-size:12px;color:#94a3b8;margin:2px 0 10px">${fmt(u.count)} ${opCount} · пока учитывается только в ДДС, в ОПиУ не входит</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="sel-${idAttr}" style="flex:1;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px">
+          ${optionsHtml}
+        </select>
+        <button class="btn btn-save" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="confirmCategoryMapping('${escJs(u.category)}','${idAttr}')">Сохранить</button>
+      </div>
+    </div>`;
+  };
+
+  el.innerHTML =
+    `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unclassified.length} категор${unclassified.length===1?'ия':(unclassified.length<5?'ии':'ий')} без статьи ОПиУ</div>` +
+    unclassified.map(cardHtml).join('');
+}
+
+async function confirmCategoryMapping(category, cardId) {
+  const card = document.getElementById(cardId);
+  const sel = document.getElementById('sel-' + cardId);
+  const target = sel ? sel.value : 'excluded';
+  const controls = card ? card.querySelectorAll('button, select') : [];
+  controls.forEach(b => b.disabled = true);
+  if (card) card.style.opacity = '0.5';
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const r = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action: 'saveCategoryMapping', data: { category, target } }),
+      signal: controller.signal
+    });
+    const d = await r.json();
+    if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
+    _categoryOverridesCache = null; // сброс кэша — ОПиУ/ДДС подхватят назначение на следующем открытии
+    if (card) card.remove();
+    showToast('Сохранено — ' + (OPIU_TARGET_LABELS[target] || target), 'success');
+  } catch(e) {
+    if (card) card.style.opacity = '1';
+    controls.forEach(b => b.disabled = false);
+    const reason = e.name === 'AbortError' ? 'сервер не ответил за 15 секунд' : e.message;
+    showToast('Не удалось сохранить (' + reason + '), попробуй ещё раз', 'error');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // ── ОТЧЁТ ДНЯ (сводный ежедневный отчёт для заказчика) ─────────────
 function todayStr() {
   const d = new Date();
@@ -2133,6 +2316,7 @@ async function buildDDS() {
   const MONTHS = getAvailableMonths(revM, cogsM);
   const MLbl = {}; MONTHS.forEach(m => { MLbl[m] = RU_MONTH_FULL[m.slice(5,7)] || m; });
 
+  const dynamicMap = await loadCategoryOverrides();
   const catM = {};
   allData.filter(r => r.type === 'расход').forEach(r => {
     const m = r.date ? r.date.slice(0,7) : null;
@@ -2141,29 +2325,30 @@ async function buildDDS() {
     const c = (r.category||'').toLowerCase();
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
   });
-  const C = (m,...cs) => cs.reduce((s,c) => s+(catM[m]?.[c]||0), 0);
-
   const calc = m => {
+    const B = key => bucketSum(catM, m, key, dynamicMap);
     const rev  = revM[m]||0;
     const cogs = cogsM[m]||0;
-    const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fotNaem=C(m,'наемники'), fotTax=C(m,'налоги');
+    const fotZp=B('fotZp'), fotAv=B('fotAv'), fotNaem=B('naem'), fotTax=B('tax');
     const fot  = fotZp+fotAv+fotNaem+fotTax;
-    const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rentC=C(m,'магазин'), rent=rentA+rentB+rentC;
-    const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
-          cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
-          cKanc=C(m,'канц товары','конц товары'), cUborka=C(m,'уборка'),
-          // см. комментарий в buildOPIU calc() — те же 2 новые категории сюда же.
-          cOther=C(m,'прочее','проценты','обналичка'),
-          cKasp=C(m,'бонусы'), cMark=C(m,'маркетинг');
+    const rentA=B('rentA'), rentB=B('rentB'), rentC=B('rentC'), rent=rentA+rentB+rentC;
+    const cShashu=B('cShashu'), cKom=B('cKom'), cAvto=B('cAvto'),
+          cObed=B('cObed'), cUsl=B('cUsl'), cKomp=B('cKomp'),
+          cKanc=B('cKanc'), cUborka=B('cUborka'),
+          // 'Прочее' — сюда попадает всё, что явно назначено через страницу
+          // "Категории без статьи" (или дефолтом — категория 'прочее'/
+          // 'проценты'). 'excluded' (например 'обналичка') нигде не суммируется.
+          cOther=B('cOther'),
+          cKasp=B('kasp'), cMark=B('mark');
     const com  = cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther+cKasp+cMark;
-    const oOs=C(m,'ос'), oUpk=C(m,'упаковка'), oLog=C(m,'логистика'), oKom=C(m,'комиссия');
+    const oOs=B('os'), oUpk=B('upk'), oLog=B('log'), oKom=B('kom');
     const oKaspiKom = kaspiKomM[m]||0;
     const other= oOs+oUpk+oLog+oKom+oKaspiKom;
     const opOut = cogs + fot + rent + com + other;
     const opFlow = rev - opOut;
-    const shef = C(m,'шеф'), das = C(m,'дастан'), erk = C(m,'еркин');
+    const shef = B('shef'), das = B('das'), erk = B('erk');
     const own  = shef + das + erk;
-    const cred = C(m,'кредит');
+    const cred = B('cred');
     const finOut = own + cred;
     const netFlow = opFlow - finOut;
     return {rev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rentC,rent,
@@ -2360,6 +2545,7 @@ async function buildOPIU() {
   const cols  = (period === 'all' || !period) ? MONTHS : MONTHS.filter(m => m === period);
   const multi = cols.length > 1;
 
+  const dynamicMap = await loadCategoryOverrides();
   const catM = {};
   allData.filter(r => r.type==='расход').forEach(r => {
     // ОПИУ группирует по месяцу НАЧИСЛЕНИЯ (period), а не по дате оплаты.
@@ -2383,35 +2569,33 @@ async function buildOPIU() {
     const c = (r.category||'').toLowerCase();
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
   });
-  const C = (m,...cs) => cs.reduce((s,c) => s+(catM[m]?.[c]||0), 0);
-
   const calc = m => {
+    const B = key => bucketSum(catM, m, key, dynamicMap);
     const rev=revM[m]||0, cogs=cogsM[m]||0;
     // Комиссия Kaspi-маркетплейса и доставка Kaspi — по требованию заказчика
     // учитываются как часть себестоимости (входят в валовую прибыль), а не
     // в переменных торговых расходах после неё.
     const kaspiMk=kaspiMkM[m]||0, kaspiDl=kaspiDlM[m]||0;
     const gp=rev-cogs-kaspiMk-kaspiDl;
-    const kom=C(m,'комиссия'), log_=C(m,'логистика'), upk=C(m,'упаковка');
+    const kom=B('kom'), log_=B('log'), upk=B('upk');
     const varE=kom+log_+upk, mp=gp-varE;
-    const rentA=C(m,'аренда'), rentB=C(m,'ком платежи'), rentC=C(m,'магазин'), rent=rentA+rentB+rentC;
-    const fotZp=C(m,'зарплата'), fotAv=C(m,'аванс'), fot=fotZp+fotAv;
-    const naem=C(m,'наемники'), tax=C(m,'налоги'), os_=C(m,'ос');
+    const rentA=B('rentA'), rentB=B('rentB'), rentC=B('rentC'), rent=rentA+rentB+rentC;
+    const fotZp=B('fotZp'), fotAv=B('fotAv'), fot=fotZp+fotAv;
+    const naem=B('naem'), tax=B('tax'), os_=B('os');
     const fix=rent+fot+naem+tax+os_, op=mp-fix;
-    const kasp=C(m,'бонусы'), mark=C(m,'маркетинг');
-    const cShashu=C(m,'шашу'), cKom=C(m,'командировочные'), cAvto=C(m,'авторасходы'),
-          cObed=C(m,'обед'), cUsl=C(m,'услуги','услуга'), cKomp=C(m,'компенсация'),
-          cKanc=C(m,'канц товары','конц товары'), cUborka=C(m,'уборка'),
-          // 'проценты' (проценты по кредиту) и 'обналичка' (комиссия за обнал) —
-          // новые категории из кассы бухгалтера (15.08), явной строки под них
-          // нет, суммы небольшие — кладём в общий "Прочее", чтобы не потерять
-          // из ОПиУ. Если сумма вырастет — вынести отдельной строкой.
-          cOther=C(m,'прочее','проценты','обналичка');
+    const kasp=B('kasp'), mark=B('mark');
+    const cShashu=B('cShashu'), cKom=B('cKom'), cAvto=B('cAvto'),
+          cObed=B('cObed'), cUsl=B('cUsl'), cKomp=B('cKomp'),
+          cKanc=B('cKanc'), cUborka=B('cUborka'),
+          // 'Прочее' — дефолт ('прочее','проценты') + всё, что назначено вручную
+          // на странице "Категории без статьи". Явно исключённое ('excluded',
+          // например 'обналичка') нигде не суммируется, из ОПиУ не входит.
+          cOther=B('cOther');
     const com=cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther;
     const comTotal=com+kasp+mark;
     const ebit=op-comTotal;
-    const shef=C(m,'шеф'), das=C(m,'дастан'), erk=C(m,'еркин'), own=shef+das+erk, net=ebit-own;
-    const cred=C(m,'кредит');
+    const shef=B('shef'), das=B('das'), erk=B('erk'), own=shef+das+erk, net=ebit-own;
+    const cred=B('cred');
     const unmatchedRev=unmatchedRevM[m]||0, trackedRev=trackedRevM[m]||0;
     return {rev,cogs,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rentC,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
             kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred,
