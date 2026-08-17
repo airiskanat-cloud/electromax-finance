@@ -629,6 +629,12 @@ const EXTERNAL_JOURNAL_FROM = '2026-08-01';
 // ключ ('ОС'), поэтому просто .toLowerCase() при чтении был бы неверен.
 const CATEGORY_MAP_LOOKUP = {};
 Object.keys(CATEGORY_MAP).forEach(k => { CATEGORY_MAP_LOOKUP[k.toLowerCase()] = k; });
+// Альтернативные написания одной и той же категории (множественное число,
+// опечатки) — просто переадресуем на канонический ключ CATEGORY_MAP, без
+// дублирования правил dds/opiu. "кредиты" (мн.ч.) — то же самое, что
+// "кредит": Финансовая деятельность в ДДС, в ОПиУ не участвует (это
+// погашение долга, а не операционный расход/себестоимость).
+CATEGORY_MAP_LOOKUP['кредиты'] = 'кредит';
 
 // Приводит сырые строки внешней таблицы (заголовки: Дата, Название,
 // Тип операции, Категория, Тип счета, Счет, Сумма, Флаг - проверить,
@@ -637,6 +643,24 @@ Object.keys(CATEGORY_MAP).forEach(k => { CATEGORY_MAP_LOOKUP[k.toLowerCase()] = 
 // например пока не значащуюся у нас), не теряются: строка всё равно
 // попадает в Журнал/ДДС с dds:'Операционная', просто без статьи ОПиУ,
 // пока категорию не добавят в CATEGORY_MAP здесь же, в index.html.
+// Период начисления для строки зарплаты/аванса из внешней кассы, когда сама
+// касса период не проставляет (столбца «Период» там нет). Правило то же,
+// что для собственного Журнала сайта: зарплата, выплаченная в первые дни
+// месяца — это оплата ЗА ПРЕДЫДУЩИЙ месяц (пример: зарплата, выплаченная
+// 1-2 августа — это ФОТ за июль, и должна попасть в ОПиУ июля, а не августа).
+// Если позже бухгалтер добавит в кассу свой столбец «Период» — код ниже
+// его прочитает и будет доверять ему в первую очередь.
+function accrualPeriodForExternalRow(dateStr, canonicalKey) {
+  const isPayroll = canonicalKey === 'зарплата' || canonicalKey === 'аванс';
+  if (!isPayroll || !dateStr) return '';
+  const day = +String(dateStr).slice(8,10);
+  if (!day || day > 10) return ''; // не первые 10 дней месяца — период = месяц даты (как обычно)
+  const y = +String(dateStr).slice(0,4), mo = +String(dateStr).slice(5,7);
+  const prevY = mo === 1 ? y - 1 : y;
+  const prevM = mo === 1 ? 12 : mo - 1;
+  return prevY + '-' + String(prevM).padStart(2,'0');
+}
+
 function mapExternalJournal(rows) {
   const TYPE_MAP = { 'приход': 'доход', 'расход': 'расход', 'перевод': 'перевод' };
   return (rows || [])
@@ -660,9 +684,15 @@ function mapExternalJournal(rows) {
       // достоверно определить по названию счёта; для остальных счетов
       // (юр.лица, Kaspi Gold) город не проставляем, как и раньше.
       const cityMatch = /^Касса наличными (.+)$/i.exec(account);
+      const dateStr = String(r['Дата']);
+      // Явный столбец «Период» в кассе (если бухгалтер его заведёт) —
+      // в приоритете; иначе — автосдвиг для зарплаты/аванса, выплаченных
+      // в первые дни месяца (см. accrualPeriodForExternalRow выше).
+      const period = r['Период'] ? normalizePeriodStr(r['Период'])
+                                  : accrualPeriodForExternalRow(dateStr, canonicalKey);
       return {
         id: r.id,
-        date: String(r['Дата']),
+        date: dateStr,
         type,
         category: canonicalKey || rawCat,
         name: r['Название'] || '',
@@ -675,7 +705,7 @@ function mapExternalJournal(rows) {
         opiu: m.opiu,
         notes: r['Примечание'] || '',
         supplier: '',
-        period: '',
+        period,
         created_by: 'Касса-журнал (бухгалтер)'
       };
     });
