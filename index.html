@@ -807,6 +807,31 @@ function normalizeAccountName(acc) {
   return a.replace(/\s+/g, ' ').trim();
 }
 
+// Приводит дату к строке "YYYY-MM-DD" независимо от исходного формата.
+// Уже нормальные строки (из fixDateVal на бэкенде) возвращаются как есть.
+// Строки вида "13.07.2026" / "3.7.2026" (дата, введённая вручную как текст,
+// без авто-конвертации в Google Sheets) — распознаются и переворачиваются.
+// Всё остальное, что не удалось разобрать, возвращается без изменений —
+// чтобы не потерять данные молча, а не подставлять случайную дату.
+function normalizeDateStr(v) {
+  const s = String(v||'').trim();
+  if (!s) return s;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  // "DD.MM.YYYY": m[1]=день, m[2]=месяц, m[3]=год.
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(s);
+  if (m) return m[3] + '-' + m[2].padStart(2,'0') + '-' + m[1].padStart(2,'0');
+  return s;
+}
+// То же самое для колонки "period" (формат "YYYY-MM").
+function normalizePeriodStr(v) {
+  const s = String(v||'').trim();
+  if (!s) return s;
+  if (/^\d{4}-\d{2}/.test(s)) return s.slice(0,7);
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(s);
+  if (m) return m[3] + '-' + m[2].padStart(2,'0');
+  return s;
+}
+
 async function loadData() {
   // Раньше эти запросы шли последовательно (каждый ждал предыдущий) —
   // при подтормаживающем Apps Script задержки складывались. Теперь все
@@ -832,6 +857,18 @@ async function loadData() {
   // «Транзитные заказы» на сайте больше нет.
   externalJournalRaw = (d5.data || []).filter(r => r['Дата'] && String(r['Дата']) >= EXTERNAL_JOURNAL_FROM);
   allData = allData.concat(mapExternalJournal(d5.data));
+  // Некоторые строки в листе «Журнал» хранят дату как обычный текст (не
+  // как ячейка-дата Google Sheets) — например, вставленные вручную в
+  // формате «13.07.2026». fixDateVal() на бэкенде такие строки не трогает
+  // (умеет чинить только настоящие объекты Date), поэтому они долетают
+  // как есть и потом .slice(0,7) даёт мусор вроде «13.07.2» — из-за этого
+  // в выборе периода ОПиУ/ДДС и появлялись «даты»-обрывки и лишние месяцы.
+  // Приводим date/period к единому формату YYYY-MM-DD / YYYY-MM сразу
+  // после загрузки, чтобы все дальнейшие расчёты были на нормальных данных.
+  allData.forEach(row => {
+    if (row.date) row.date = normalizeDateStr(row.date);
+    if (row.period) row.period = normalizePeriodStr(row.period);
+  });
   await refreshMonthPickers();
   buildDashboard(); renderBalances();
 }
@@ -1001,19 +1038,26 @@ async function refreshMonthPickers() {
     (d.purchases||[]).forEach(s => { if (s.month) cogsM[s.month] = 1; });
   } catch(e) {}
   const months = getAvailableMonths(revM, cogsM);
+  const years = [...new Set(months.map(m => m.slice(0,4)))];
+  // ОПиУ: "Весь период" + "Весь <год>" (по годам) + отдельные месяцы —
+  // так же, как ДДС ниже. По умолчанию открывается последний год из данных,
+  // а не весь период — иначе старые/тестовые даты вне 2026 (если такие
+  // остались в Журнале) захламляют таблицу лишними почти пустыми колонками.
   const sel = document.getElementById('opiu-period');
   if (sel) {
     const prev = sel.value;
-    sel.innerHTML = '<option value="all">Весь период (' + monthLabel(months[0]) + ' — ' + monthLabel(months[months.length-1]) + ')</option>' +
-      months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
-    sel.value = (prev && (prev === 'all' || months.includes(prev))) ? prev : 'all';
+    let opts = '<option value="all">Весь период (' + monthLabel(months[0]) + ' — ' + monthLabel(months[months.length-1]) + ')</option>';
+    opts += years.map(y => `<option value="year:${y}">Весь ${y} год</option>`).join('');
+    opts += months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+    sel.innerHTML = opts;
+    const valid = prev === 'all' || (prev && prev.startsWith('year:')) || months.includes(prev);
+    sel.value = (prev && valid) ? prev : ('year:' + years[years.length-1]);
   }
-  // ДДС по месяцам: те же месяцы, но плюс "Весь <год>" — по умолчанию
+  // ДДС по месяцам: та же логика (те же месяцы + "Весь <год>"), по умолчанию
   // открывается последний год из данных (сейчас это всегда 2026).
   const selDds = document.getElementById('dds-period');
   if (selDds) {
     const prevD = selDds.value;
-    const years = [...new Set(months.map(m => m.slice(0,4)))];
     let optsDds = '<option value="all">Весь период (' + monthLabel(months[0]) + ' — ' + monthLabel(months[months.length-1]) + ')</option>';
     optsDds += years.map(y => `<option value="year:${y}">Весь ${y} год</option>`).join('');
     optsDds += months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
@@ -1831,8 +1875,11 @@ async function buildItemMatching() {
   // Пересчёт по каждой продаже конкретной датой — та же формула, что в
   // диагностике ОПиУ (itemCostDetailAsOf), сгруппировано по исходному
   // ПРОДАННОМУ названию, чтобы решение "это тот же товар" принималось по
-  // тому имени, которое реально видно в 1С Продажах.
-  const blindRevByProduct = {}, blindQtyByProduct = {};
+  // тому имени, которое реально видно в 1С Продажах. Плюс — по месяцам
+  // (byMonth), чтобы видно было не только "какой товар", но и "в каком
+  // месяце именно эта сумма" — как в диагностике ОПиУ, только с разбивкой
+  // по конкретным товарам внутри месяца.
+  const blindRevByProduct = {}, blindQtyByProduct = {}, blindByMonthProduct = {};
   itemDaily.forEach(row => {
     if (!row.item || !row.qty) return;
     const resolved = resolveItemName(row.item, aliasTarget);
@@ -1840,6 +1887,11 @@ async function buildItemMatching() {
     if (matched) return;
     blindRevByProduct[row.item] = (blindRevByProduct[row.item]||0) + (+row.revenue||0);
     blindQtyByProduct[row.item] = (blindQtyByProduct[row.item]||0) + (+row.qty||0);
+    const mo = String(row.date||'').slice(0,7);
+    if (mo) {
+      if (!blindByMonthProduct[mo]) blindByMonthProduct[mo] = {};
+      blindByMonthProduct[mo][row.item] = (blindByMonthProduct[mo][row.item]||0) + (+row.revenue||0);
+    }
   });
 
   const allBlind = Object.keys(blindRevByProduct)
@@ -1872,8 +1924,32 @@ async function buildItemMatching() {
       </div>
     </div>` : '';
 
+  // Добавлено 15.08 по просьбе: та же сумма (307 млн и т.п.), но разбитая
+  // по месяцам продажи и товарам внутри каждого месяца — чтобы было видно
+  // не только "какой товар", а "в каком месяце сколько повисло" вместе с
+  // конкретными товарами, а не только общий % как в ОПиУ.
+  const reviewedSet = new Set(reviewedBlind.map(u => u.product));
+  const monthsWithBlind = Object.keys(blindByMonthProduct).sort();
+  const monthBlock = monthsWithBlind.length ? `
+    <div class="card" style="margin-top:20px;background:#f8fafc;border:1px solid #e2e8f0">
+      <div style="font-weight:700;color:#475569;margin-bottom:4px">То же самое, но по месяцам продажи</div>
+      <div style="font-size:12px;color:#94a3b8;margin-bottom:12px">Справочно. Товары, у которых до сих пор нет цены прихода, сгруппированные по месяцу, в котором они были проданы.</div>
+      ${monthsWithBlind.map(mo => {
+        const items = Object.entries(blindByMonthProduct[mo]).filter(([p]) => reviewedSet.has(p)).sort((a,b) => b[1]-a[1]);
+        if (!items.length) return '';
+        const moTotal = items.reduce((s,[,v]) => s+v, 0);
+        return `<div style="margin-bottom:14px">
+          <div style="font-weight:600;font-size:13px;color:#334155;margin-bottom:4px">${monthLabel(mo,true)} — ${fK(moTotal)}</div>
+          <div style="font-size:12px;line-height:1.9;padding-left:8px">
+            ${items.slice(0,10).map(([p,v]) => `<div style="display:flex;justify-content:space-between;gap:10px;color:#64748b;border-bottom:1px solid #f1f5f9;padding:2px 0"><span>${p}</span><span style="white-space:nowrap">${fK(v)}</span></div>`).join('')}
+            ${items.length>10 ? `<div style="color:#94a3b8;padding-top:4px">…и ещё ${items.length-10}</div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
   if (!unmatched.length) {
-    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все проданные товары либо нашли цену прихода, либо уже проверены</div>' + reviewedBlock;
+    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все проданные товары либо нашли цену прихода, либо уже проверены</div>' + reviewedBlock + monthBlock;
     return;
   }
 
@@ -1909,7 +1985,7 @@ async function buildItemMatching() {
 
   el.innerHTML =
     `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unmatched.length} товаров · ${fK(totalRev)} суммарно · отсортировано по сумме продаж</div>` +
-    unmatched.map(cardHtml).join('') + reviewedBlock;
+    unmatched.map(cardHtml).join('') + reviewedBlock + monthBlock;
 }
 
 // Экранирует строку для безопасной вставки в onclick-атрибут: и для JS-строки
