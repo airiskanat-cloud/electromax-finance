@@ -2775,7 +2775,15 @@ async function buildOPIU() {
 
   const MONTHS = getAvailableMonths(revM, cogsM);
   const MLbl = {}; MONTHS.forEach(m => { MLbl[m] = RU_MONTH_FULL[m.slice(5,7)] || m; });
-  const cols  = (period === 'all' || !period) ? MONTHS : MONTHS.filter(m => m === period);
+  // period: 'all' — все месяцы, 'year:YYYY' — все месяцы этого года (выбор
+  // "Весь <год>" в селекторе), иначе — конкретный месяц 'YYYY-MM'.
+  // Раньше здесь не было ветки 'year:' — при её выборе cols оказывался
+  // пустым (ни один месяц не равен строке "year:2026" целиком), из-за чего
+  // ОПиУ считался по несуществующему месяцу и показывал везде 0 / ложное
+  // предупреждение "нет данных о продажах", хотя данные были.
+  const cols = (period === 'all' || !period) ? MONTHS
+    : period.startsWith('year:') ? MONTHS.filter(m => m.startsWith(period.slice(5)))
+    : MONTHS.filter(m => m === period);
   const multi = cols.length > 1;
 
   const dynamicMap = await loadCategoryOverrides();
