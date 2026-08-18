@@ -206,7 +206,6 @@
       <div class="nav-item" onclick="showPage('dds',this)"><span class="icon">&#128184;</span> ДДС Месячный</div>
       <div class="nav-item" onclick="showPage('opiu',this)"><span class="icon">&#128200;</span> ОПИУ</div>
       <div class="nav-item" onclick="showPage('balances',this)"><span class="icon">&#128176;</span> Остатки счетов</div>
-      <div class="nav-item" onclick="showPage('item-matching',this)"><span class="icon">&#128269;</span> Товары без цены</div>
       <div class="nav-item" onclick="showPage('cat-mapping',this)"><span class="icon">&#128209;</span> Категории без статьи</div>
       <div class="nav-item" onclick="showPage('load',this)"><span class="icon">&#128228;</span> Загрузка данных</div>
     </nav>
@@ -440,11 +439,6 @@
       <div class="page-title">Остатки счетов</div>
       <div id="balances-grid"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
     </div>
-    <div class="page" id="page-item-matching">
-      <div class="page-title">Товары без цены</div>
-      <p style="font-size:13px;color:#64748b;margin:-10px 0 16px">Товары, проданные по одному названию, но закупленные под слегка другим (обновилась карточка у поставщика/на Kaspi) — из-за этого себестоимость по ним считается приблизительно. Подтверди пары ниже, и расчёт станет точнее — правку самой 1С делать не нужно.</p>
-      <div id="item-matching-content"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
-    </div>
     <div class="page" id="page-cat-mapping">
       <div class="page-title">Категории без статьи</div>
       <p style="font-size:13px;color:#64748b;margin:-10px 0 16px">Новые категории расходов из кассы бухгалтера, для которых ещё не указано, в какую строку ОПиУ их относить (или что они вообще не входят в ОПиУ). Пока категория тут — её сумма учитывается только в ДДС, в ОПиУ не входит.</p>
@@ -454,7 +448,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzx5TkjDDQx4AYUj2e5-p1AoyMvPN75Phuy0YmRth0EAoyRfwWHBFVFW0b0xdKixu_R/exec'; // 15.08: обновлённый деплой (Категории без статьи)
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyVOW3zoBiQuR5Xd4slOYGuTR5u4PUHJYEektP5nMkP7UcvglsWSm0ghp5Dz6VsbmS9/exec'; // 18.08: обновлённый деплой (подкатегории — getSubcategoryMappings/saveSubcategoryMapping)
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -597,6 +591,91 @@ const OPIU_TARGET_LABELS = {
   excluded: '— Не входит в ОПиУ',
 };
 
+// ── ПОДКАТЕГОРИИ (детализация статей IV раздела ОПиУ — Авторасходы/
+// Услуги/Маркетинг) ─────────────────────────────────────────────────
+// Добавлено 18.08. Гульмира завела вручную колонку "Подкатегория" в
+// Журнале (заполнена для части старых строк) — для остальных строк
+// (и особенно для строк из кассы бухгалтера, где бухгалтер часто путает
+// саму категорию, не то что подкатегорию) подкатегория подбирается
+// автоматически по ключевым словам в названии операции, см.
+// guessSubcategory ниже. Правила и точные названия подкатегорий взяты
+// из 785 вручную протегированных строк выгрузки "Журнал под категорию"
+// от 18.08 — keywords проверены построчно по реальным названиям.
+const SUBCATEGORY_RULES = {
+  'авторасходы': {
+    keywords: [
+      [/парковк/i, 'Парковка'],
+      [/мойк/i, 'Мойка'],
+      [/масл/i, 'Масло'],
+      // ВАЖНО: \b (граница слова) в JS regex определяется через \w =
+      // [A-Za-z0-9_] — кириллица в это множество НЕ входит, поэтому \b
+      // вокруг кириллических слов практически не работает (нет перехода
+      // \w/\W между буквой и пробелом). Раньше здесь стояло \bгаз\b —
+      // молча не матчилось НИ РАЗУ (проверено на 785 протегированных
+      // строках), "газ 620"/"газ Алматы" и т.п. падали в дефолт "Прочие".
+      // Вместо границы — негативный lookahead на "ель", чтобы не поймать
+      // "газель" (машина, не топливо).
+      [/газ(?!ель)|бензин|заправк|синойл|аи-?9[25]|дизель/i, 'ГСМ'],
+    ],
+    default: 'Прочие ( запчасти,ремонт идр)', // самая большая и разнородная группа — безопасный дефолт
+  },
+  'услуги': {
+    keywords: [
+      [/уборк/i, 'Уборка'],
+      [/мусор/i, 'Вывоз мусора'],
+      [/картридж/i, 'Прочие ( картридж)'],
+      // См. комментарий про \b и кириллицу в правилах "авторасходы" выше —
+      // здесь та же причина, почему было \b1с\b вместо просто /1с/.
+      [/1с|программ/i, 'Программа'],
+    ],
+    default: 'Сервисы',
+  },
+  'обед':        { keywords: [], default: 'Прочие расходы (обед, канц товары)' },
+  'канц товары': { keywords: [], default: 'Прочие расходы (обед, канц товары)' },
+  'маркетинг': {
+    keywords: [
+      [/таргет/i, 'Таргет'],
+      [/ватсап|whatsapp/i, 'WA рассылка'],
+      [/смм/i, 'СММ'],
+      [/реклам|тикток|вывеск|сату\s*кз/i, 'Рекламма'],
+    ],
+    default: null, // нет уверенного дефолта — уходит на ручную доводку (см. buildCategoryMapping)
+  },
+  'шашу':        { keywords: [], default: 'шашу' },
+  'бонусы':      { keywords: [], default: 'бонусы' },
+  'компенсация': { keywords: [], default: 'компенсация' },
+};
+
+// Подкатегории, доступные для ручного выбора — для страницы "Категории
+// без статьи" (и когда авто-подбор не сработал, см. guessSubcategory).
+const SUBCATEGORY_OPTIONS_BY_BUCKET = {
+  cAvto: ['Парковка', 'ГСМ', 'Мойка', 'Масло', 'Прочие ( запчасти,ремонт идр)'],
+  cUsl:  ['Сервисы', 'Уборка', 'Вывоз мусора', 'Прочие ( картридж)', 'Программа'],
+  mark:  ['Таргет', 'СММ', 'Рекламма', 'WA рассылка'],
+};
+// Обратное соответствие: ключ бакета ОПиУ → категория, по которой
+// SUBCATEGORY_RULES ищет ключевые слова (нужно и там, и там — например
+// при выборе подкатегории для только что классифицированной новой
+// категории на странице "Категории без статьи").
+const BUCKET_TO_SUBCAT_CATEGORY = { cAvto: 'авторасходы', cUsl: 'услуги', mark: 'маркетинг' };
+
+// Определяет подкатегорию строки Журнала по категории (уже приведена к
+// нижнему регистру, как ключи SUBCATEGORY_RULES) и названию операции.
+// subMap — ручные переопределения по точному названию (лист бэкенда
+// "ПодкатегорииСтрок", см. loadSubcategoryOverrides) — сильнее ключевых
+// слов, для строк, которые не удалось распознать автоматически.
+function guessSubcategory(category, name, subMap) {
+  const cat = String(category||'').toLowerCase().trim();
+  const rules = SUBCATEGORY_RULES[cat];
+  if (!rules) return '';
+  const nameKey = String(name||'').toLowerCase().trim();
+  if (subMap && subMap[nameKey]) return subMap[nameKey];
+  for (const [re, sub] of rules.keywords) {
+    if (re.test(name||'')) return sub;
+  }
+  return rules.default || '';
+}
+
 // Сумма по категориям месяца m, отнесённым к бакету key — по дефолтным
 // литералам (OPIU_TARGET_DEFAULTS) ИЛИ по ручному назначению со страницы
 // "Категории без статьи" (dynamicMap). Ручное назначение всегда сильнее
@@ -631,22 +710,24 @@ let _categoryOverridesCache = null;
 let _reportDataCache = null;
 async function getReportData() {
   if (_reportDataCache) return _reportDataCache;
-  const [r1, r2, r3, r4, r5] = await Promise.all([
+  // ИЗМЕНЕНО 18.08: убрали getItemAliases — себестоимость товара теперь
+  // ищется строго по названию из Продаж напрямую в Приходе, без ручного
+  // сопоставления пар (см. itemCostDetailAsOf, страница «Товары без цены»
+  // убрана по просьбе, для совпадения с методологией Power BI).
+  const [r1, r2, r3, r4] = await Promise.all([
     fetch(SCRIPT_URL + '?action=get1CData'),
     fetch(SCRIPT_URL + '?action=getPurchaseLines'),
     fetch(SCRIPT_URL + '?action=getItemDaily'),
-    fetch(SCRIPT_URL + '?action=getItemPrices'),
-    fetch(SCRIPT_URL + '?action=getItemAliases')
+    fetch(SCRIPT_URL + '?action=getItemPrices')
   ]);
-  const [d1c, purchaseLinesR, itemDailyR, itemPricesR, itemAliasesR] = await Promise.all([
-    r1.json(), r2.json(), r3.json(), r4.json(), r5.json()
+  const [d1c, purchaseLinesR, itemDailyR, itemPricesR] = await Promise.all([
+    r1.json(), r2.json(), r3.json(), r4.json()
   ]);
   _reportDataCache = {
     d1c,
     purchaseLines: purchaseLinesR.items || [],
     itemDaily: itemDailyR.items || [],
-    itemPrices: itemPricesR.items || [],
-    itemAliases: itemAliasesR.items || []
+    itemPrices: itemPricesR.items || []
   };
   return _reportDataCache;
 }
@@ -659,6 +740,23 @@ async function loadCategoryOverrides() {
     (d.items||[]).forEach(x => { if (x.category) map[x.category] = x.target; });
   } catch(e) {}
   _categoryOverridesCache = map;
+  return map;
+}
+
+// Кэш ручных переопределений подкатегории по точному названию строки
+// (лист "ПодкатегорииСтрок", см. saveSubcategoryMapping/getSubcategoryMappings
+// на бэкенде) — сброс аналогично _categoryOverridesCache, после сохранения
+// новой доводки в confirmSubcategoryMapping.
+let _subcategoryOverridesCache = null;
+async function loadSubcategoryOverrides() {
+  if (_subcategoryOverridesCache) return _subcategoryOverridesCache;
+  const map = {};
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getSubcategoryMappings');
+    const d = await r.json();
+    (d.items||[]).forEach(x => { if (x.name) map[x.name] = x.subcategory; });
+  } catch(e) {}
+  _subcategoryOverridesCache = map;
   return map;
 }
 
@@ -832,7 +930,6 @@ function showPage(name, el) {
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
-  if (name === 'item-matching') buildItemMatching();
   if (name === 'cat-mapping') buildCategoryMapping();
 }
 
@@ -1788,9 +1885,21 @@ function renderBalances() {
 }
 
 // ── ЗАКУПОЧНАЯ СЕБЕСТОИМОСТЬ ТОВАРА «НА ДАТУ X» ─────────────────────
-// Логика бухгалтера / Power BI (сверено построчно с DAX-мерой Power BI
-// 18.08 — окна 1-2 перевязаны на дату ПОСЛЕДНЕГО ПРИХОДА, чтобы цифры
-// сходились с PBI 1-в-1; см. примечание ниже):
+// ИЗМЕНЕНО 18.08 (по прямой просьбе, для точного совпадения с Power BI):
+// поиск закупочной цены теперь идёт строго по названию товара из Продаж,
+// БЕЗ ручного сопоставления пар «продаётся как → закупается как» (страница
+// «Товары без цены» и лист СоответствиеТоваров убраны). Если под точно
+// таким названием не нашлось ни одного прихода (или все приходы датированы
+// ПОЗЖЕ продажи) — себестоимость = 0, matched=false, как и в чистом Power
+// BI (там для такого случая LastArrivalDate = BLANK).
+// ВАЖНО: это ЖИВЁТ ВНАКЛАДКУ с историческим фактом — 14.08 эту же страницу
+// уже убирали по той же просьбе и в тот же день вернули, потому что разрыв
+// с Power BI в апреле оказался именно из-за неподтверждённых пар (опечатки
+// в названиях). Убрано снова 18.08 осознанно, несмотря на этот прецедент —
+// приоритет на точное совпадение алгоритма с PBI, а не на итоговую точность
+// суммы. Если разрыв с PBI по марже вырастет — с высокой вероятностью корень
+// снова здесь, и об этом стоит вспомнить в первую очередь.
+// Логика (как в PBI, сверено построчно с DAX-мерой 18.08):
 //   Шаг 1. Находим дату последнего прихода этого товара (≤ asOfDate) —
 //          LastArrivalDate. Затем средневзвешенная цена (сумма/кол-во)
 //          по приходам за последний 1 месяц ДО LastArrivalDate (включая
@@ -1799,21 +1908,11 @@ function renderBalances() {
 //          самое, но за последние 3 месяца ДО LastArrivalDate.
 //   Шаг 3. Если и за 3 месяца до LastArrivalDate ничего не нашлось —
 //          берём цену только САМОГО LastArrivalDate, без усреднения.
-//   Шаг 4. Если приходов по товару вообще никогда не было — берём среднюю
-//          цену ПРОДАЖИ этого товара как запасной вариант (закупочную цену
-//          взять неоткуда), см. fallbackPriceMap.
-// ИЗМЕНЕНО 18.08 (по прямой сверке с DAX-формулой Power BI): окна в шагах
-// 1-2 теперь считаются от LastArrivalDate (даты последнего прихода), а НЕ
-// от asOfDate (даты продажи/отчёта), как было раньше с 11.08. Это ровно
-// то, от чего мы раньше сознательно ушли — тогда окно почти всегда
-// попадало в свой же последний приход (сколь угодно старый), и шаг 3
-// практически никогда не срабатывал. В PBI это тоже так: там шаг 1 почти
-// всегда "побеждает" сам по себе. Мы возвращаемся к этой логике осознанно
-// — приоритет сейчас на то, чтобы цифры 1-в-1 сходились с Power BI, а не
-// на то, чтобы шаг 3 (последняя цена без усреднения) реально работал.
-// Шаги 4 и «куплено позже продажи» (ниже) — специфика сайта, в шаблоне
-// PBI, который нам показали, не описаны; оставлены как есть, чтобы не
-// плодить нулевые/некорректные себестоимости на неполных данных.
+//   Шаг 4. Если приходов по товару вообще нет (ни разу, ни раньше продажи,
+//          ни позже) — себестоимость = 0 (как BLANK в Power BI).
+// Окна в шагах 1-2 считаются от LastArrivalDate (даты последнего прихода),
+// а не от asOfDate — из-за этого шаг 3 почти никогда не срабатывает (он и
+// в PBI почти не работает, там тоже почти всегда побеждает шаг 1).
 // Используется и в «Остатке склада» (asOfDate = сегодня), и в себестоимости
 // ОПиУ (asOfDate = точная дата каждой продажи) — чтобы методология не расходилась.
 function groupPurchaseLinesByItem(lines) {
@@ -1823,46 +1922,15 @@ function groupPurchaseLinesByItem(lines) {
   return map;
 }
 // Возвращает { cost, matched } — matched=true, если цена посчитана по
-// реальным приходам этого товара; matched=false, если пришлось взять
-// запасной вариант (среднюю цену продажи, т.к. приходов не нашлось).
-// Нужно для диагностики «сколько выручки посчитано по цене прихода, а
-// сколько — приблизительно» (см. диагностику в ОПиУ).
-//
-// ВАЖНО (баг найден и исправлен 13.08): для поиска приходов (linesByItem)
-// нужно ЗАКУПОЧНОЕ имя товара (после resolveItemName), а для запасной цены
-// (fallbackPriceMap = «ЦеныТоваров») — наоборот, ИСХОДНОЕ ПРОДАННОЕ имя, т.к.
-// этот словарь заполняется на бэкенде только из файлов ПРОДАЖ и алиасы к нему
-// никогда не применяются. Раньше оба поиска шли по одному и тому же (уже
-// подменённому на закупочное) имени — для товаров с подтверждённым алиасом,
-// у которых при этом не нашлось ни одного прихода (шаги 1-3 не сработали),
-// запасная цена искалась по несуществующему в словаре закупочному имени и
-// молча превращалась в 0 вместо реальной средней цены продажи — себестоимость
-// такой продажи занижалась до нуля, а валовая прибыль завышалась на всю
-// сумму этой продажи. soldItem — необязательный параметр с исходным
-// (проданным) именем; если не передан, используется item как раньше.
+// реальным приходам этого товара; matched=false, если приход под точно
+// таким названием (≤ asOfDate) не нашёлся вообще — cost в этом случае 0.
+// matched нужен для диагностики «сколько выручки посчитано по цене прихода,
+// а сколько — вслепую» (см. предупреждение в ОПиУ).
 function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem) {
   const all = linesByItem[item];
-  const fallbackKey = soldItem !== undefined ? soldItem : item;
-  const fallback = (fallbackPriceMap && fallbackPriceMap[fallbackKey]) || 0;
-  if (!all || !all.length) return { cost: fallback, matched: false };
+  if (!all || !all.length) return { cost: 0, matched: false };
   const upTo = all.filter(l => l.date <= asOfDate);
-  if (!upTo.length) {
-    // ДОБАВЛЕНО 15.08 по просьбе: товар покупали, но ПОЗЖЕ этой конкретной
-    // продажи (старый остаток, купленный ещё до начала ведения прихода в
-    // системе) — раньше в этом случае считалось matched=false и себестоимость
-    // бралась как цена ПРОДАЖИ (≈0% маржи, явно неверно — товар точно стоил
-    // денег). Теперь берём цену САМОЙ РАННЕЙ доступной закупки (ближайшей по
-    // времени к продаже, пусть и позже неё) — это единственная реальная цена,
-    // которая вообще есть на этот товар, и она куда точнее нуля. matched
-    // остаётся true — "непроверенным"/"без цены" теперь считается только
-    // товар, по которому прихода нет ВООБЩЕ ни разу, ни раньше, ни позже.
-    const earliestDate = all[0].date; // all отсортирован по возрастанию даты
-    const earliestLines = all.filter(l => l.date === earliestDate);
-    const eQty = earliestLines.reduce((s,l) => s + l.qty, 0);
-    const eSum = earliestLines.reduce((s,l) => s + l.sum, 0);
-    if (eQty > 0) return { cost: eSum / eQty, matched: true };
-    return { cost: fallback, matched: false };
-  }
+  if (!upTo.length) return { cost: 0, matched: false };
   const lastDate = upTo[upTo.length - 1].date; // upTo отсортирован по возрастанию — последний = самый поздний ≤ asOfDate
   // ВАЖНО (баг найден и исправлен 13.08): "N месяцев назад" через голый
   // d.setMonth(d.getMonth()-n) в JS ломается на датах конца месяца — если
@@ -1911,7 +1979,7 @@ function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldI
   const lastDayQty = lastDayLines.reduce((s,l) => s + l.qty, 0);
   const lastDaySum = lastDayLines.reduce((s,l) => s + l.sum, 0);
   if (lastDayQty > 0) return { cost: lastDaySum / lastDayQty, matched: true };
-  return { cost: fallback, matched: false };
+  return { cost: 0, matched: false };
 }
 function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem) {
   return itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem).cost;
@@ -1923,207 +1991,12 @@ function monthEndDate(m) {
   const d = new Date(y, mo, 0); // «нулевой» день следующего месяца = последний день текущего
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
-// Подменяет название проданного товара на его закупочное имя, если пара
-// подтверждена вручную на странице «Товары без цены» (лист
-// СоответствиеТоваров, status='confirmed'). aliasMap: {soldName: purchaseName}.
-function resolveItemName(item, aliasMap) {
-  return (aliasMap && aliasMap[item]) || item;
-}
 
-// ── ТОВАРЫ БЕЗ ЦЕНЫ (ручное сопоставление названий продажа↔приход) ──
-//
-// Часть проданных товаров не находит закупочную цену не потому что их не
-// закупали, а потому что название чуть отличается (обновилась карточка
-// товара у поставщика/на Kaspi). Проверено на реальных данных: похожесть
-// текста тут ненадёжна для АВТОматического сопоставления — модели вроде
-// "Samsung QE85..." и "Samsung QE65..." (85 vs 65 дюймов, РАЗНЫЕ товары)
-// текстуально почти идентичны. Поэтому только подсказки, решение — человек.
-// (Страницу убирали 14.08 по просьбе пользователя, вернули в тот же день —
-// оказалось, разрыв с Power BI в апреле именно из-за неподтверждённых пар.)
-function bigrams(s) {
-  s = String(s||'').toLowerCase();
-  const set = new Set();
-  for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i+2));
-  return set;
-}
-function diceSim(a, b) {
-  const A = bigrams(a), B = bigrams(b);
-  if (!A.size || !B.size) return 0;
-  let inter = 0;
-  A.forEach(bg => { if (B.has(bg)) inter++; });
-  return 2 * inter / (A.size + B.size);
-}
-
-async function buildItemMatching() {
-  const el = document.getElementById('item-matching-content');
-  el.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу товары без цены и подбираю кандидатов...</div>';
-
-  // ИСПРАВЛЕНО 15.08: раньше здесь не было ни таймаута, ни обработки ошибки —
-  // если бэкенд не отвечал, спиннер "Ищу товары..." висел вечно без единого
-  // сообщения — со стороны выглядело как "кнопка не работает". Теперь при
-  // таймауте/ошибке — понятное сообщение с кнопкой повтора.
-  //
-  // ИСПРАВЛЕНО 15.08 (главное): раньше "непроверенным" считался товар только
-  // если его названия НИ РАЗУ не было в приходе (purchaseSet.has). Это не то
-  // же самое, что реально "нет цены" — в itemCostDetailAsOf (та же логика,
-  // что в ОПиУ) matched=false ЕЩЁ и когда товар покупали, но ПОЗЖЕ даты этой
-  // конкретной продажи (старый остаток, купленный ещё до того, как начали
-  // вести приход в системе) — old upTo пустой. Из-за этого расхождения
-  // страница показывала "всё проверено", хотя в ОПиУ висело 306 млн ₸
-  // "слепой" выручки — эта страница их просто не видела. Теперь строим
-  // список ТЕМ ЖЕ способом, что и диагностика в ОПиУ (по каждой продаже
-  // конкретной датой), гарантированно совпадает.
-  let purchaseLines = [], itemDaily = [], priceRows = [], aliases = [];
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
-  try {
-    const [r1, r2, r3, r4] = await Promise.all([
-      fetch(SCRIPT_URL + '?action=getPurchaseLines', {signal: controller.signal}),
-      fetch(SCRIPT_URL + '?action=getItemDaily', {signal: controller.signal}),
-      fetch(SCRIPT_URL + '?action=getItemPrices', {signal: controller.signal}),
-      fetch(SCRIPT_URL + '?action=getItemAliases', {signal: controller.signal})
-    ]);
-    if (!r1.ok || !r2.ok || !r3.ok || !r4.ok) throw new Error('сервер ответил с ошибкой (HTTP ' + [r1.status,r2.status,r3.status,r4.status].join('/') + ')');
-    purchaseLines = (await r1.json()).items || [];
-    itemDaily     = (await r2.json()).items || [];
-    priceRows     = (await r3.json()).items || [];
-    aliases       = (await r4.json()).items || [];
-  } catch(e) {
-    const reason = e.name === 'AbortError' ? 'сервер не ответил за 25 секунд (похоже на перегруз Apps Script)' : e.message;
-    el.innerHTML = `<div class="empty-state"><div class="emoji">&#9888;</div>Не удалось загрузить: ${reason}<br><button class="btn btn-save" style="margin-top:10px" onclick="buildItemMatching()">Повторить</button></div>`;
-    return;
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  const fK = v => Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+' млн ₸' : fmt(v)+' ₸';
-  const purchaseNames = [...new Set(purchaseLines.map(p => p.item).filter(Boolean))];
-  const linesByItem = groupPurchaseLinesByItem(purchaseLines);
-  const priceMap = {}; priceRows.forEach(p => { if (p.product) priceMap[p.product] = p.avgPrice || 0; });
-  const qtyByProduct = {}; priceRows.forEach(p => { if (p.product) qtyByProduct[p.product] = +p.sumQty||0; });
-
-  const aliasStatus = {}, aliasTarget = {}, aliasDate = {};
-  aliases.forEach(a => {
-    aliasStatus[a.soldName] = a.status;
-    aliasDate[a.soldName] = a.date;
-    if (a.status === 'confirmed' && a.purchaseName) aliasTarget[a.soldName] = a.purchaseName;
-  });
-
-  // Пересчёт по каждой продаже конкретной датой — та же формула, что в
-  // диагностике ОПиУ (itemCostDetailAsOf), сгруппировано по исходному
-  // ПРОДАННОМУ названию, чтобы решение "это тот же товар" принималось по
-  // тому имени, которое реально видно в 1С Продажах. Плюс — по месяцам
-  // (byMonth), чтобы видно было не только "какой товар", но и "в каком
-  // месяце именно эта сумма" — как в диагностике ОПиУ, только с разбивкой
-  // по конкретным товарам внутри месяца.
-  const blindRevByProduct = {}, blindQtyByProduct = {}, blindByMonthProduct = {};
-  itemDaily.forEach(row => {
-    if (!row.item || !row.qty) return;
-    const resolved = resolveItemName(row.item, aliasTarget);
-    const { matched } = itemCostDetailAsOf(resolved, String(row.date||''), linesByItem, priceMap, row.item);
-    if (matched) return;
-    blindRevByProduct[row.item] = (blindRevByProduct[row.item]||0) + (+row.revenue||0);
-    blindQtyByProduct[row.item] = (blindQtyByProduct[row.item]||0) + (+row.qty||0);
-    const mo = String(row.date||'').slice(0,7);
-    if (mo) {
-      if (!blindByMonthProduct[mo]) blindByMonthProduct[mo] = {};
-      blindByMonthProduct[mo][row.item] = (blindByMonthProduct[mo][row.item]||0) + (+row.revenue||0);
-    }
-  });
-
-  const allBlind = Object.keys(blindRevByProduct)
-    .map(product => ({
-      product,
-      revenue: blindRevByProduct[product],
-      qty: blindQtyByProduct[product] || qtyByProduct[product] || 0,
-      status: aliasStatus[product] || 'new'
-    }))
-    .sort((a,b) => b.revenue - a.revenue);
-
-  const unmatched = allBlind.filter(u => u.status === 'new');
-  // ИЗМЕНЕНО 15.08: раньше сюда попадали и "подтверждён, но старый" (пара
-  // сопоставлена, но приход датирован позже продажи), и "пропущен". После
-  // того как itemCostDetailAsOf научили брать цену САМОЙ РАННЕЙ доступной
-  // закупки, если более ранней нет (см. комментарий там же), "подтверждён,
-  // но старый" больше НЕ попадает сюда — для него теперь есть настоящая
-  // цена. Остаются только "пропущен" — реально нет ни одного прихода под
-  // этим товаром ни разу, ни раньше, ни позже.
-  const reviewedBlind = allBlind.filter(u => u.status !== 'new');
-  const reviewedTotal = reviewedBlind.reduce((s,u)=>s+u.revenue,0);
-
-  const reviewedBlock = reviewedBlind.length ? `
-    <div class="card" style="margin-top:20px;background:#f8fafc;border:1px solid #e2e8f0">
-      <div style="font-weight:700;color:#475569;margin-bottom:4px">Пропущено ранее — прихода для них нет нигде, ни разу (${reviewedBlind.length} шт · ${fK(reviewedTotal)} суммарно)</div>
-      <div style="font-size:12px;color:#94a3b8;margin-bottom:10px">Справочно, без действий. Себестоимость по ним по-прежнему считается как цена продажи (≈0% маржи), потому что вообще ни одной закупки этого товара в системе нет — ни раньше продажи, ни позже. Если знаешь, что товар точно закупался — стоит вручную поднять старый приходный документ.</div>
-      <div style="font-size:12.5px;line-height:2">
-        ${reviewedBlind.slice(0,30).map(u => `<div style="display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #f1f5f9;padding:3px 0"><span>${u.product}${u.status === 'confirmed' ? ' <span style="color:#cbd5e1">· подтверждён, но приход всё равно не нашёлся</span>' : ''}</span><span style="white-space:nowrap;color:#64748b">${fK(u.revenue)}</span></div>`).join('')}
-        ${reviewedBlind.length>30 ? `<div style="color:#94a3b8;padding-top:6px">…и ещё ${reviewedBlind.length-30}, суммарно мельче</div>` : ''}
-      </div>
-    </div>` : '';
-
-  // Добавлено 15.08 по просьбе: та же сумма (307 млн и т.п.), но разбитая
-  // по месяцам продажи и товарам внутри каждого месяца — чтобы было видно
-  // не только "какой товар", а "в каком месяце сколько повисло" вместе с
-  // конкретными товарами, а не только общий % как в ОПиУ.
-  const reviewedSet = new Set(reviewedBlind.map(u => u.product));
-  const monthsWithBlind = Object.keys(blindByMonthProduct).sort();
-  const monthBlock = monthsWithBlind.length ? `
-    <div class="card" style="margin-top:20px;background:#f8fafc;border:1px solid #e2e8f0">
-      <div style="font-weight:700;color:#475569;margin-bottom:4px">То же самое, но по месяцам продажи</div>
-      <div style="font-size:12px;color:#94a3b8;margin-bottom:12px">Справочно. Товары, у которых до сих пор нет цены прихода, сгруппированные по месяцу, в котором они были проданы.</div>
-      ${monthsWithBlind.map(mo => {
-        const items = Object.entries(blindByMonthProduct[mo]).filter(([p]) => reviewedSet.has(p)).sort((a,b) => b[1]-a[1]);
-        if (!items.length) return '';
-        const moTotal = items.reduce((s,[,v]) => s+v, 0);
-        return `<div style="margin-bottom:14px">
-          <div style="font-weight:600;font-size:13px;color:#334155;margin-bottom:4px">${monthLabel(mo,true)} — ${fK(moTotal)}</div>
-          <div style="font-size:12px;line-height:1.9;padding-left:8px">
-            ${items.slice(0,10).map(([p,v]) => `<div style="display:flex;justify-content:space-between;gap:10px;color:#64748b;border-bottom:1px solid #f1f5f9;padding:2px 0"><span>${p}</span><span style="white-space:nowrap">${fK(v)}</span></div>`).join('')}
-            ${items.length>10 ? `<div style="color:#94a3b8;padding-top:4px">…и ещё ${items.length-10}</div>` : ''}
-          </div>
-        </div>`;
-      }).join('')}
-    </div>` : '';
-
-  if (!unmatched.length) {
-    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все проданные товары либо нашли цену прихода, либо уже проверены</div>' + reviewedBlock + monthBlock;
-    return;
-  }
-
-  const totalRev = unmatched.reduce((s,u)=>s+u.revenue,0);
-
-  const cardHtml = u => {
-    const candidates = purchaseNames
-      .map(name => ({ name, sim: diceSim(u.product, name) }))
-      .filter(c => c.sim >= 0.55)
-      .sort((a,b) => b.sim - a.sim)
-      .slice(0, 3);
-    const idAttr = btoa(unescape(encodeURIComponent(u.product))).replace(/[^a-zA-Z0-9]/g,'');
-    return `<div class="card" id="im-${idAttr}" style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
-        <span style="font-size:14px;font-weight:600">${u.product}</span>
-        <span style="font-size:14px;font-weight:600;white-space:nowrap">${fK(u.revenue)}</span>
-      </div>
-      <div style="font-size:12px;color:#94a3b8;margin:2px 0 10px">Продано ${fmt(u.qty)} шт · цены прихода нет</div>
-      ${candidates.length ? `
-        <div style="font-size:11px;color:#64748b;margin-bottom:6px">Похожие товары в приходах:</div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          ${candidates.map(c => `
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px">
-              <span style="font-size:12.5px;flex:1">${c.name}</span>
-              <div style="display:flex;gap:6px;white-space:nowrap">
-                <button class="btn btn-save" style="padding:4px 10px;font-size:11px" onclick="confirmItemAlias('${escJs(u.product)}','${escJs(c.name)}','im-${idAttr}')">Это тот же</button>
-              </div>
-            </div>`).join('')}
-        </div>` : `<div style="font-size:12px;color:#94a3b8">Похожих товаров в приходах не нашлось</div>`}
-      <button class="btn btn-clear" style="padding:4px 10px;font-size:11px;margin-top:10px" onclick="confirmItemAlias('${escJs(u.product)}','','im-${idAttr}')">Пропустить (это точно другой товар)</button>
-    </div>`;
-  };
-
-  el.innerHTML =
-    `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unmatched.length} товаров · ${fK(totalRev)} суммарно · отсортировано по сумме продаж</div>` +
-    unmatched.map(cardHtml).join('') + reviewedBlock + monthBlock;
-}
+// ── УДАЛЕНО 18.08: раньше здесь была ручная страница «Товары без цены»
+// (bigrams/diceSim похожесть, buildItemMatching, confirmItemAlias, лист
+// СоответствиеТоваров) — убрана по просьбе, поиск закупочной цены теперь
+// строго по названию, см. itemCostDetailAsOf выше и предупреждение об этом
+// прецеденте в комментарии там же.
 
 // Экранирует строку для безопасной вставки в onclick-атрибут: и для JS-строки
 // в одинарных кавычках (\ и '), И для самого HTML-атрибута, который снаружи
@@ -2137,43 +2010,6 @@ function escJs(s) {
   return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
 }
 
-async function confirmItemAlias(soldName, purchaseName, cardId) {
-  // Таймаут 15с + отключение кнопок карточки на время сохранения + проверка
-  // d.success перед тем как убрать карточку (баг с зависающими кнопками
-  // найден и исправлен 14.08 — раньше был голый fetch() без этого).
-  const status = purchaseName ? 'confirmed' : 'skipped';
-  const card = document.getElementById(cardId);
-  const buttons = card ? card.querySelectorAll('button') : [];
-  buttons.forEach(b => b.disabled = true);
-  if (card) card.style.opacity = '0.5';
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const r = await fetch(SCRIPT_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: JSON.stringify({ action: 'saveItemAlias', data: { soldName, purchaseName, status } }),
-      signal: controller.signal
-    });
-    const d = await r.json();
-    if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
-    if (card) card.remove();
-    // Сопоставление товара напрямую влияет на себестоимость в ОПиУ —
-    // сбрасываем кэш отчётных данных, чтобы следующее «Сформировать»
-    // сразу учло новую пару, а не ждало отдельного «Обновить данные».
-    _reportDataCache = null;
-    showToast(purchaseName ? 'Сопоставлено' : 'Пропущено', 'success');
-  } catch(e) {
-    if (card) { card.style.opacity = '1'; }
-    buttons.forEach(b => b.disabled = false);
-    const reason = e.name === 'AbortError' ? 'сервер не ответил за 15 секунд' : e.message;
-    showToast('Не удалось сохранить (' + reason + '), попробуй ещё раз', 'error');
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 // ── КАТЕГОРИИ БЕЗ СТАТЬИ (какую строку ОПиУ давать новым категориям
 // из кассы бухгалтера — вместо того чтобы каждый раз просить поправить
 // код, см. OPIU_TARGET_DEFAULTS/bucketSum/loadCategoryOverrides выше) ──
@@ -2182,6 +2018,7 @@ async function buildCategoryMapping() {
   el.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу категории без статьи...</div>';
 
   const dynamicMap = await loadCategoryOverrides();
+  const subMap = await loadSubcategoryOverrides();
   const sums = {}, counts = {};
   allData.filter(r => r.type === 'расход').forEach(r => {
     const c = (r.category||'').toLowerCase().trim();
@@ -2195,14 +2032,35 @@ async function buildCategoryMapping() {
     .map(c => ({ category: c, sum: sums[c], count: counts[c] }))
     .sort((a,b) => b.sum - a.sum);
 
-  if (!unclassified.length) {
-    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все категории расходов уже определены</div>';
+  // Строки известной категории (авторасходы/услуги/маркетинг), у которой
+  // ЕСТЬ подкатегории, но по названию конкретной операции подкатегория не
+  // угадалась (только "маркетинг" не имеет дефолта — см. SUBCATEGORY_RULES) —
+  // и ещё не назначена вручную (subMap). Группируем по точному названию,
+  // а не по строкам — одно решение закрывает все одинаковые названия сразу.
+  const unSub = {}; // name -> {category, sum, count}
+  allData.filter(r => r.type === 'расход').forEach(r => {
+    const c = (r.category||'').toLowerCase().trim();
+    if (!SUBCATEGORY_RULES[c]) return;
+    const nameKey = String(r.name||'').toLowerCase().trim();
+    if (!nameKey) return;
+    if (subMap[nameKey]) return; // уже назначено вручную
+    if (guessSubcategory(c, r.name, subMap)) return; // угадалось по ключевым словам/дефолту
+    if (!unSub[nameKey]) unSub[nameKey] = { category: c, name: r.name, sum: 0, count: 0 };
+    unSub[nameKey].sum += toNum(r.amount);
+    unSub[nameKey].count += 1;
+  });
+  const unSubList = Object.values(unSub).sort((a,b) => b.sum - a.sum);
+
+  if (!unclassified.length && !unSubList.length) {
+    el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все категории и подкатегории расходов уже определены</div>';
     return;
   }
 
   const fK = v => Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+' млн ₸' : fmt(v)+' ₸';
   const optionsHtml = Object.entries(OPIU_TARGET_LABELS)
     .map(([key,label]) => `<option value="${key}">${label}</option>`).join('');
+  const subOptionsHtml = bucket => (SUBCATEGORY_OPTIONS_BY_BUCKET[bucket]||[])
+    .map(s => `<option value="${s}">${s}</option>`).join('');
 
   const cardHtml = u => {
     const idAttr = 'cm-' + btoa(unescape(encodeURIComponent(u.category))).replace(/[^a-zA-Z0-9]/g,'');
@@ -2214,23 +2072,73 @@ async function buildCategoryMapping() {
       </div>
       <div style="font-size:12px;color:#94a3b8;margin:2px 0 10px">${fmt(u.count)} ${opCount} · пока учитывается только в ДДС, в ОПиУ не входит</div>
       <div style="display:flex;gap:8px;align-items:center">
-        <select id="sel-${idAttr}" style="flex:1;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px">
+        <select id="sel-${idAttr}" style="flex:1;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px" onchange="toggleSubcatSelect('${idAttr}')">
           ${optionsHtml}
         </select>
         <button class="btn btn-save" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="confirmCategoryMapping('${escJs(u.category)}','${idAttr}')">Сохранить</button>
       </div>
+      <div id="subsel-${idAttr}" style="display:none;margin-top:8px">
+        <select id="sub-${idAttr}" style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px">
+        </select>
+      </div>
     </div>`;
   };
 
-  el.innerHTML =
-    `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unclassified.length} категор${unclassified.length===1?'ия':(unclassified.length<5?'ии':'ий')} без статьи ОПиУ</div>` +
-    unclassified.map(cardHtml).join('');
+  // Карточка доводки подкатегории по названию (без выбора статьи ОПиУ —
+  // категория уже известна, нужна только подкатегория).
+  const subCardHtml = u => {
+    const idAttr = 'cs-' + btoa(unescape(encodeURIComponent(u.name))).replace(/[^a-zA-Z0-9]/g,'');
+    const bucket = Object.keys(BUCKET_TO_SUBCAT_CATEGORY).find(k => BUCKET_TO_SUBCAT_CATEGORY[k] === u.category);
+    const opCount = u.count===1 ? 'операция' : (u.count<5 ? 'операции' : 'операций');
+    return `<div class="card" id="${idAttr}" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+        <span style="font-size:14px;font-weight:600">${u.name}</span>
+        <span style="font-size:14px;font-weight:600;white-space:nowrap">${fK(u.sum)}</span>
+      </div>
+      <div style="font-size:12px;color:#94a3b8;margin:2px 0 10px">${fmt(u.count)} ${opCount} · категория «${u.category}», не угадалась подкатегория</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="sel-${idAttr}" style="flex:1;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px">
+          ${bucket ? subOptionsHtml(bucket) : ''}
+        </select>
+        <button class="btn btn-save" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="confirmSubcategoryMapping('${escJs(u.name)}','${idAttr}')">Сохранить</button>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  if (unclassified.length) {
+    html += `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unclassified.length} категор${unclassified.length===1?'ия':(unclassified.length<5?'ии':'ий')} без статьи ОПиУ</div>` +
+      unclassified.map(cardHtml).join('');
+  }
+  if (unSubList.length) {
+    html += `<div style="font-size:13px;color:#64748b;margin:${unclassified.length?'22px':'0'} 0 14px">Подкатегории без совпадения (${unSubList.length}) — категория известна, подкатегория не распозналась по названию</div>` +
+      unSubList.map(subCardHtml).join('');
+  }
+  el.innerHTML = html;
+}
+
+// Показывает/скрывает выбор подкатегории под селектом статьи ОПиУ —
+// только для бакетов, у которых вообще есть подкатегории (SUBCATEGORY_OPTIONS_BY_BUCKET).
+function toggleSubcatSelect(idAttr) {
+  const target = document.getElementById('sel-' + idAttr).value;
+  const wrap = document.getElementById('subsel-' + idAttr);
+  const sub = document.getElementById('sub-' + idAttr);
+  const opts = SUBCATEGORY_OPTIONS_BY_BUCKET[target];
+  if (opts) {
+    sub.innerHTML = opts.map(s => `<option value="${s}">${s}</option>`).join('');
+    wrap.style.display = 'block';
+  } else {
+    wrap.style.display = 'none';
+  }
 }
 
 async function confirmCategoryMapping(category, cardId) {
   const card = document.getElementById(cardId);
   const sel = document.getElementById('sel-' + cardId);
   const target = sel ? sel.value : 'excluded';
+  const subEl = document.getElementById('sub-' + cardId);
+  const subWrap = document.getElementById('subsel-' + cardId);
+  const subcategory = (subWrap && subWrap.style.display !== 'none' && subEl) ? subEl.value : '';
   const controls = card ? card.querySelectorAll('button, select') : [];
   controls.forEach(b => b.disabled = true);
   if (card) card.style.opacity = '0.5';
@@ -2241,7 +2149,7 @@ async function confirmCategoryMapping(category, cardId) {
     const r = await fetch(SCRIPT_URL, {
       method: 'POST',
       headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: JSON.stringify({ action: 'saveCategoryMapping', data: { category, target } }),
+      body: JSON.stringify({ action: 'saveCategoryMapping', data: { category, target, subcategory } }),
       signal: controller.signal
     });
     const d = await r.json();
@@ -2249,6 +2157,42 @@ async function confirmCategoryMapping(category, cardId) {
     _categoryOverridesCache = null; // сброс кэша — ОПиУ/ДДС подхватят назначение на следующем открытии
     if (card) card.remove();
     showToast('Сохранено — ' + (OPIU_TARGET_LABELS[target] || target), 'success');
+  } catch(e) {
+    if (card) card.style.opacity = '1';
+    controls.forEach(b => b.disabled = false);
+    const reason = e.name === 'AbortError' ? 'сервер не ответил за 15 секунд' : e.message;
+    showToast('Не удалось сохранить (' + reason + '), попробуй ещё раз', 'error');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Доводка подкатегории по точному названию строки (см. saveSubcategoryMapping
+// на бэкенде и unSub/unSubList выше) — категория уже известна и корректна,
+// назначаем только подкатегорию, дальше все строки с таким же названием
+// подставят её автоматически через guessSubcategory/subMap.
+async function confirmSubcategoryMapping(name, cardId) {
+  const card = document.getElementById(cardId);
+  const sel = document.getElementById('sel-' + cardId);
+  const subcategory = sel ? sel.value : '';
+  const controls = card ? card.querySelectorAll('button, select') : [];
+  controls.forEach(b => b.disabled = true);
+  if (card) card.style.opacity = '0.5';
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const r = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action: 'saveSubcategoryMapping', data: { name, subcategory } }),
+      signal: controller.signal
+    });
+    const d = await r.json();
+    if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
+    _subcategoryOverridesCache = null; // сброс кэша — ОПиУ подхватит назначение на следующем открытии
+    if (card) card.remove();
+    showToast('Сохранено — ' + subcategory, 'success');
   } catch(e) {
     if (card) card.style.opacity = '1';
     controls.forEach(b => b.disabled = false);
@@ -2269,23 +2213,17 @@ async function buildDailyReport() {
   const el = document.getElementById('daily-report-content');
   el.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка отчёта...</div>';
 
-  let stock = [], prices = [], purchaseLines = [], aliases = [];
+  let stock = [], prices = [], purchaseLines = [];
   try {
-    const [r1, r2, r4, r5] = await Promise.all([
+    const [r1, r2, r4] = await Promise.all([
       fetch(SCRIPT_URL + '?action=getStockBalance'),
       fetch(SCRIPT_URL + '?action=getItemPrices'),
-      fetch(SCRIPT_URL + '?action=getPurchaseLines'),
-      fetch(SCRIPT_URL + '?action=getItemAliases')
+      fetch(SCRIPT_URL + '?action=getPurchaseLines')
     ]);
     stock   = (await r1.json()).items || [];
     prices  = (await r2.json()).items || [];
     purchaseLines = (await r4.json()).items || [];
-    aliases = (await r5.json()).items || [];
   } catch(e) {}
-  // Подтверждённые вручную пары «продаётся как → закупается как» (страница
-  // «Товары без цены») — резолвим ПЕРЕД поиском закупочной цены.
-  const itemAliasMap = {};
-  aliases.forEach(a => { if (a.status === 'confirmed' && a.purchaseName) itemAliasMap[a.soldName] = a.purchaseName; });
 
   // Дата отчёта — из выбора на странице (по умолчанию сегодня). Позволяет
   // открыть прошедший день и свериться с кассой бухгалтера за ту же дату,
@@ -2389,7 +2327,7 @@ async function buildDailyReport() {
   const stockByCity = {};
   const inactiveStock = {}; // city -> { qty, value }
   stock.forEach(s => {
-    const price = itemCostAsOf(resolveItemName(s.product, itemAliasMap), today, linesByItem, priceMap, s.product);
+    const price = itemCostAsOf(s.product, today, linesByItem, priceMap, s.product);
     const val = (+s.qty||0) * price;
     if (isActiveStock(s.city)) {
       // Для отображения активные склады сворачиваются в укрупнённый «город»
@@ -2835,12 +2773,18 @@ async function buildOPIU() {
   // нашло цену прихода и посчитано по запасному варианту (средняя цена
   // продажи, ≈0% маржи по этому товару) — см. itemCostDetailAsOf.matched.
   const unmatchedRevM = {}, trackedRevM = {};
+  // Товары с себестоимостью = 0 за период (нет совпадения в Приходе по
+  // точному названию, см. itemCostDetailAsOf) — накапливаем по товару,
+  // для read-only блока диагностики ниже (см. task #148, добавлено 18.08
+  // взамен убранной страницы "Товары без цены" — это просто список для
+  // информации, никаких кнопок сопоставления/подтверждения здесь нет).
+  const zeroCostByItem = {};
   try {
     // Раньше эти 5 запросов уходили на сервер заново при каждом клике
     // «Сформировать» (даже просто при смене периода). getReportData()
     // кэширует их на всю сессию — сеть дёргаем только один раз, пока не
     // нажата «Обновить данные».
-    const { d1c: d, purchaseLines, itemDaily, itemPrices, itemAliases } = await getReportData();
+    const { d1c: d, purchaseLines, itemDaily, itemPrices } = await getReportData();
     (d.sales||[]).forEach(s => {
       const mo = String(s.month||'');
       if (mo) revM[mo] = (revM[mo]||0) + (+s.revenue||0);
@@ -2861,20 +2805,25 @@ async function buildOPIU() {
     // там кассовый метод (реальные платежи), это осознанно другая метрика.
     const priceMap = {};
     itemPrices.forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
-    // Подтверждённые пары «продаётся как → закупается как» (страница
-    // «Товары без цены») — резолвим ПЕРЕД поиском закупочной цены, чтобы
-    // «└ без цены прихода» ниже тоже посчиталась уже с их учётом.
-    const itemAliasMap = {};
-    itemAliases.forEach(a => { if (a.status === 'confirmed' && a.purchaseName) itemAliasMap[a.soldName] = a.purchaseName; });
     const linesByItem = groupPurchaseLinesByItem(purchaseLines);
     itemDaily.forEach(row => {
       const dt = String(row.date||'');
       const mo = dt.slice(0,7);
       if (!mo || !row.qty) return;
-      const { cost, matched } = itemCostDetailAsOf(resolveItemName(row.item, itemAliasMap), dt, linesByItem, priceMap, row.item);
+      const { cost, matched } = itemCostDetailAsOf(row.item, dt, linesByItem, priceMap, row.item);
       cogsM[mo] = (cogsM[mo]||0) + row.qty * cost;
       trackedRevM[mo] = (trackedRevM[mo]||0) + (+row.revenue||0);
-      if (!matched) unmatchedRevM[mo] = (unmatchedRevM[mo]||0) + (+row.revenue||0);
+      if (!matched) {
+        unmatchedRevM[mo] = (unmatchedRevM[mo]||0) + (+row.revenue||0);
+        // Копим ПОМЕСЯЧНО (не сразу суммарно) — сам блок ниже покажет только
+        // те месяцы, что попали в выбранный период отчёта (переменная cols,
+        // вычисляется позже, после выбора периода в селекторе).
+        const key = row.item || '(без названия)';
+        if (!zeroCostByItem[key]) zeroCostByItem[key] = {};
+        if (!zeroCostByItem[key][mo]) zeroCostByItem[key][mo] = { revenue: 0, qty: 0 };
+        zeroCostByItem[key][mo].revenue += (+row.revenue||0);
+        zeroCostByItem[key][mo].qty += row.qty;
+      }
     });
 
     // Комиссия Kaspi-маркетплейса — загружается отдельно из банковских выписок
@@ -2901,7 +2850,15 @@ async function buildOPIU() {
   const multi = cols.length > 1;
 
   const dynamicMap = await loadCategoryOverrides();
+  // Подкатегории (Авторасходы/Услуги/Маркетинг) — см. SUBCATEGORY_RULES/
+  // guessSubcategory выше. subMap — ручные переопределения по названию
+  // (страница "Категории без статьи", раздел "Подкатегории без совпадения").
+  const subMap = await loadSubcategoryOverrides();
   const catM = {};
+  // catSubM[месяц][категория][подкатегория] = сумма — только для категорий,
+  // у которых есть подкатегории (SUBCATEGORY_RULES); используется ниже для
+  // раскрывающейся детализации строк "Авторасходы"/"Услуги"/"Маркетинг".
+  const catSubM = {};
   allData.filter(r => r.type==='расход').forEach(r => {
     // ОПИУ группирует по месяцу НАЧИСЛЕНИЯ (period), а не по дате оплаты.
     // Если period не указан (старые строки/большинство операций) — берём месяц из даты.
@@ -2936,6 +2893,18 @@ async function buildOPIU() {
     if(!catM[m]) catM[m] = {};
     const c = (r.category||'').toLowerCase();
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
+    if (SUBCATEGORY_RULES[c]) {
+      // Своя строка Журнала может нести ручную подкатегорию в колонке
+      // "Подкатегория" (r['Подкатегория']) — она в приоритете; иначе
+      // подбираем автоматически (ключевые слова / ручная доводка по
+      // названию из subMap), см. guessSubcategory.
+      const sub = (r['Подкатегория'] && String(r['Подкатегория']).trim())
+                  || guessSubcategory(c, r.name, subMap)
+                  || 'Без подкатегории';
+      if (!catSubM[m]) catSubM[m] = {};
+      if (!catSubM[m][c]) catSubM[m][c] = {};
+      catSubM[m][c][sub] = (catSubM[m][c][sub]||0) + toNum(r.amount);
+    }
   });
   const calc = m => {
     const B = key => bucketSum(catM, m, key, dynamicMap);
@@ -3025,8 +2994,46 @@ async function buildOPIU() {
       .map(m => `${monthLabel(m,true)}: ${fmt(pm[m].unmatchedRev)} ₸ (${pctS(pm[m].unmatchedRev, pm[m].trackedRev)} от выручки месяца)`)
       .join('<br>');
     html += '<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">' +
-      '<div style="font-weight:700;color:#991b1b;margin-bottom:8px">&#9888; Себестоимость части продаж посчитана "вслепую" — ' + pctS(tot.unmatchedRev, tot.trackedRev) + ' от отслеживаемой выручки за период (' + fmt(tot.unmatchedRev) + ' ₸)</div>' +
-      '<div style="font-size:12px;color:#991b1b;line-height:1.7">Для этих товаров нет ни одного прихода в системе вообще — ни раньше даты продажи, ни позже (с 15.08 цена ближайшей по времени закупки, даже если она задним числом позже продажи, уже используется автоматически — здесь остались только по-настоящему "без единого прихода"). Себестоимость взята как средняя цена продажи (≈0% маржи по ним) — это занижает валовую прибыль ровно на эту сумму. Устраняется на странице «Товары без цены»: привяжи их к похожим товарам из приходов (опечатки/другое написание одного и того же товара).<br><br>' + perMonth + '</div></div>';
+      '<div style="font-weight:700;color:#991b1b;margin-bottom:8px">&#9888; Себестоимость части продаж — 0 (нет прихода) — ' + pctS(tot.unmatchedRev, tot.trackedRev) + ' от отслеживаемой выручки за период (' + fmt(tot.unmatchedRev) + ' ₸)</div>' +
+      '<div style="font-size:12px;color:#991b1b;line-height:1.7">Для этих товаров под точно таким названием, как в Продажах, не нашлось ни одного прихода в Приходе (ни раньше даты продажи, ни позже) — себестоимость взята как 0 (100% маржи по ним, как в Power BI при отсутствии совпадения по названию), это завышает валовую прибыль ровно на эту сумму. Причина обычно — опечатка или другое написание названия товара между файлами Продаж и Прихода.<br><br>' + perMonth + '</div></div>';
+
+    // Блок по товарам (не по месяцам, как выше) — read-only список, что
+    // именно попадает в эту сумму, отсортировано по выручке. Добавлено
+    // 18.08 взамен убранной страницы "Товары без цены" (там было ручное
+    // сопоставление похожих названий; здесь просто видно, какие товары и
+    // на какую сумму сейчас считаются с нулевой себестоимостью за период).
+    const itemRows = Object.entries(zeroCostByItem)
+      .map(([item, byMonth]) => {
+        let revenue = 0, qty = 0;
+        cols.forEach(m => { const v = byMonth[m]; if (v) { revenue += v.revenue; qty += v.qty; } });
+        return { item, revenue, qty };
+      })
+      .filter(x => x.revenue > 0)
+      .sort((a,b) => b.revenue - a.revenue);
+    if (itemRows.length) {
+      const rowsHtml = itemRows.slice(0, 50).map(x =>
+        `<tr><td style="padding:5px 8px;border-bottom:1px solid #fecaca">${x.item}</td>` +
+        `<td style="padding:5px 8px;border-bottom:1px solid #fecaca;text-align:right;white-space:nowrap">${fmt(x.qty)}</td>` +
+        `<td style="padding:5px 8px;border-bottom:1px solid #fecaca;text-align:right;white-space:nowrap">${fmt(x.revenue)} ₸</td></tr>`
+      ).join('');
+      const more = itemRows.length > 50 ? `<div style="font-size:11px;color:#991b1b;margin-top:6px">…и ещё ${itemRows.length-50} товар(ов)</div>` : '';
+      html += `<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">
+        <div style="font-weight:700;color:#991b1b;margin-bottom:8px;cursor:pointer" onclick="const b=this.nextElementSibling;const h=b.style.display==='none';b.style.display=h?'block':'none';this.querySelector('span').textContent=h?'▾':'▸';">
+          <span style="display:inline-block;width:13px">▸</span>Товары с нулевой себестоимостью за период (${itemRows.length})
+        </div>
+        <div style="display:none">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;color:#7f1d1d">
+            <thead><tr>
+              <th style="text-align:left;padding:5px 8px;border-bottom:2px solid #fecaca">Товар</th>
+              <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #fecaca">Кол-во</th>
+              <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #fecaca">Выручка</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+          ${more}
+        </div>
+      </div>`;
+    }
   }
   html += `<div class="kpi-strip">
     ${kpiCard('Выручка за период', tot.rev, '', '')}
@@ -3062,6 +3069,62 @@ async function buildOPIU() {
     }).join('');
     const tc = multi ? (() => { const tv=tot[key]||0; return `<td class="tc" style="color:#94a3b8">${tv?`(${fmt(tv)})`:'—'}</td>`; })() : '';
     return `<tr class="rs-data grp-${cls}" style="display:none"><td style="padding-left:36px;color:#64748b;font-size:11.5px">${label}</td>${cells}${tc}</tr>`;
+  };
+  // ── Подкатегории (Авторасходы/Услуги/Маркетинг) — детализация одного
+  // уровня глубже обычной subRow, раскрывается по клику отдельно от своего
+  // родителя (см. toggleGrp). Добавлено 18.08.
+  //
+  // subCatRows(toggleCls, categories) — считает строки-подкатегории для
+  // одной или нескольких категорий Журнала (обычно одна) из catSubM,
+  // возвращает { rows: готовый HTML, hasSub: есть ли вообще что показывать }.
+  const subCatRows = (toggleCls, categories) => {
+    const subs = new Set();
+    cols.forEach(m => categories.forEach(cat => {
+      const s = (catSubM[m] && catSubM[m][cat]) || {};
+      Object.keys(s).forEach(sc => subs.add(sc));
+    }));
+    if (!subs.size) return { rows: '', hasSub: false };
+    const rows = Array.from(subs).sort().map(sc => {
+      const cells = cols.map(m => {
+        let v = 0;
+        categories.forEach(cat => { v += ((catSubM[m] && catSubM[m][cat] && catSubM[m][cat][sc]) || 0); });
+        return `<td>${v ? `(${fmt(v)})` : '—'}</td>`;
+      }).join('');
+      let tv = 0;
+      cols.forEach(m => categories.forEach(cat => { tv += ((catSubM[m] && catSubM[m][cat] && catSubM[m][cat][sc]) || 0); }));
+      const tc = multi ? `<td class="tc" style="color:#cbd5e1">${tv?`(${fmt(tv)})`:'—'}</td>` : '';
+      return `<tr class="rs-data grp-${toggleCls}" style="display:none"><td style="padding-left:50px;color:#94a3b8;font-size:11px">— ${sc}</td>${cells}${tc}</tr>`;
+    }).join('');
+    return { rows, hasSub: true };
+  };
+  // Строка-родитель ВНУТРИ уже сворачиваемой группы (например "Коммерческие
+  // расходы"): сама скрыта/показана вместе с группой (grp-${outerCls}), а
+  // клик по ней — отдельный toggle своих подкатегорий (toggleCls). Если
+  // подкатегорий для периода нет (hasSub=false) — рисуется как обычная
+  // subRow, без стрелки и клика.
+  const subRowSub = (label, key, outerCls, toggleCls, hasSub) => {
+    const cells = cols.map(m => {
+      const v = pm[m][key]||0;
+      return `<td>${v ? `(${fmt(v)})` : '—'}</td>`;
+    }).join('');
+    const tc = multi ? (() => { const tv=tot[key]||0; return `<td class="tc" style="color:#94a3b8">${tv?`(${fmt(tv)})`:'—'}</td>`; })() : '';
+    const icon = hasSub ? `<span class="grp-ic" style="display:inline-block;width:11px;color:#cbd5e1;font-size:9px">▸</span>` : '';
+    const trStyle = hasSub ? 'display:none;cursor:pointer' : 'display:none';
+    const onclick = hasSub ? ` onclick="toggleGrp('${toggleCls}',this)"` : '';
+    return `<tr class="rs-data grp-${outerCls}" style="${trStyle}"${onclick}><td style="padding-left:36px;color:#64748b;font-size:11.5px">${icon}${label}</td>${cells}${tc}</tr>`;
+  };
+  // Верхнеуровневая строка (не внутри свёрнутой группы — как "Маркетинг и
+  // реклама", которая рисуется через dRow, всегда видна) со своим toggle
+  // подкатегорий.
+  const dRowSub = (label, key, toggleCls, neg, hasSub) => {
+    const cells = cols.map(m => {
+      const v = pm[m][key]||0;
+      return `<td>${v ? (neg && v>0 ? `(${fmt(v)})` : fmt(v)) : '—'}</td>`;
+    }).join('');
+    const tc = multi ? (() => { const tv=tot[key]||0; return `<td class="tc">${tv ? (neg && tv>0 ? `(${fmt(tv)})` : fmt(tv)) : '—'}</td>`; })() : '';
+    const icon = hasSub ? `<span class="grp-ic" style="display:inline-block;width:13px;color:#94a3b8">▸</span>` : '';
+    const attrs = hasSub ? ` style="cursor:pointer" onclick="toggleGrp('${toggleCls}',this)"` : '';
+    return `<tr class="rs-data"${attrs}><td style="padding-left:22px">${icon}${label}</td>${cells}${tc}</tr>`;
   };
   const profRow = (label, key, cls='rs-profit') => {
     const cells = cols.map(m => `<td>${fmt(pm[m][key]||0)}</td>`).join('');
@@ -3132,15 +3195,27 @@ async function buildOPIU() {
   html += grpRow('(-) Шашу / Командировочные / Авторасходы / Проч.', 'com', 'opiu-com');
   html += subRow('Шашу — бонусы ретейлерам', 'cShashu', 'opiu-com');
   html += subRow('Командировочные расходы', 'cKom', 'opiu-com');
-  html += subRow('Авторасходы', 'cAvto', 'opiu-com');
+  {
+    const sc = subCatRows('opiu-com-avto', ['авторасходы']);
+    html += subRowSub('Авторасходы', 'cAvto', 'opiu-com', 'opiu-com-avto', sc.hasSub);
+    html += sc.rows;
+  }
   html += subRow('Обед / питание', 'cObed', 'opiu-com');
-  html += subRow('Услуги', 'cUsl', 'opiu-com');
+  {
+    const sc = subCatRows('opiu-com-usl', ['услуги']);
+    html += subRowSub('Услуги', 'cUsl', 'opiu-com', 'opiu-com-usl', sc.hasSub);
+    html += sc.rows;
+  }
   html += subRow('Компенсация', 'cKomp', 'opiu-com');
   html += subRow('Канц. товары', 'cKanc', 'opiu-com');
   html += subRow('Уборка', 'cUborka', 'opiu-com');
   html += subRow('Прочее', 'cOther', 'opiu-com');
   html += dRow('(-) Бонусы клиентам', 'kasp', true, true);
-  html += dRow('(-) Маркетинг и реклама', 'mark', true, true);
+  {
+    const sc = subCatRows('opiu-mark', ['маркетинг']);
+    html += dRowSub('(-) Маркетинг и реклама', 'mark', 'opiu-mark', true, sc.hasSub);
+    html += sc.rows;
+  }
   html += profRow('▶  EBIT  (прибыль до вывода)', 'ebit', 'rs-ebit');
 
   // V. ВЫВОД СОБСТВЕННИКА
