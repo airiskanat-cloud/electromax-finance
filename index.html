@@ -605,6 +605,36 @@ function bucketSum(catM, m, key, dynamicMap) {
 // за сессию (не за каждый рендер ОПиУ/ДДС), сбрасывается после сохранения
 // нового назначения на странице "Категории без статьи".
 let _categoryOverridesCache = null;
+// Кэш "тяжёлых" отчётных данных (1С продажи/приход, построчные приходы,
+// цены, алиасы товаров) — раньше ОПиУ и ДДС заново запрашивали их у
+// Google Apps Script при КАЖДОМ нажатии «Сформировать» (например, просто
+// при смене периода в том же селекторе), хотя сами данные с прошлого
+// «Обновить данные» не менялись. Apps Script отвечает медленно (обычно
+// 1-3 сек на каждый запрос), а тут их 5 штук — набегало заметное ожидание
+// на КАЖДОЕ формирование отчёта. Теперь запрашиваем один раз за сессию
+// и переиспользуем; сбрасывается в loadData() (кнопка «Обновить данные»).
+let _reportDataCache = null;
+async function getReportData() {
+  if (_reportDataCache) return _reportDataCache;
+  const [r1, r2, r3, r4, r5] = await Promise.all([
+    fetch(SCRIPT_URL + '?action=get1CData'),
+    fetch(SCRIPT_URL + '?action=getPurchaseLines'),
+    fetch(SCRIPT_URL + '?action=getItemDaily'),
+    fetch(SCRIPT_URL + '?action=getItemPrices'),
+    fetch(SCRIPT_URL + '?action=getItemAliases')
+  ]);
+  const [d1c, purchaseLinesR, itemDailyR, itemPricesR, itemAliasesR] = await Promise.all([
+    r1.json(), r2.json(), r3.json(), r4.json(), r5.json()
+  ]);
+  _reportDataCache = {
+    d1c,
+    purchaseLines: purchaseLinesR.items || [],
+    itemDaily: itemDailyR.items || [],
+    itemPrices: itemPricesR.items || [],
+    itemAliases: itemAliasesR.items || []
+  };
+  return _reportDataCache;
+}
 async function loadCategoryOverrides() {
   if (_categoryOverridesCache) return _categoryOverridesCache;
   const map = {};
@@ -863,6 +893,9 @@ function normalizePeriodStr(v) {
 }
 
 async function loadData() {
+  // Сброс кэша отчётных данных (см. getReportData()) — при «Обновить
+  // данные» ОПиУ/ДДС должны подхватить свежие цифры, а не старые из кэша.
+  _reportDataCache = null;
   // Раньше эти запросы шли последовательно (каждый ждал предыдущий) —
   // при подтормаживающем Apps Script задержки складывались. Теперь все
   // уходят одновременно и ждём самый медленный, а не сумму всех.
@@ -2052,6 +2085,10 @@ async function confirmItemAlias(soldName, purchaseName, cardId) {
     const d = await r.json();
     if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
     if (card) card.remove();
+    // Сопоставление товара напрямую влияет на себестоимость в ОПиУ —
+    // сбрасываем кэш отчётных данных, чтобы следующее «Сформировать»
+    // сразу учло новую пару, а не ждало отдельного «Обновить данные».
+    _reportDataCache = null;
     showToast(purchaseName ? 'Сопоставлено' : 'Пропущено', 'success');
   } catch(e) {
     if (card) { card.style.opacity = '1'; }
@@ -2520,8 +2557,7 @@ async function buildDDS() {
 
   const revM = {}, cogsM = {}, kaspiKomM = {};
   try {
-    const r = await fetch(SCRIPT_URL + '?action=get1CData');
-    const d = await r.json();
+    const { d1c: d } = await getReportData(); // общий кэш с ОПиУ — см. getReportData()
     (d.sales||[]).forEach(s => {
       const mo = String(s.month||'');
       if (mo) revM[mo] = (revM[mo]||0) + (+s.revenue||0);
@@ -2717,14 +2753,11 @@ async function buildOPIU() {
   // продажи, ≈0% маржи по этому товару) — см. itemCostDetailAsOf.matched.
   const unmatchedRevM = {}, trackedRevM = {};
   try {
-    const [r, r2, r3, r4, r5] = await Promise.all([
-      fetch(SCRIPT_URL + '?action=get1CData'),
-      fetch(SCRIPT_URL + '?action=getPurchaseLines'),
-      fetch(SCRIPT_URL + '?action=getItemDaily'),
-      fetch(SCRIPT_URL + '?action=getItemPrices'),
-      fetch(SCRIPT_URL + '?action=getItemAliases')
-    ]);
-    const d = await r.json();
+    // Раньше эти 5 запросов уходили на сервер заново при каждом клике
+    // «Сформировать» (даже просто при смене периода). getReportData()
+    // кэширует их на всю сессию — сеть дёргаем только один раз, пока не
+    // нажата «Обновить данные».
+    const { d1c: d, purchaseLines, itemDaily, itemPrices, itemAliases } = await getReportData();
     (d.sales||[]).forEach(s => {
       const mo = String(s.month||'');
       if (mo) revM[mo] = (revM[mo]||0) + (+s.revenue||0);
@@ -2743,15 +2776,13 @@ async function buildOPIU() {
     // именно того месяца, где физически была закупка, а не продажа.
     // Строка «Поставщикам — закупки товаров» в ДДС на эту логику НЕ переведена —
     // там кассовый метод (реальные платежи), это осознанно другая метрика.
-    const purchaseLines = (await r2.json()).items || [];
-    const itemDaily     = (await r3.json()).items || [];
     const priceMap = {};
-    ((await r4.json()).items || []).forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
+    itemPrices.forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
     // Подтверждённые пары «продаётся как → закупается как» (страница
     // «Товары без цены») — резолвим ПЕРЕД поиском закупочной цены, чтобы
     // «└ без цены прихода» ниже тоже посчиталась уже с их учётом.
     const itemAliasMap = {};
-    ((await r5.json()).items || []).forEach(a => { if (a.status === 'confirmed' && a.purchaseName) itemAliasMap[a.soldName] = a.purchaseName; });
+    itemAliases.forEach(a => { if (a.status === 'confirmed' && a.purchaseName) itemAliasMap[a.soldName] = a.purchaseName; });
     const linesByItem = groupPurchaseLinesByItem(purchaseLines);
     itemDaily.forEach(row => {
       const dt = String(row.date||'');
