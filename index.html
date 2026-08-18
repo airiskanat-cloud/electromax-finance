@@ -219,10 +219,25 @@
   <div class="main">
     <div class="page active" id="page-dashboard">
       <div class="page-title">Финансовое табло — ElectroMax</div>
+      <div class="form-card" style="max-width:400px;margin-bottom:16px;">
+        <div class="field">
+          <label>Период</label>
+          <select id="dash-period" onchange="buildDashboard()">
+            <option value="all">Весь текущий год</option>
+          </select>
+        </div>
+      </div>
       <div id="dashboard-content"><div class="loading"><div class="spinner"></div>Загрузка дашборда...</div></div>
     </div>
     <div class="page" id="page-daily-report">
       <div class="page-title">Отчёт дня</div>
+      <div class="form-card" style="max-width:400px;margin-bottom:20px;">
+        <div class="form-row">
+          <div class="field"><label>Дата</label><input type="date" id="daily-report-date"></div>
+          <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-save" onclick="buildDailyReport()" style="width:100%;">Показать</button></div>
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px">Можно выбрать прошедший день — удобно сверить кассу бухгалтера с тем, что посчитал сайт за конкретную дату.</div>
+      </div>
       <div id="daily-report-content"><div class="loading"><div class="spinner"></div>Загрузка отчёта...</div></div>
     </div>
     <div class="page" id="page-load">
@@ -785,6 +800,7 @@ async function doLogin() {
     document.getElementById('app').style.display = 'flex';
     document.getElementById('user-info').textContent = 'Вы вошли как: ' + u + ' (' + role + ')';
     document.getElementById('dds-daily-date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('daily-report-date').value = new Date().toISOString().split('T')[0];
     loadData();
   } else {
     document.getElementById('login-error').style.display = 'block';
@@ -1228,8 +1244,7 @@ async function buildDashboard() {
   const revM = {}, cogsM = {}, revCity = {}; // revCity: { city: { month: amount } }
   const unitsM = {}, unitsCity = {}; // units — кол-во проданных штук (для средней цены продажи)
   try {
-    const r = await fetch(SCRIPT_URL + '?action=get1CData');
-    const d = await r.json();
+    const { d1c: d } = await getReportData(); // общий кэш с ОПиУ/ДДС — см. getReportData()
     (d.sales||[]).forEach(s => {
       const mo = String(s.month||'');
       if (!mo) return;
@@ -1247,12 +1262,51 @@ async function buildDashboard() {
     });
   } catch(e) {}
 
-  const MONTHS = getAvailableMonths(revM, cogsM);
+  // getAvailableMonths() возвращает ВСЕ месяцы, где есть хоть что-то —
+  // включая единичные строки Журнала со старой/ошибочной датой (2024-2025,
+  // например опечатка в годе при ручном вводе). У таких строк обычно нет
+  // выручки (revM пуст для них), но расход в них есть — и раньше Дашборд
+  // суммировал ПО ВСЕМ таким месяцам без разбора, поэтому редкая строка с
+  // неверным годом и большой суммой утягивала итог в минус на миллиарды,
+  // хотя реальные месяцы (2026) были в полном порядке. Ограничиваем
+  // Дашборд последним годом, за который есть реальные продажи (1С) — как
+  // и в ОПиУ/ДДС, где выбор года по умолчанию тоже последний.
+  const ALL_MONTHS = getAvailableMonths(revM, cogsM);
+  const salesYears = [...new Set(Object.keys(revM))].map(m => m.slice(0,4));
+  const dashYear = salesYears.length ? salesYears.sort().slice(-1)[0] : ALL_MONTHS[ALL_MONTHS.length-1].slice(0,4);
+  const yearMonths = ALL_MONTHS.filter(m => m.startsWith(dashYear));
+
+  // Фильтр "Период" на Дашборде — по умолчанию весь актуальный год, но
+  // можно сузить до одного месяца. Список опций строим здесь же, чтобы
+  // всегда отражал реально доступные месяцы текущего года.
+  const dashSel = document.getElementById('dash-period');
+  let dashPeriod = 'all';
+  if (dashSel) {
+    const prev = dashSel.value;
+    let opts = `<option value="all">Весь ${dashYear} год</option>`;
+    opts += yearMonths.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+    dashSel.innerHTML = opts;
+    const valid = prev === 'all' || yearMonths.includes(prev);
+    dashSel.value = (prev && valid) ? prev : 'all';
+    dashPeriod = dashSel.value;
+  }
+  const MONTHS = dashPeriod === 'all' ? yearMonths : [dashPeriod];
   const MLBL   = MONTHS.map(m => monthLabel(m, true));
+
+  // Сравнение выручки с тем же периодом прошлого года (год целиком —
+  // если выбран весь год; тот же месяц — если выбран конкретный месяц).
+  // revM здесь ещё НЕ ограничен годом (полный набор из 1С), так что просто
+  // берём из него нужные ключи прошлого года.
+  const prevYear = String(+dashYear - 1);
+  const prevYearMonths = dashPeriod === 'all'
+    ? Object.keys(revM).filter(m => m.startsWith(prevYear))
+    : [prevYear + '-' + dashPeriod.slice(5,7)];
+  const prevYearRev = prevYearMonths.reduce((s,m) => s + (revM[m]||0), 0);
+  const hasPrevYearData = prevYearRev > 0;
 
   // Expense aggregation: by month×category and by city×category
   const catM = {}, cityExp = {};
-  allData.filter(r => r.type === 'расход').forEach(r => {
+  allData.filter(r => r.type === 'расход' && (!r.date || r.date.startsWith(dashYear))).forEach(r => {
     const mo = r.date ? r.date.slice(0,7) : null;
     const city = r.city || 'Прочие';
     const c = (r.category||'прочее').toLowerCase();
@@ -1341,8 +1395,17 @@ async function buildDashboard() {
       ${sub?`<div class="kpi-sub">${sub}</div>`:''}
     </div>`;
 
+  // Подпись под "Выручка за период" — сам период + сравнение год-к-году
+  // (тот же месяц или тот же год целиком, смотря что выбрано в фильтре).
+  const periodLbl = MONTHS.length > 1 ? (monthLabel(MONTHS[0],true)+' — '+monthLabel(MONTHS[MONTHS.length-1],true)) : monthLabel(MONTHS[0],true);
+  const yoyPct = hasPrevYearData ? ((tot.rev - prevYearRev) / prevYearRev * 100) : null;
+  const yoyLbl = hasPrevYearData
+    ? ` · ${prevYear}: ${fK(prevYearRev)} (${yoyPct>=0?'+':''}${yoyPct.toFixed(1)}%)`
+    : ` · за ${prevYear} данных нет`;
+  const revSub = noSales ? '⚠ нет данных 1С' : (periodLbl + yoyLbl);
+
   html += `<div class="kpi-strip">
-    ${card('Выручка за период', tot.rev, noSales?'o':'', noSales?'⚠ нет данных 1С':(monthLabel(MONTHS[0],true)+' — '+monthLabel(MONTHS[MONTHS.length-1],true)))}
+    ${card('Выручка за период', tot.rev, noSales?'o':'', revSub)}
     ${card('Валовая прибыль', tot.gp, 'g', pctOf(tot.gp,tot.rev)+' от выручки')}
     ${card('Операционная прибыль', tot.op, 't', pctOf(tot.op,tot.rev)+' от выручки')}
     ${card('EBIT (до вывода)', tot.ebit, tot.ebit>=0?'g':'o', pctOf(tot.ebit,tot.rev)+' от выручки')}
@@ -2213,7 +2276,12 @@ async function buildDailyReport() {
   const itemAliasMap = {};
   aliases.forEach(a => { if (a.status === 'confirmed' && a.purchaseName) itemAliasMap[a.soldName] = a.purchaseName; });
 
-  const today = todayStr();
+  // Дата отчёта — из выбора на странице (по умолчанию сегодня). Позволяет
+  // открыть прошедший день и свериться с кассой бухгалтера за ту же дату,
+  // а не только смотреть на "сейчас".
+  const dateInput = document.getElementById('daily-report-date');
+  const today = (dateInput && dateInput.value) || todayStr();
+  const isToday = today === todayStr();
   const fK = v => {
     const n = +v||0;
     if (Math.abs(n) >= 1e9) return (n/1e9).toFixed(2)+' млрд ₸';
@@ -2230,7 +2298,11 @@ async function buildDailyReport() {
   const kaspiGoldBalances = {}; // физ Kaspi Gold, по держателю
   let cashBalance = 0;
   accounts.forEach(acc => {
-    const bal = balanceThrough(BALANCE_TODAY_SENTINEL, 'account', acc);
+    // Остаток СЧЁТА НА КОНЕЦ ВЫБРАННОГО ДНЯ (а не всегда "сейчас") — если
+    // открыт прошедший день, это должен быть остаток на тот день, иначе
+    // сверка с кассой бухгалтера за прошлую дату будет показывать текущий,
+    // а не тогдашний остаток.
+    const bal = balanceThrough(today, 'account', acc);
     totalBalance += bal;
     const b = acctBucket(acc);
     if (b.type === 'legal') {
@@ -2345,7 +2417,7 @@ async function buildDailyReport() {
 
   let html = `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">
     ${kpi('Остаток · '+today, fK(totalBalance), totalBalance>=0?'#1e3a5f':'#dc2626')}
-    ${kpi('За сегодня', (todayNet>=0?'+':'')+fK(todayNet), todayNet>=0?'#16a34a':'#dc2626')}
+    ${kpi(isToday ? 'За сегодня' : 'За '+fmtDate(today), (todayNet>=0?'+':'')+fK(todayNet), todayNet>=0?'#16a34a':'#dc2626')}
     ${kpi('Транзит', fK(transitTotal))}
     ${kpi('Дебиторка', fK(receivablesSum), '#16a34a')}
     ${kpi('Итого капитал', fK(totalCapital), totalCapital>=0?'#1e3a5f':'#dc2626')}
