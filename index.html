@@ -2763,6 +2763,13 @@ async function buildDDS() {
   resultEl.innerHTML = html;
 }
 
+// Полный список товаров с нулевой себестоимостью за последний сформированный
+// период ОПиУ — сохраняется здесь при каждом buildOPIU(), потому что в самой
+// таблице на странице показаны только первые 50 (см. блок ниже) — экспорт в
+// Excel (exportZeroCostItems) должен выгружать ВСЕ, а не только видимые.
+let _lastZeroCostItems = [];
+let _lastZeroCostPeriod = '';
+
 async function buildOPIU() {
   const period = document.getElementById('opiu-period').value;
   const resultEl = document.getElementById('opiu-result');
@@ -3010,16 +3017,21 @@ async function buildOPIU() {
       })
       .filter(x => x.revenue > 0)
       .sort((a,b) => b.revenue - a.revenue);
+    _lastZeroCostItems = itemRows; // полный список — для exportZeroCostItems()
+    _lastZeroCostPeriod = period;
     if (itemRows.length) {
       const rowsHtml = itemRows.slice(0, 50).map(x =>
         `<tr><td style="padding:5px 8px;border-bottom:1px solid #fecaca">${x.item}</td>` +
         `<td style="padding:5px 8px;border-bottom:1px solid #fecaca;text-align:right;white-space:nowrap">${fmt(x.qty)}</td>` +
         `<td style="padding:5px 8px;border-bottom:1px solid #fecaca;text-align:right;white-space:nowrap">${fmt(x.revenue)} ₸</td></tr>`
       ).join('');
-      const more = itemRows.length > 50 ? `<div style="font-size:11px;color:#991b1b;margin-top:6px">…и ещё ${itemRows.length-50} товар(ов)</div>` : '';
+      const more = itemRows.length > 50 ? `<div style="font-size:11px;color:#991b1b;margin-top:6px">…и ещё ${itemRows.length-50} товар(ов) — полный список в Excel-экспорте</div>` : '';
       html += `<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">
-        <div style="font-weight:700;color:#991b1b;margin-bottom:8px;cursor:pointer" onclick="const b=this.nextElementSibling;const h=b.style.display==='none';b.style.display=h?'block':'none';this.querySelector('span').textContent=h?'▾':'▸';">
-          <span style="display:inline-block;width:13px">▸</span>Товары с нулевой себестоимостью за период (${itemRows.length})
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
+          <div style="font-weight:700;color:#991b1b;cursor:pointer;flex:1" onclick="const b=this.parentElement.nextElementSibling;const h=b.style.display==='none';b.style.display=h?'block':'none';this.querySelector('span').textContent=h?'▾':'▸';">
+            <span style="display:inline-block;width:13px">▸</span>Товары с нулевой себестоимостью за период (${itemRows.length})
+          </div>
+          <button class="btn btn-clear" onclick="exportZeroCostItems()" style="font-size:11px;padding:4px 10px;white-space:nowrap">Excel ↓</button>
         </div>
         <div style="display:none">
           <table style="width:100%;border-collapse:collapse;font-size:12px;color:#7f1d1d">
@@ -4265,6 +4277,23 @@ function exportOPIU(period) {
   ws['!cols'] = [{wch:52},{wch:18},{wch:12}];
   XLSX.utils.book_append_sheet(wb, ws, 'ОПУ');
   XLSX.writeFile(wb, 'ОПУ_ElectroMax_' + period + '.xlsx');
+  showToast('Excel файл скачан', 'success');
+}
+
+// Полный список товаров с нулевой себестоимостью (см. _lastZeroCostItems,
+// заполняется в buildOPIU) — в отличие от таблицы на странице (там видно
+// только первые 50), сюда попадают ВСЕ товары, чтобы можно было построчно
+// сверить с сырым файлом Прихода вне сайта.
+function exportZeroCostItems() {
+  if (typeof XLSX === 'undefined') { showToast('Библиотека Excel не загружена', 'error'); return; }
+  if (!_lastZeroCostItems.length) { showToast('Нет данных — сначала сформируйте ОПУ', 'error'); return; }
+  const wb = XLSX.utils.book_new();
+  const aoa = [['Товар', 'Кол-во', 'Выручка']];
+  _lastZeroCostItems.forEach(x => aoa.push([x.item, x.qty, x.revenue]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:60},{wch:10},{wch:16}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Нулевая себестоимость');
+  XLSX.writeFile(wb, 'Товары_нулевая_себестоимость_' + (_lastZeroCostPeriod||'период') + '.xlsx');
   showToast('Excel файл скачан', 'success');
 }
 
