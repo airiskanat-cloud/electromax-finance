@@ -61,6 +61,16 @@
   .main { margin-left: 240px; padding: 32px; min-height: 100vh; }
   .page { display: none; }
   .page.active { display: block; }
+  /* Скачивание «Отчёт дня» в PDF (19.08) — используем нативный печать-в-PDF
+     браузера вместо подключения тяжёлой JS-библиотеки. exportDailyReportPDF()
+     ставит body.printing-daily перед window.print(); правила ниже на время
+     печати прячут сайдбар и форму выбора даты, оставляя только сам отчёт. */
+  @media print {
+    body.printing-daily .sidebar,
+    body.printing-daily .no-print { display: none !important; }
+    body.printing-daily .main { margin-left: 0 !important; padding: 12px !important; }
+    body.printing-daily #page-daily-report { display: block !important; }
+  }
   .page-title { font-size: 24px; font-weight: 700; color: #1e3a5f; margin-bottom: 24px; }
   .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
   .card {
@@ -229,8 +239,11 @@
       <div id="dashboard-content"><div class="loading"><div class="spinner"></div>Загрузка дашборда...</div></div>
     </div>
     <div class="page" id="page-daily-report">
-      <div class="page-title">Отчёт дня</div>
-      <div class="form-card" style="max-width:400px;margin-bottom:20px;">
+      <div class="page-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <span>Отчёт дня</span>
+        <button class="btn no-print" onclick="exportDailyReportPDF()" style="font-size:13px">PDF ↓</button>
+      </div>
+      <div class="form-card no-print" style="max-width:400px;margin-bottom:20px;">
         <div class="form-row">
           <div class="field"><label>Дата</label><input type="date" id="daily-report-date"></div>
           <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-save" onclick="buildDailyReport()" style="width:100%;">Показать</button></div>
@@ -2241,6 +2254,23 @@ function todayStr() {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 
+// Скачивание «Отчёт дня» в PDF (19.08) — через нативную печать браузера
+// (без сторонней библиотеки: на входе только чистый HTML/CSS, всё уже
+// готово для печати). body.printing-daily включает правила @media print
+// в <style> — прячет сайдбар и форму даты, оставляя только отчёт. После
+// печати (или отмены) класс снимается через событие afterprint, с
+// подстраховкой по таймеру — не во всех браузерах afterprint надёжен.
+function exportDailyReportPDF() {
+  document.body.classList.add('printing-daily');
+  const cleanup = () => {
+    document.body.classList.remove('printing-daily');
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  setTimeout(() => window.print(), 50); // микро-пауза, чтобы класс успел применить стили
+  setTimeout(cleanup, 3000);
+}
+
 async function buildDailyReport() {
   const el = document.getElementById('daily-report-content');
   el.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка отчёта...</div>';
@@ -2424,6 +2454,11 @@ async function buildDailyReport() {
 
   const maxCityQty = Math.max(1, ...Object.values(stockByCity));
   const stockDate = fmtDate(stock.reduce((max,s) => (s.date && s.date > max ? s.date : max), ''));
+  // Подняты выше (были объявлены ниже, у старого блока «Транзит/Долги») —
+  // теперь нужны раньше, т.к. карточка «Транзит по партнёрам» переехала
+  // в верхнюю строку (см. правку 19.08 про перестановку блоков).
+  const maxTransit = Math.max(1, ...Object.values(transitByStore));
+  const maxDebt = Math.max(1, receivablesSum, payablesSum);
 
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
     <div class="card">
@@ -2451,6 +2486,28 @@ async function buildDailyReport() {
       </div>
     </div>
     <div class="card">
+      <div class="card-label" style="margin-bottom:2px">Транзит по партнёрам — операций сегодня: ${transitCount}</div>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Из кассы, за ${fmtDate(today)}</div>
+      ${Object.keys(transitByStore).length ? Object.entries(transitByStore).sort((a,b)=>b[1]-a[1]).map(([s,v]) => {
+        const pct = Math.min(100, v/maxTransit*100);
+        return `<div style="display:grid;grid-template-columns:70px 1fr 90px;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font-size:12px;color:#64748b">${s}</span>
+          <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:#8b5cf6;border-radius:4px"></div></div>
+          <span style="font-size:12px;text-align:right;font-weight:700;color:#1e3a5f">${fK(v)}</span>
+        </div>`;
+      }).join('') : '<div style="font-size:12px;color:#94a3b8">Нет операций с транзит-партнёром сегодня</div>'}
+    </div>
+  </div>`;
+
+  // Остаток склада + Долги — рядом.
+  // ПЕРЕСТАВЛЕНО 19.08 по просьбе: «Остаток склада — активные» и «Транзит
+  // по партнёрам» теперь меняются местами (Транзит — в верхней строке рядом
+  // с «Остаток по счетам», выше; Остаток склада — в этой строке рядом с
+  // «Долги»), а «Приход/расход за сегодня» переехал НИЖЕ «Долги за сегодня».
+  // (maxTransit/maxDebt объявлены выше, у верхнего блока.)
+
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+    <div class="card">
       <div class="card-label" style="margin-bottom:2px">Остаток склада — активные</div>
       <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">${stockDate!=='—' ? 'Снимок на '+stockDate : 'Нет загруженных остатков'}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;background:#f8fafc;border-radius:8px;padding:8px 10px;margin-bottom:12px">
@@ -2467,9 +2524,21 @@ async function buildDailyReport() {
       }).join('') : '<div style="font-size:12px;color:#94a3b8">Нет загруженных остатков склада</div>'}
       ${stockUnmatched>0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">Без цены: ${fmt(stockUnmatched)} шт — товар ещё не встречался ни в приходах, ни в продажах</div>` : ''}
     </div>
+    <div class="card">
+      <div class="card-label" style="margin-bottom:12px">Долги — за сегодня (касса)</div>
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#16a34a">Нам должны</span><span style="font-size:12px;font-weight:700;color:#16a34a">${fK(receivablesSum)}</span></div>
+        <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,receivablesSum/maxDebt*100)}%;height:100%;background:#16a34a;border-radius:4px"></div></div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#dc2626">Мы должны</span><span style="font-size:12px;font-weight:700;color:#dc2626">${fK(payablesSum)}</span></div>
+        <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,payablesSum/maxDebt*100)}%;height:100%;background:#dc2626;border-radius:4px"></div></div>
+      </div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:8px">Нетто: ${fK(receivablesSum-payablesSum)} ${receivablesSum>=payablesSum?'в нашу пользу':'в минус'}</div>
+    </div>
   </div>`;
 
-  // Приход/расход за сегодня — компактно
+  // Приход/расход за сегодня — компактно (перенесено сюда, после «Долги»)
   const catList = cats => Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([c,v]) =>
     `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:#64748b"><span>${c}</span><span>${fmt(v)} ₸</span></div>`
   ).join('') || '<div style="font-size:12px;color:#94a3b8">Нет операций сегодня</div>';
@@ -2489,37 +2558,6 @@ async function buildDailyReport() {
         </div>
         <div style="padding:8px 4px 0 12px">${catList(outCats)}</div>
       </div>
-    </div>
-  </div>`;
-
-  // Транзит по магазинам (бары) + Долги (бары нам/мы должны) — рядом
-  const maxTransit = Math.max(1, ...Object.values(transitByStore));
-  const maxDebt = Math.max(1, receivablesSum, payablesSum);
-
-  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
-    <div class="card">
-      <div class="card-label" style="margin-bottom:2px">Транзит по партнёрам — операций сегодня: ${transitCount}</div>
-      <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Из кассы, за ${fmtDate(today)}</div>
-      ${Object.keys(transitByStore).length ? Object.entries(transitByStore).sort((a,b)=>b[1]-a[1]).map(([s,v]) => {
-        const pct = Math.min(100, v/maxTransit*100);
-        return `<div style="display:grid;grid-template-columns:70px 1fr 90px;align-items:center;gap:8px;margin-bottom:8px">
-          <span style="font-size:12px;color:#64748b">${s}</span>
-          <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:#8b5cf6;border-radius:4px"></div></div>
-          <span style="font-size:12px;text-align:right;font-weight:700;color:#1e3a5f">${fK(v)}</span>
-        </div>`;
-      }).join('') : '<div style="font-size:12px;color:#94a3b8">Нет операций с транзит-партнёром сегодня</div>'}
-    </div>
-    <div class="card">
-      <div class="card-label" style="margin-bottom:12px">Долги — за сегодня (касса)</div>
-      <div style="margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#16a34a">Нам должны</span><span style="font-size:12px;font-weight:700;color:#16a34a">${fK(receivablesSum)}</span></div>
-        <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,receivablesSum/maxDebt*100)}%;height:100%;background:#16a34a;border-radius:4px"></div></div>
-      </div>
-      <div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#dc2626">Мы должны</span><span style="font-size:12px;font-weight:700;color:#dc2626">${fK(payablesSum)}</span></div>
-        <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,payablesSum/maxDebt*100)}%;height:100%;background:#dc2626;border-radius:4px"></div></div>
-      </div>
-      <div style="font-size:11px;color:#94a3b8;margin-top:8px">Нетто: ${fK(receivablesSum-payablesSum)} ${receivablesSum>=payablesSum?'в нашу пользу':'в минус'}</div>
     </div>
   </div>`;
 
