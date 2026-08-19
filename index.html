@@ -3744,12 +3744,40 @@ async function confirmAndSave() {
   // пользователь показала пустой лист ПриходПозиции при том, что суммы по
   // неделям сохранялись нормально — оказалось, это два разных запроса, и
   // именно построчный молча не проходил).
+  // ИСПРАВЛЕНО 19.08 — найдена настоящая причина потери строк Прихода/
+  // Продаж (сверка живой базы с сырыми файлами показала до 78% потерь по
+  // некоторым неделям, хотя мёрж на фронтенде уже был проверен и починен
+  // в тот же день, но проблема осталась). Корень оказался здесь: бэкенд
+  // savePurchaseLines/saveItemDaily при получении порции строк УДАЛЯЕТ на
+  // листе ВСЕ существующие строки, чьи ДАТЫ встречаются в этой порции, и
+  // заменяет их присланными — это верно, если вся выгрузка идёт ОДНОЙ
+  // порцией, но при делении на несколько chunk'ов (что и происходит здесь
+  // при >800 строк, а это почти любая загрузка за несколько недель) —
+  // КАЖДЫЙ следующий chunk удалял (в т.ч.) то, что только что записал
+  // предыдущий chunk, если у них совпадала хоть одна дата. А при 700+
+  // разных товаров, купленных в один день, старое разбиение "по 800
+  // строк подряд" почти гарантированно рвало дату пополам между двумя
+  // chunk'ами — сохранялся только ПОСЛЕДНИЙ chunk, задевший эту дату,
+  // остальные строки этой даты молча терялись. Фикс: группируем строки по
+  // дате и НИКОГДА не разбиваем одну дату между двумя chunk'ами (даже если
+  // из-за этого отдельный chunk выйдет заметно больше 800 строк — лучше
+  // так, чем терять данные).
   const chunkedPost = async (action, rows, label) => {
     const CHUNK = 800;
-    let last = null;
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const chunk = rows.slice(i, i + CHUNK);
-      msg.textContent = `Сохранение ${label}... ${Math.min(i + CHUNK, rows.length)}/${rows.length}`;
+    const byDate = {};
+    rows.forEach(r => { (byDate[r.date] = byDate[r.date] || []).push(r); });
+    const chunks = [];
+    let cur = [];
+    Object.keys(byDate).forEach(dt => {
+      if (cur.length && cur.length + byDate[dt].length > CHUNK) { chunks.push(cur); cur = []; }
+      cur = cur.concat(byDate[dt]);
+    });
+    if (cur.length) chunks.push(cur);
+
+    let last = null, sentSoFar = 0;
+    for (const chunk of chunks) {
+      sentSoFar += chunk.length;
+      msg.textContent = `Сохранение ${label}... ${Math.min(sentSoFar, rows.length)}/${rows.length}`;
       const d = await postAction(action, chunk);
       if (!d || !d.success) throw new Error(`${label}: ` + (d && d.error || 'сервер не подтвердил сохранение'));
       last = d;
