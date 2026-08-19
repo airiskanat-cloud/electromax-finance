@@ -3478,6 +3478,25 @@ async function processUploadedFiles(files) {
   _mergedItemPrices = {};
   _mergedItemDaily = {};
   _mergedPurchaseLines = {};
+  // ИЗМЕНЕНО 19.08 — найдена реальная потеря данных: сверка живой базы с
+  // сырыми файлами показала, что часть недель теряла до 78% построчных
+  // приходов (например неделя 23 — только 22% строк дошло). Причина:
+  // acceptWeek() ниже был построен для ГОРОДСКИХ ИТОГОВ по неделе (byWeek,
+  // task #86/87) — там правило "неделя целиком у одного файла" верно,
+  // потому что это уже агрегированные суммы и повторный файл той же недели
+  // реально задваивает итог. Но тот же фильтр по ошибке применялся и к
+  // ПОСТРОЧНЫМ данным (purchaseLines/itemDaily) — а там, если неделя X
+  // случайно встретилась в двух ВЫБРАННЫХ файлах (например через похожие/
+  // повторные копии выгрузки в Загрузках), но эти файлы НЕ полные дубли
+  // друг друга построчно — весь "проигравший" файл отбрасывался целиком,
+  // хотя в нём были уникальные строки по другим товарам. Теперь для
+  // построчных данных — точная дедупликация НА УРОВНЕ СТРОКИ (товар+дата+
+  // кол-во+сумма): если строка байт-в-байт повторяется в другом файле —
+  // это настоящий дубль, считается один раз; если хоть одно значение
+  // отличается — это другая партия/документ, учитывается отдельно. Фильтр
+  // acceptWeek() по-прежнему используется ТОЛЬКО для городских итогов ниже.
+  const seenItemDailyRows = new Set();
+  const seenPurchaseRows = new Set();
   okResults.forEach((r, idx) => {
     const target = r.fileType === 'sales' ? _mergedData.sales : _mergedData.purchases;
     const acceptWeek = (week, month) => weekOwner[r.fileType + '|' + week + '|' + month] === idx;
@@ -3493,8 +3512,10 @@ async function processUploadedFiles(files) {
       });
     }
     if (r.itemDaily) {
-      Object.values(r.itemDaily).forEach(({item, date, week, month, qty, revenue}) => {
-        if (!acceptWeek(week, month)) return; // эта пара неделя+месяц "принадлежит" другому файлу
+      Object.values(r.itemDaily).forEach(({item, date, qty, revenue}) => {
+        const rowKey = item + '|' + date + '|' + qty + '|' + revenue;
+        if (seenItemDailyRows.has(rowKey)) return; // точный дубль — уже учтён
+        seenItemDailyRows.add(rowKey);
         const dKey = item + '|' + date;
         if (!_mergedItemDaily[dKey]) _mergedItemDaily[dKey] = { item, date, qty: 0, revenue: 0 };
         _mergedItemDaily[dKey].qty += qty;
@@ -3502,8 +3523,10 @@ async function processUploadedFiles(files) {
       });
     }
     if (r.purchaseLines) {
-      Object.values(r.purchaseLines).forEach(({item, date, week, qty, sum}) => {
-        if (!acceptWeek(week, date.slice(0,7))) return;
+      Object.values(r.purchaseLines).forEach(({item, date, qty, sum}) => {
+        const rowKey = item + '|' + date + '|' + qty + '|' + sum;
+        if (seenPurchaseRows.has(rowKey)) return; // точный дубль — уже учтён
+        seenPurchaseRows.add(rowKey);
         const dKey = item + '|' + date;
         if (!_mergedPurchaseLines[dKey]) _mergedPurchaseLines[dKey] = { item, date, qty: 0, sum: 0 };
         _mergedPurchaseLines[dKey].qty += qty;
