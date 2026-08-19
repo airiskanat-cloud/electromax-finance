@@ -1926,11 +1926,30 @@ function groupPurchaseLinesByItem(lines) {
 // таким названием (≤ asOfDate) не нашёлся вообще — cost в этом случае 0.
 // matched нужен для диагностики «сколько выручки посчитано по цене прихода,
 // а сколько — вслепую» (см. предупреждение в ОПиУ).
+// ИЗМЕНЕНО 18.08 (вечер) — добавлен Шаг 5 «средняя по всей истории»: сверка
+// с сырыми файлами Прихода (2024-2026, см. чат) показала, что у 366 из 370
+// товаров с себестоимостью=0 на сайте на самом деле ЕСТЬ приход под точно
+// таким же названием — просто он датирован ПОЗЖЕ большинства продаж, либо
+// на сайте пока не загружена вся история (перезалив 2024/2025 не до конца
+// решил проблему). PBI-точная логика (Шаги 1-4, окна СТРОГО ≤ asOfDate)
+// оставлена как есть и имеет приоритет — но если по ней ничего не нашлось,
+// теперь вместо cost=0 берётся средневзвешенная цена по ВСЕЙ истории
+// прихода этого товара (и до, и после даты продажи, без окна). Это уже
+// не 1-в-1 методология PBI (там в этом случае действительно BLANK), но
+// гарантирует, что пока для товара вообще есть хоть один приход под этим
+// названием — себестоимость не занулится вслепую. По прямой просьбе.
 function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem) {
   const all = linesByItem[item];
   if (!all || !all.length) return { cost: 0, matched: false };
+  // Шаг 5 (общий fallback, используется в конце, если шаги 1-4 не сработали) —
+  // средняя по ВСЕЙ истории прихода товара, без ограничения по дате.
+  const allTimeAvg = () => {
+    const qty = all.reduce((s,l) => s + l.qty, 0);
+    const sum = all.reduce((s,l) => s + l.sum, 0);
+    return qty > 0 ? { cost: sum / qty, matched: true } : { cost: 0, matched: false };
+  };
   const upTo = all.filter(l => l.date <= asOfDate);
-  if (!upTo.length) return { cost: 0, matched: false };
+  if (!upTo.length) return allTimeAvg();
   const lastDate = upTo[upTo.length - 1].date; // upTo отсортирован по возрастанию — последний = самый поздний ≤ asOfDate
   // ВАЖНО (баг найден и исправлен 13.08): "N месяцев назад" через голый
   // d.setMonth(d.getMonth()-n) в JS ломается на датах конца месяца — если
@@ -1979,7 +1998,10 @@ function itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldI
   const lastDayQty = lastDayLines.reduce((s,l) => s + l.qty, 0);
   const lastDaySum = lastDayLines.reduce((s,l) => s + l.sum, 0);
   if (lastDayQty > 0) return { cost: lastDaySum / lastDayQty, matched: true };
-  return { cost: 0, matched: false };
+  // Шаг 5 — см. комментарий в начале функции: сюда попадаем, только если
+  // shagi 1-4 не сработали НИ РАЗУ (крайне маловероятно при непустом upTo,
+  // но на всякий случай — для полноты).
+  return allTimeAvg();
 }
 function itemCostAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem) {
   return itemCostDetailAsOf(item, asOfDate, linesByItem, fallbackPriceMap, soldItem).cost;
@@ -3002,7 +3024,7 @@ async function buildOPIU() {
       .join('<br>');
     html += '<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">' +
       '<div style="font-weight:700;color:#991b1b;margin-bottom:8px">&#9888; Себестоимость части продаж — 0 (нет прихода) — ' + pctS(tot.unmatchedRev, tot.trackedRev) + ' от отслеживаемой выручки за период (' + fmt(tot.unmatchedRev) + ' ₸)</div>' +
-      '<div style="font-size:12px;color:#991b1b;line-height:1.7">Для этих товаров под точно таким названием, как в Продажах, не нашлось ни одного прихода в Приходе (ни раньше даты продажи, ни позже) — себестоимость взята как 0 (100% маржи по ним, как в Power BI при отсутствии совпадения по названию), это завышает валовую прибыль ровно на эту сумму. Причина обычно — опечатка или другое написание названия товара между файлами Продаж и Прихода.<br><br>' + perMonth + '</div></div>';
+      '<div style="font-size:12px;color:#991b1b;line-height:1.7">Для этих товаров под точно таким названием, как в Продажах, вообще НЕ НАШЛОСЬ ни одного прихода в Приходе — ни в окне 1/3 мес. от даты продажи (методология Power BI), ни в любой другой момент истории (см. Шаг 5 в itemCostDetailAsOf, добавлено 18.08). Себестоимость взята как 0, это завышает валовую прибыль ровно на эту сумму. Обычно значит: товар реально ни разу не закупался под этим названием (см. блок ниже), либо на сайт ещё не загружен файл Прихода за нужный период — сверься со списком.<br><br>' + perMonth + '</div></div>';
 
     // Блок по товарам (не по месяцам, как выше) — read-only список, что
     // именно попадает в эту сумму, отсортировано по выручке. Добавлено
