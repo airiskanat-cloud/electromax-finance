@@ -3887,6 +3887,16 @@ async function confirmAndSave() {
     const diagLine = diagParts.length ? `<br><span style="color:#6b7280;font-size:12px">${diagParts.join(' · ')}</span>` : '';
     msg.innerHTML = `✓ Сохранено: ${uniqueWeeks}` + diagLine + (warnings.length ? `<br><span style="color:#d97706">⚠ ${warnings.join('; ')}</span>` : '');
     msg.style.color = '#16a34a';
+    // ИСПРАВЛЕНО 19.08 — найден настоящий источник "себестоимость не
+    // меняется после перезаливки": getReportData() кэширует
+    // purchaseLines/itemDaily на всю сессию (_reportDataCache), а сбрасывался
+    // кэш ТОЛЬКО в loadData() (кнопка "Обновить данные"). confirmAndSave()
+    // после успешного сохранения кэш не трогал — если пользователь грузил
+    // новый Приход и сразу шёл в ОПиУ БЕЗ отдельного нажатия "Обновить
+    // данные", ОПиУ считал по старым, кэшированным с начала сессии данным,
+    // даже если в Google Sheets уже лежали верные, свежие числа. Теперь
+    // кэш сбрасывается сразу после каждого успешного сохранения.
+    _reportDataCache = null;
     showToast('Данные 1С сохранены в Google Sheets!', 'success');
   } catch(e) {
     msg.textContent = '✗ Ошибка: ' + e.message;
