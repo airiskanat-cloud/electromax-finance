@@ -4343,7 +4343,13 @@ async function initSalesInSheets() {
 
 function exportOPIU(period) {
   if (typeof XLSX === 'undefined') { showToast('Библиотека Excel не загружена', 'error'); return; }
-  const tbl = document.querySelector('#opiu-result table');
+  // ИСПРАВЛЕНО 19.08: было '#opiu-result table' — брало ПЕРВУЮ таблицу в
+  // блоке, а с добавлением диагностической таблицы "Товары с нулевой
+  // себестоимостью" (она в разметке идёт РАНЬШЕ основного отчёта) первой
+  // стала именно она — кнопка "Excel ↓" наверху страницы скачивала не тот
+  // файл. Основная таблица ОПиУ — единственная с классом "rt", уточняем по
+  // нему явно.
+  const tbl = document.querySelector('#opiu-result table.rt');
   if (!tbl) { showToast('Сначала сформируйте ОПУ', 'error'); return; }
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.table_to_sheet(tbl);
