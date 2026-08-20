@@ -216,6 +216,7 @@
       <div class="nav-item" onclick="showPage('dds',this)"><span class="icon">&#128184;</span> ДДС Месячный</div>
       <div class="nav-item" onclick="showPage('opiu',this)"><span class="icon">&#128200;</span> ОПИУ</div>
       <div class="nav-item" onclick="showPage('balances',this)"><span class="icon">&#128176;</span> Остатки счетов</div>
+      <div class="nav-item" onclick="showPage('bank-recon',this)"><span class="icon">&#128270;</span> Сверка с банком</div>
       <div class="nav-item" onclick="showPage('cat-mapping',this)"><span class="icon">&#128209;</span> Категории без статьи</div>
       <div class="nav-item" onclick="showPage('load',this)"><span class="icon">&#128228;</span> Загрузка данных</div>
     </nav>
@@ -451,6 +452,23 @@
     <div class="page" id="page-balances">
       <div class="page-title">Остатки счетов</div>
       <div id="balances-grid"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
+    <div class="page" id="page-bank-recon">
+      <div class="page-title">Сверка выписки с банком</div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-label">🏦 Загрузи банковскую выписку (Excel)</div>
+        <p style="font-size:13px;color:#64748b;margin:6px 0 14px">Любой банк (Kaspi, БЦК, Халык и т.д.) — формат распознаётся автоматически по заголовкам колонок (Дата/Дебет/Кредит). Каждая строка выписки сверяется с Журналом по сумме + дате + счёту: зелёным — нашлось совпадение, красным — в Журнале этой операции нет (возможно, забыли внести).</p>
+        <label id="bankrecon-drop-zone" style="display:block;border:2px dashed #bfdbfe;border-radius:12px;padding:32px;text-align:center;cursor:pointer;background:#eff6ff;transition:background .2s"
+          ondragover="event.preventDefault();this.style.background='#dbeafe'"
+          ondragleave="this.style.background='#eff6ff'"
+          ondrop="handleBankReconFileDrop(event)">
+          <input type="file" id="bankrecon-upload-input" accept=".xlsx,.xls" multiple style="display:none" onchange="processBankReconFiles(Array.from(this.files))">
+          <div style="font-size:36px;margin-bottom:10px">🏦</div>
+          <div style="font-weight:700;color:#1e3a5f;font-size:15px">Нажми или перетащи выписки сюда</div>
+          <div style="font-size:12px;color:#94a3b8;margin-top:6px">.xlsx, .xls — можно несколько счетов сразу</div>
+        </label>
+        <div id="bankrecon-preview"></div>
+      </div>
     </div>
     <div class="page" id="page-cat-mapping">
       <div class="page-title">Категории без статьи</div>
@@ -944,6 +962,7 @@ function showPage(name, el) {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
   if (name === 'cat-mapping') buildCategoryMapping();
+  if (name === 'bank-recon' && _bankReconFiles.length) renderBankReconFiles();
 }
 
 function currentMonth() {
@@ -4143,6 +4162,254 @@ async function confirmAndSaveKaspi() {
   }
 }
 
+// ── СВЕРКА БАНКОВСКОЙ ВЫПИСКИ С ЖУРНАЛОМ ────────────────────────────
+// Добавлено 20.08 по просьбе Гульмиры — заказчик хочет быть уверен, что ни
+// один расход/приход по банку не пропущен мимо Журнала. Разбор УНИВЕРСАЛЬНЫЙ
+// (не завязан на конкретный банк, в отличие от parseKaspiCommissionFile
+// выше): ищем заголовок таблицы по ключевым СЛОВАМ ("Дата"/"Дебет"/
+// "Кредит"/"Корреспондент"/"Назначение"), а не по номерам колонок — у
+// Kaspi и БЦК (сверено на реальных выписках 20.08) колонки в разном
+// порядке, но подписи на русском в целом похожи, и метод должен работать
+// и для Халык/Жусан/Freedom/Forte без переделки под каждый банк отдельно.
+// Сопоставление со строками Журнала — по сумме + точной дате + счёту (как
+// попросила Гульмира — без допуска на разницу в датах, чтобы не плодить
+// ложные "совпадения").
+function parseStmtAmount(v) {
+  if (typeof v === 'number') return v;
+  const s = String(v||'').replace(/[\s ]/g,'').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+function parseBankStatementFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array', raw:true});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+        // Строка-заголовок таблицы: нужна ЯЧЕЙКА с "дата" И ячейка с "дебет"
+        // в ОДНОЙ строке — метастроки шапки выписки (вида "Дата последнего
+        // движения:") этому не удовлетворяют, там "Дебет" рядом нет.
+        let headerIdx = -1;
+        for (let i = 0; i < Math.min(raw.length, 30); i++) {
+          const cells = (raw[i]||[]).map(c => String(c||'').toLowerCase());
+          if (cells.some(c => c.includes('дата')) && cells.some(c => c.includes('дебет'))) { headerIdx = i; break; }
+        }
+        if (headerIdx === -1) {
+          resolve({error:'Не найден заголовок таблицы (колонки "Дата"/"Дебет"). Проверь, что это банковская выписка.', name: file.name});
+          return;
+        }
+        const hdrCells = (raw[headerIdx]||[]).map(c => String(c||'').toLowerCase());
+        let dateCol=-1, debitCol=-1, creditCol=-1, ctpCol=-1, purposeCol=-1;
+        hdrCells.forEach((c, idx) => {
+          const hasId = c.includes('иин') || c.includes('бин') || c.includes('иик') || c.includes('бик');
+          if (dateCol===-1 && c.includes('дата')) dateCol = idx;
+          if (debitCol===-1 && c.includes('дебет')) debitCol = idx;
+          if (creditCol===-1 && c.includes('кредит')) creditCol = idx;
+          // Колонка с именем контрагента — "Корреспондент"/"Бенефициар", но
+          // НЕ колонки с его ИИН/БИН/ИИК/БИК (те тоже часто содержат слово
+          // "бенефициара"/"корреспондента" в подписи, например "ИИК
+          // бенефициара...") — берём первую подходящую БЕЗ реквизитов.
+          if (ctpCol===-1 && !hasId && (c.includes('корреспондент') || c.includes('бенефициар'))) ctpCol = idx;
+          if (purposeCol===-1 && c.includes('назначен')) purposeCol = idx;
+        });
+        if (dateCol===-1 || debitCol===-1 || creditCol===-1) {
+          resolve({error:'Не удалось распознать колонки Дата/Дебет/Кредит в заголовке таблицы.', name: file.name});
+          return;
+        }
+        // Подсказка банка/владельца счёта — только для авто-выбора счёта в
+        // выпадающем списке ниже, не критично, можно поправить вручную.
+        let bankHint = '', entityHint = '';
+        for (let i = 0; i < Math.min(raw.length, 12); i++) {
+          const c0 = String(raw[i]?.[0]||'').toLowerCase();
+          if (!bankHint && c0.includes('банк')) bankHint = String(raw[i]?.[2]||raw[i]?.[0]||'');
+          if (!entityHint && (c0.includes('наименование') || c0.includes('клиент'))) entityHint = String(raw[i]?.[2]||raw[i]?.[0]||'');
+        }
+        const parseDate = s => {
+          const m = String(s||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+          return m ? new Date(+m[3], +m[2]-1, +m[1]) : null;
+        };
+        const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        const rows = [];
+        for (let i = headerIdx + 1; i < raw.length; i++) {
+          const r = raw[i] || [];
+          const date = parseDate(r[dateCol]);
+          if (!date) continue; // строка нумерации колонок (1,2,3...) или пустая строка
+          const debit = parseStmtAmount(r[debitCol]);
+          const credit = parseStmtAmount(r[creditCol]);
+          if (!debit && !credit) continue;
+          rows.push({
+            date: toISO(date), debit, credit,
+            counterparty: ctpCol>-1 ? String(r[ctpCol]||'').split('\n')[0].trim() : '',
+            purpose: purposeCol>-1 ? String(r[purposeCol]||'').trim() : ''
+          });
+        }
+        resolve({ rows, bankHint, entityHint, name: file.name });
+      } catch(err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+let _bankReconFiles = [];
+function handleBankReconFileDrop(event) {
+  event.preventDefault();
+  document.getElementById('bankrecon-drop-zone').style.background = '#eff6ff';
+  const files = Array.from(event.dataTransfer.files).filter(f => /\.xlsx?$|\.xls$/i.test(f.name));
+  if (files.length) processBankReconFiles(files);
+}
+async function processBankReconFiles(files) {
+  const preview = document.getElementById('bankrecon-preview');
+  preview.innerHTML = '<div style="margin-top:12px"><div class="loading"><div class="spinner"></div>Разбираю выписки...</div></div>';
+  _bankReconFiles = [];
+  for (const file of files) {
+    let r;
+    try { r = await parseBankStatementFile(file); }
+    catch(e) { r = { error: e.message, name: file.name }; }
+    _bankReconFiles.push(r);
+  }
+  renderBankReconFiles();
+}
+// Лучший счёт-кандидат из уже известных (allKnownAccounts) для авто-выбора
+// в выпадающем списке — по названию банка и, если получится, по юрлицу.
+// Это только подсказка, пользователь всегда может выбрать другой счёт.
+function guessAccountForStatement(bankHint, entityHint) {
+  const accounts = allKnownAccounts();
+  if (!accounts.length) return '';
+  const h = (String(bankHint||'') + ' ' + String(entityHint||'')).toLowerCase();
+  let bankPrefix = '';
+  if (/центркредит/.test(h)) bankPrefix = 'бцк';
+  else if (/kaspi|каспи/.test(h)) bankPrefix = 'kaspi';
+  else if (/халык|halyk|народный/.test(h)) bankPrefix = 'халык';
+  else if (/жусан/.test(h)) bankPrefix = 'жусан';
+  else if (/freedom/.test(h)) bankPrefix = 'freedom';
+  else if (/forte/.test(h)) bankPrefix = 'forte';
+  const candidates = bankPrefix ? accounts.filter(a => a.toLowerCase().startsWith(bankPrefix)) : accounts;
+  const entityWords = [['ctd','ctd'], ['phone house','phone'], ['norex','norex'], ['норех','норех'], ['amdk','amdk'], ['амдк','амдк']];
+  for (const [needle, tag] of entityWords) {
+    if (h.includes(needle)) {
+      const found = candidates.find(a => a.toLowerCase().includes(tag));
+      if (found) return found;
+    }
+  }
+  return candidates[0] || accounts[0] || '';
+}
+function renderBankReconFiles() {
+  const preview = document.getElementById('bankrecon-preview');
+  const accounts = allKnownAccounts().sort();
+  let html = '<div style="margin-top:14px">';
+  _bankReconFiles.forEach((r, idx) => {
+    if (r.error) {
+      html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px"><b>❌ ${r.name}</b>: ${r.error}</div>`;
+      return;
+    }
+    const guess = guessAccountForStatement(r.bankHint, r.entityHint);
+    const opts = accounts.length
+      ? accounts.map(a => `<option value="${a}" ${a===guess?'selected':''}>${a}</option>`).join('')
+      : '<option value="">Нет известных счетов</option>';
+    html += `<div class="card" style="margin-bottom:12px" id="bankrecon-file-${idx}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <b style="font-size:13px;color:#1e3a5f">📄 ${r.name}</b>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px">${r.rows.length} операций${r.bankHint?' · '+r.bankHint:''}${r.entityHint?' · '+r.entityHint:''}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="bankrecon-acc-${idx}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px;max-width:220px">${opts}</select>
+          <button class="btn btn-save" style="font-size:12px;padding:7px 14px;white-space:nowrap" onclick="runBankRecon(${idx})">Свериться</button>
+        </div>
+      </div>
+      <div id="bankrecon-result-${idx}" style="margin-top:12px"></div>
+    </div>`;
+  });
+  html += '</div>';
+  preview.innerHTML = html;
+}
+// Сверяет строки одной выписки со счётом account: для каждой строки ищет
+// В ЖУРНАЛЕ операцию с точно такой же датой, суммой и типом (расход/доход,
+// с учётом переводов — Дебет может быть и переводом на другой свой счёт,
+// Кредит — переводом с другого своего счёта). Одна и та же строка Журнала
+// не может закрыть две строки выписки — usedIds защищает от повторного
+// использования. extra — операции, которые ЕСТЬ в Журнале по этому счёту
+// за период выписки, но НЕ нашли пару в самой выписке (может быть ошибка
+// ввода — не тот счёт/дата/сумма, стоит проверить).
+function reconcileBankStatement(account, stmtRows) {
+  if (!stmtRows.length) return { rows: [], extra: [] };
+  const dates = [...stmtRows.map(r=>r.date)].sort();
+  const from = dates[0], to = dates[dates.length-1];
+  const usedIds = new Set();
+  const rows = stmtRows.map(row => {
+    const isDebit = row.debit > 0;
+    const amt = isDebit ? row.debit : row.credit;
+    const match = allData.find(r => {
+      if (usedIds.has(r.id)) return false;
+      if (r.date !== row.date) return false;
+      if (Math.round(toNum(r.amount)) !== Math.round(amt)) return false;
+      if (isDebit) return r.account === account && (r.type === 'расход' || r.type === 'перевод');
+      return (r.type === 'доход' && r.account === account) || (r.type === 'перевод' && r.to_account === account);
+    });
+    if (match) usedIds.add(match.id);
+    return { ...row, matched: !!match };
+  });
+  const extra = allData.filter(r => {
+    if (usedIds.has(r.id)) return false;
+    if (!r.date || r.date < from || r.date > to) return false;
+    return r.account === account || r.to_account === account;
+  });
+  return { rows, extra };
+}
+function runBankRecon(idx) {
+  const file = _bankReconFiles[idx];
+  const accSel = document.getElementById('bankrecon-acc-' + idx);
+  const account = accSel ? accSel.value : '';
+  if (!account) { showToast('Нет счёта для сверки', 'error'); return; }
+  const { rows, extra } = reconcileBankStatement(account, file.rows);
+  const matchedCount = rows.filter(r=>r.matched).length;
+  const missingCount = rows.length - matchedCount;
+  const missingSum = rows.filter(r=>!r.matched).reduce((s,r)=>s+(r.debit||r.credit),0);
+  const fK = v => Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+' млн ₸' : fmt(v)+' ₸';
+  let html = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+    <div style="background:#f8fafc;border-radius:8px;padding:10px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Всего в выписке</div><div style="font-size:16px;font-weight:700;color:#1e3a5f">${rows.length}</div></div>
+    <div style="background:#f0fdf4;border-radius:8px;padding:10px"><div style="font-size:10px;color:#16a34a;text-transform:uppercase">✅ Найдено</div><div style="font-size:16px;font-weight:700;color:#16a34a">${matchedCount}</div></div>
+    <div style="background:${missingCount?'#fef2f2':'#f0fdf4'};border-radius:8px;padding:10px"><div style="font-size:10px;color:${missingCount?'#dc2626':'#16a34a'};text-transform:uppercase">${missingCount?'⚠️ Не найдено':'✅ Не найдено'}</div><div style="font-size:16px;font-weight:700;color:${missingCount?'#dc2626':'#16a34a'}">${missingCount}</div></div>
+    <div style="background:#f8fafc;border-radius:8px;padding:10px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Сумма расхождений</div><div style="font-size:16px;font-weight:700;color:#1e3a5f">${fK(missingSum)}</div></div>
+  </div>`;
+  if (!missingCount && !extra.length) {
+    html += `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#15803d;font-weight:600">✅ Всё сходится — каждая операция выписки найдена в Журнале, лишних операций в Журнале за этот период нет.</div>`;
+  }
+  if (extra.length) {
+    html += `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#92400e">
+      ⚠ В Журнале есть ${extra.length} операц${extra.length===1?'ия':(extra.length<5?'ии':'ий')} по этому счёту за период выписки, которых НЕТ в самой выписке — проверь, не ошиблись ли со счётом/суммой/датой при вводе:<br>
+      ${extra.slice(0,10).map(r => `${fmtDate(r.date)} · ${r.type} · ${fmt(r.amount)} ₸ · ${r.name||r.category||'—'}`).join('<br>')}
+      ${extra.length>10?`<br>…и ещё ${extra.length-10}`:''}
+    </div>`;
+  }
+  html += `<div class="report-wrap"><table style="border-collapse:collapse;font-size:12px;width:100%">
+    <thead><tr style="background:#f8fafc">
+      <th style="padding:6px 10px;text-align:left">Статус</th>
+      <th style="padding:6px 10px;text-align:left">Дата</th>
+      <th style="padding:6px 10px;text-align:left">Тип</th>
+      <th style="padding:6px 10px;text-align:right">Сумма</th>
+      <th style="padding:6px 10px;text-align:left">Контрагент</th>
+      <th style="padding:6px 10px;text-align:left">Назначение</th>
+    </tr></thead><tbody>`;
+  [...rows].sort((a,b)=> (a.matched===b.matched?0:(a.matched?1:-1)) || (a.date<b.date?-1:1)).forEach(row => {
+    const isDebit = row.debit>0;
+    const amt = isDebit ? row.debit : row.credit;
+    const bg = row.matched ? '#f0fdf4' : '#fef2f2';
+    const icon = row.matched ? '✅' : '⚠️';
+    html += `<tr style="background:${bg}">
+      <td style="padding:5px 10px">${icon}</td>
+      <td style="padding:5px 10px;white-space:nowrap">${fmtDate(row.date)}</td>
+      <td style="padding:5px 10px;white-space:nowrap">${isDebit?'Расход':'Приход'}</td>
+      <td style="padding:5px 10px;text-align:right;font-weight:600;white-space:nowrap">${fmt(amt)} ₸</td>
+      <td style="padding:5px 10px;font-size:11px">${row.counterparty||'—'}</td>
+      <td style="padding:5px 10px;font-size:11px;color:#64748b">${(row.purpose||'').slice(0,80)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  document.getElementById('bankrecon-result-' + idx).innerHTML = html;
+}
 // ── ОСТАТОК СКЛАДА (ведомость по товарам на складах, 1С) ───────────
 // Формат: шапка с метаданными, затем таблица с колонками Период/Склад/
 // Артикул(название товара)/Серия/Количество — построчно по серийным
