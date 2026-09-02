@@ -479,7 +479,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwqmCJy53-h3-v0nAkHPDCA9rxnrA-PrrTXhYxwxqLUSMO3mDfTNw0-gwLYL7LztK7-/exec'; // 19.08: новый деплой — фикс ключа удаления в savePurchaseLines/saveItemDaily (товар+дата вместо только даты)
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwtLC9fbDg77HgCeKeJbMGaloMWMCSn-IcO4IEhzUO7o_aaGE1r3nFvWnZ6boK0skbN/exec'; // 02.09: новый деплой под gulmira@goodfinbusiness.com — добавлены addExternalJournalRow, saveNameOverride/getNameOverrides
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -713,17 +713,54 @@ function guessSubcategory(category, name, subMap) {
 // дефолта — так можно и переназначить категорию в другую строку, если
 // раньше она молчком падала не туда. target==='excluded' нигде не
 // суммируется — категория просто не входит ни в один бакет ОПиУ.
+// ИЗМЕНЕНО 02.09 — категории вида "__override_<bucket>" (см.
+// applyNameOverride ниже) считаются АБСОЛЮТНЫМ назначением статьи для
+// КОНКРЕТНОЙ операции по её точному названию — сильнее и dynamicMap
+// (переопределение целой категории), и дефолтов. Так операция вроде
+// "Таргет 2 видео", заведённая бухгалтером под категорией "услуги", всё
+// равно попадает в статью "Маркетинг", если Гульмира один раз подтвердила
+// это на странице "Категории без статьи" — независимо от того, что
+// бухгалтер продолжает писать "услуги" каждый раз заново.
 function bucketSum(catM, m, key, dynamicMap) {
   const cats = catM[m];
   if (!cats) return 0;
   const defaults = OPIU_TARGET_DEFAULTS[key] || [];
   let sum = 0;
   Object.keys(cats).forEach(c => {
-    const override = dynamicMap ? dynamicMap[c] : undefined;
-    const target = override !== undefined ? override : (defaults.includes(c) ? key : null);
+    let target;
+    if (c.startsWith('__override_')) {
+      target = c.slice('__override_'.length);
+    } else {
+      const override = dynamicMap ? dynamicMap[c] : undefined;
+      target = override !== undefined ? override : (defaults.includes(c) ? key : null);
+    }
     if (target === key) sum += cats[c];
   });
   return sum;
+}
+// Приводит "сырую" категорию строки Журнала к ЭФФЕКТИВНОЙ категории для
+// подсчёта bucketSum/подкатегорий — если для точного названия операции
+// сохранено переопределение (nameOverrideMap, см. loadNameOverrides), она
+// заменяется на синтетический тег "__override_<bucket>"; иначе возвращается
+// обычная категория как есть. Используется в buildOPIU/buildDDS вместо
+// прямого (r.category||'').toLowerCase() при заполнении catM.
+function effectiveCategory(row, nameOverrideMap) {
+  const raw = (row.category || '').toLowerCase().trim();
+  const nameKey = String(row.name || '').toLowerCase().trim();
+  const ov = nameOverrideMap ? nameOverrideMap[nameKey] : undefined;
+  return ov ? ('__override_' + ov.target) : raw;
+}
+// Ключевые слова маркетинга — ПЕРЕИСПОЛЬЗУЕТ тот же список, что в
+// SUBCATEGORY_RULES.маркетинг.keywords (не дублируем regex), чтобы находить
+// такие траты по названию ДАЖЕ ЕСЛИ бухгалтер поставил другую категорию
+// ("услуги", "зарплата" и т.п.) — см. страница "Категории без статьи",
+// раздел "Похоже на другую статью".
+function guessMarketingSubcatByName(name) {
+  const rules = SUBCATEGORY_RULES['маркетинг'];
+  for (const [re, sub] of rules.keywords) {
+    if (re.test(name||'')) return sub;
+  }
+  return null;
 }
 
 // Кэш ручных назначений категорий (лист КатегорииОПиУ) — грузится один раз
@@ -788,6 +825,23 @@ async function loadSubcategoryOverrides() {
     (d.items||[]).forEach(x => { if (x.name) map[x.name] = x.subcategory; });
   } catch(e) {}
   _subcategoryOverridesCache = map;
+  return map;
+}
+
+// Кэш переопределений статьи ОПиУ по точному названию операции (лист
+// "ПереопределениеСтрок", см. saveNameOverride/getNameOverrides на бэкенде и
+// effectiveCategory выше) — сброс аналогично остальным, после сохранения
+// новой доводки в confirmNameOverride. items: { name: { target, subcategory } }.
+let _nameOverridesCache = null;
+async function loadNameOverrides() {
+  if (_nameOverridesCache) return _nameOverridesCache;
+  const map = {};
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getNameOverrides');
+    const d = await r.json();
+    (d.items||[]).forEach(x => { if (x.name && x.target) map[x.name] = { target: x.target, subcategory: x.subcategory }; });
+  } catch(e) {}
+  _nameOverridesCache = map;
   return map;
 }
 
@@ -2083,6 +2137,7 @@ async function buildCategoryMapping() {
 
   const dynamicMap = await loadCategoryOverrides();
   const subMap = await loadSubcategoryOverrides();
+  const nameOverrideMap = await loadNameOverrides();
   const sums = {}, counts = {};
   allData.filter(r => r.type === 'расход').forEach(r => {
     const c = (r.category||'').toLowerCase().trim();
@@ -2095,6 +2150,30 @@ async function buildCategoryMapping() {
     .filter(c => !CATEGORY_MAP_LOOKUP[c] && dynamicMap[c] === undefined)
     .map(c => ({ category: c, sum: sums[c], count: counts[c] }))
     .sort((a,b) => b.sum - a.sum);
+
+  // ДОБАВЛЕНО 02.09 — операции, у которых КАТЕГОРИЯ не "маркетинг" (обычно
+  // "услуги" или "зарплата" — бухгалтер заводит так по привычке), но по
+  // НАЗВАНИЮ похоже на рекламу/СММ/таргет (guessMarketingSubcatByName,
+  // те же ключевые слова, что для подкатегорий внутри "маркетинг"). Раньше
+  // такие операции молча оседали в "Услуги"/"ФОТ" и никогда не попадали в
+  // строку "Маркетинг и реклама" ОПиУ. Гульмира подтверждает один раз по
+  // точному названию — дальше effectiveCategory() подставляет статью
+  // "Маркетинг" для ВСЕХ операций с таким названием, независимо от того,
+  // какую категорию бухгалтер продолжает писать (см. loadNameOverrides).
+  const likeMarketing = {};
+  allData.filter(r => r.type === 'расход').forEach(r => {
+    const c = (r.category||'').toLowerCase().trim();
+    if (c === 'маркетинг') return; // уже и так в нужной статье
+    const nameKey = String(r.name||'').toLowerCase().trim();
+    if (!nameKey) return;
+    if (nameOverrideMap[nameKey]) return; // уже переопределено (в любую сторону)
+    const sub = guessMarketingSubcatByName(r.name);
+    if (!sub) return;
+    if (!likeMarketing[nameKey]) likeMarketing[nameKey] = { category: c || '(без категории)', name: r.name, sum: 0, count: 0, suggestedSub: sub };
+    likeMarketing[nameKey].sum += toNum(r.amount);
+    likeMarketing[nameKey].count += 1;
+  });
+  const likeMarketingList = Object.values(likeMarketing).sort((a,b) => b.sum - a.sum);
 
   // Строки известной категории (авторасходы/услуги/маркетинг), у которой
   // ЕСТЬ подкатегории, но по названию конкретной операции подкатегория не
@@ -2115,7 +2194,7 @@ async function buildCategoryMapping() {
   });
   const unSubList = Object.values(unSub).sort((a,b) => b.sum - a.sum);
 
-  if (!unclassified.length && !unSubList.length) {
+  if (!unclassified.length && !unSubList.length && !likeMarketingList.length) {
     el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все категории и подкатегории расходов уже определены</div>';
     return;
   }
@@ -2169,6 +2248,33 @@ async function buildCategoryMapping() {
     </div>`;
   };
 
+  // Карточка "похоже на маркетинг, но категория другая" — в отличие от
+  // остальных карточек, дропдаун статьи здесь предзаполнен подсказкой
+  // ('mark'), а не пуст — Гульмире обычно нужно просто подтвердить, а не
+  // выбирать заново. Кнопка "Нет, это ..." просто убирает карточку из
+  // списка на этот сеанс (без сохранения) — если бухгалтер действительно
+  // имела в виду другую статью, ничего страшного не происходит.
+  const nameOverrideCardHtml = u => {
+    const idAttr = 'no-' + btoa(unescape(encodeURIComponent(u.name))).replace(/[^a-zA-Z0-9]/g,'');
+    const opCount = u.count===1 ? 'операция' : (u.count<5 ? 'операции' : 'операций');
+    const targetOpts = Object.entries(OPIU_TARGET_LABELS)
+      .map(([key,label]) => `<option value="${key}" ${key==='mark'?'selected':''}>${label}</option>`).join('');
+    return `<div class="card" id="${idAttr}" style="margin-bottom:12px;background:#eff6ff;border-color:#bfdbfe">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+        <span style="font-size:14px;font-weight:600">${u.name}</span>
+        <span style="font-size:14px;font-weight:600;white-space:nowrap">${fK(u.sum)}</span>
+      </div>
+      <div style="font-size:12px;color:#64748b;margin:2px 0 10px">${fmt(u.count)} ${opCount} · сейчас категория «${u.category}», по названию похоже на «Маркетинг → ${u.suggestedSub}»</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="sel-${idAttr}" style="flex:1;padding:6px 8px;border:1px solid #bfdbfe;border-radius:8px;font-size:12.5px">
+          ${targetOpts}
+        </select>
+        <button class="btn btn-save" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="confirmNameOverride('${escJs(u.name)}','${idAttr}','${escJs(u.suggestedSub)}')">Подтвердить</button>
+        <button class="btn btn-clear" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="dismissNameOverrideCard('${idAttr}')">Нет, это «${u.category}»</button>
+      </div>
+    </div>`;
+  };
+
   let html = '';
   if (unclassified.length) {
     html += `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unclassified.length} категор${unclassified.length===1?'ия':(unclassified.length<5?'ии':'ий')} без статьи ОПиУ</div>` +
@@ -2177,6 +2283,10 @@ async function buildCategoryMapping() {
   if (unSubList.length) {
     html += `<div style="font-size:13px;color:#64748b;margin:${unclassified.length?'22px':'0'} 0 14px">Подкатегории без совпадения (${unSubList.length}) — категория известна, подкатегория не распозналась по названию</div>` +
       unSubList.map(subCardHtml).join('');
+  }
+  if (likeMarketingList.length) {
+    html += `<div style="font-size:13px;color:#64748b;margin:${(unclassified.length||unSubList.length)?'22px':'0'} 0 14px">Похоже на другую статью (${likeMarketingList.length}) — категория у бухгалтера одна, а по названию операции похоже на маркетинг/рекламу. Подтверди — и такие операции всегда будут попадать в "Маркетинг", даже если бухгалтер продолжит писать прежнюю категорию.</div>` +
+      likeMarketingList.map(nameOverrideCardHtml).join('');
   }
   el.innerHTML = html;
 }
@@ -2265,6 +2375,57 @@ async function confirmSubcategoryMapping(name, cardId) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// Переопределение статьи ОПиУ/ДДС по точному названию операции (см.
+// likeMarketingList/nameOverrideCardHtml выше, effectiveCategory и
+// saveNameOverride на бэкенде) — в отличие от confirmCategoryMapping (та
+// переназначает ЦЕЛУЮ категорию), здесь только ОДНО конкретное название,
+// независимо от того, какую категорию бухгалтер поставил в кассе. Подставляем
+// suggestedSub только если итоговая статья осталась "mark" (Гульмира могла
+// поменять дропдаун на что-то другое перед подтверждением) — для остальных
+// статей подкатегория не нужна (или своя, вводить тут для них не даём).
+async function confirmNameOverride(name, cardId, suggestedSub) {
+  const card = document.getElementById(cardId);
+  const sel = document.getElementById('sel-' + cardId);
+  const target = sel ? sel.value : 'mark';
+  const subcategory = target === 'mark' ? (suggestedSub || '') : '';
+  const controls = card ? card.querySelectorAll('button, select') : [];
+  controls.forEach(b => b.disabled = true);
+  if (card) card.style.opacity = '0.5';
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const r = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action: 'saveNameOverride', data: { name, target, subcategory } }),
+      signal: controller.signal
+    });
+    const d = await r.json();
+    if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
+    _nameOverridesCache = null; // сброс кэша — ОПиУ/ДДС подхватят переопределение на следующем открытии
+    if (card) card.remove();
+    showToast('Сохранено — теперь всегда «' + (OPIU_TARGET_LABELS[target] || target) + '»', 'success');
+  } catch(e) {
+    if (card) card.style.opacity = '1';
+    controls.forEach(b => b.disabled = false);
+    const reason = e.name === 'AbortError' ? 'сервер не ответил за 15 секунд' : e.message;
+    showToast('Не удалось сохранить (' + reason + '), попробуй ещё раз', 'error');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+// "Нет, это правда «категория X»" — просто убирает карточку-подсказку из
+// текущего просмотра, ничего не сохраняя на бэкенде (это не постоянное
+// исключение — при следующем формировании страницы, если операция всё ещё
+// подходит под ключевые слова, карточка появится снова; это осознанно
+// просто, чтобы не заводить ещё один список "точно не то" ради редкого
+// случая случайного ложного совпадения по слову).
+function dismissNameOverrideCard(cardId) {
+  const card = document.getElementById(cardId);
+  if (card) card.remove();
 }
 
 // ── ОТЧЁТ ДНЯ (сводный ежедневный отчёт для заказчика) ─────────────
@@ -2695,12 +2856,16 @@ async function buildDDS() {
   const COLS = cols.length ? cols : MONTHS;
 
   const dynamicMap = await loadCategoryOverrides();
+  // ДОБАВЛЕНО 02.09 — переопределение статьи по точному названию (см.
+  // effectiveCategory/loadNameOverrides) — работает и в ДДС, не только
+  // в ОПиУ, чтобы структура расходов не расходилась между отчётами.
+  const nameOverrideMap = await loadNameOverrides();
   const catM = {};
   allData.filter(r => r.type === 'расход').forEach(r => {
     const m = r.date ? r.date.slice(0,7) : null;
     if(!m) return;
     if(!catM[m]) catM[m] = {};
-    const c = (r.category||'').toLowerCase();
+    const c = effectiveCategory(r, nameOverrideMap);
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
   });
   const calc = m => {
@@ -2950,6 +3115,9 @@ async function buildOPIU() {
   // guessSubcategory выше. subMap — ручные переопределения по названию
   // (страница "Категории без статьи", раздел "Подкатегории без совпадения").
   const subMap = await loadSubcategoryOverrides();
+  // ДОБАВЛЕНО 02.09 — переопределение статьи по точному названию операции,
+  // см. effectiveCategory/loadNameOverrides выше.
+  const nameOverrideMap = await loadNameOverrides();
   const catM = {};
   // catSubM[месяц][категория][подкатегория] = сумма — только для категорий,
   // у которых есть подкатегории (SUBCATEGORY_RULES); используется ниже для
@@ -2987,15 +3155,30 @@ async function buildOPIU() {
     // тогда этот фильтр просто не сработает ни для одной строки.
     if (/перевод/i.test(r.name||'')) return;
     if(!catM[m]) catM[m] = {};
-    const c = (r.category||'').toLowerCase();
+    // ДОБАВЛЕНО 02.09: если для точного названия этой операции сохранено
+    // переопределение статьи (см. confirmNameOverride) — используем
+    // синтетический тег "__override_<bucket>" вместо сырой категории
+    // Журнала; bucketSum() трактует такой тег как абсолютное назначение.
+    const c = effectiveCategory(r, nameOverrideMap);
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
-    if (SUBCATEGORY_RULES[c]) {
+    // Для подбора подкатегории нужна "человеческая" категория из
+    // SUBCATEGORY_RULES (например 'маркетинг') — если c это синтетический
+    // тег переопределения, разворачиваем его обратно через
+    // BUCKET_TO_SUBCAT_CATEGORY; иначе c уже и есть нужная категория.
+    const subRuleCat = c.startsWith('__override_') ? (BUCKET_TO_SUBCAT_CATEGORY[c.slice('__override_'.length)] || c) : c;
+    if (SUBCATEGORY_RULES[subRuleCat]) {
       // Своя строка Журнала может нести ручную подкатегорию в колонке
       // "Подкатегория" (r['Подкатегория']) — она в приоритете; иначе
       // подбираем автоматически (ключевые слова / ручная доводка по
-      // названию из subMap), см. guessSubcategory.
-      const sub = (r['Подкатегория'] && String(r['Подкатегория']).trim())
-                  || guessSubcategory(c, r.name, subMap)
+      // названию из subMap), см. guessSubcategory. Если само переопределение
+      // уже несёт готовую подкатегорию (nameOverrideMap[...].subcategory,
+      // например "Таргет" — угадана в момент подтверждения на странице
+      // "Категории без статьи") — она в самом высоком приоритете.
+      const nameKey = String(r.name||'').toLowerCase().trim();
+      const ov = nameOverrideMap[nameKey];
+      const sub = (ov && ov.subcategory)
+                  || (r['Подкатегория'] && String(r['Подкатегория']).trim())
+                  || guessSubcategory(subRuleCat, r.name, subMap)
                   || 'Без подкатегории';
       if (!catSubM[m]) catSubM[m] = {};
       if (!catSubM[m][c]) catSubM[m][c] = {};
@@ -3057,7 +3240,10 @@ async function buildOPIU() {
   const unknownCats = {};
   cols.forEach(m => {
     Object.keys(catM[m] || {}).forEach(c => {
-      if (c && !CATEGORY_MAP_LOOKUP[c]) unknownCats[c] = (unknownCats[c]||0) + catM[m][c];
+      // "__override_..." — синтетический тег переопределения по названию
+      // (см. effectiveCategory), не настоящая категория Журнала — не
+      // предупреждаем о ней как о "новой категории без статьи".
+      if (c && !c.startsWith('__override_') && !CATEGORY_MAP_LOOKUP[c]) unknownCats[c] = (unknownCats[c]||0) + catM[m][c];
     });
   });
   const unknownCatsList = Object.entries(unknownCats).filter(([,v]) => v).sort((a,b) => b[1]-a[1]);
@@ -3313,7 +3499,10 @@ async function buildOPIU() {
   html += subRow('Прочее', 'cOther', 'opiu-com');
   html += dRow('(-) Бонусы клиентам', 'kasp', true, true);
   {
-    const sc = subCatRows('opiu-mark', ['маркетинг']);
+    // '__override_mark' — операции с другой категорией у бухгалтера
+    // (например "услуги"/"зарплата"), переопределённые вручную в
+    // "Маркетинг" по точному названию, см. effectiveCategory выше.
+    const sc = subCatRows('opiu-mark', ['маркетинг', '__override_mark']);
     html += dRowSub('(-) Маркетинг и реклама', 'mark', 'opiu-mark', true, sc.hasSub);
     html += sc.rows;
   }
@@ -4392,23 +4581,105 @@ function runBankRecon(idx) {
       <th style="padding:6px 10px;text-align:right">Сумма</th>
       <th style="padding:6px 10px;text-align:left">Контрагент</th>
       <th style="padding:6px 10px;text-align:left">Назначение</th>
+      <th style="padding:6px 10px;text-align:left">Действие</th>
     </tr></thead><tbody>`;
-  [...rows].sort((a,b)=> (a.matched===b.matched?0:(a.matched?1:-1)) || (a.date<b.date?-1:1)).forEach(row => {
+  [...rows].sort((a,b)=> (a.matched===b.matched?0:(a.matched?1:-1)) || (a.date<b.date?-1:1)).forEach((row, ri) => {
     const isDebit = row.debit>0;
     const amt = isDebit ? row.debit : row.credit;
     const bg = row.matched ? '#f0fdf4' : '#fef2f2';
     const icon = row.matched ? '✅' : '⚠️';
-    html += `<tr style="background:${bg}">
-      <td style="padding:5px 10px">${icon}</td>
+    const rowId = `${idx}-${ri}`;
+    const actionCell = row.matched ? '—' :
+      `<button class="btn btn-clear bfrm-add-btn" style="font-size:11px;padding:4px 10px;white-space:nowrap" onclick="toggleBankReconAdd(${idx},${ri})">➕ Внести в кассу</button>`;
+    html += `<tr id="bankrecon-row-${rowId}" style="background:${bg}">
+      <td style="padding:5px 10px" class="bfrm-status-icon">${icon}</td>
       <td style="padding:5px 10px;white-space:nowrap">${fmtDate(row.date)}</td>
       <td style="padding:5px 10px;white-space:nowrap">${isDebit?'Расход':'Приход'}</td>
       <td style="padding:5px 10px;text-align:right;font-weight:600;white-space:nowrap">${fmt(amt)} ₸</td>
       <td style="padding:5px 10px;font-size:11px">${row.counterparty||'—'}</td>
       <td style="padding:5px 10px;font-size:11px;color:#64748b">${(row.purpose||'').slice(0,80)}</td>
+      <td style="padding:5px 10px">${actionCell}</td>
     </tr>`;
+    if (!row.matched) {
+      html += `<tr id="bankrecon-addform-${rowId}" style="display:none;background:#fffbeb">
+        <td colspan="7" style="padding:10px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <div><label style="font-size:10px;color:#92400e;display:block;margin-bottom:3px">Тип</label>
+              <select id="bfrm-type-${rowId}" style="padding:6px 8px;border:1px solid #fde68a;border-radius:6px;font-size:12px">
+                <option value="Приход" ${!isDebit?'selected':''}>Приход</option>
+                <option value="Расход" ${isDebit?'selected':''}>Расход</option>
+              </select>
+            </div>
+            <div><label style="font-size:10px;color:#92400e;display:block;margin-bottom:3px">Дата</label>
+              <input type="date" id="bfrm-date-${rowId}" value="${row.date}" style="padding:6px 8px;border:1px solid #fde68a;border-radius:6px;font-size:12px">
+            </div>
+            <div><label style="font-size:10px;color:#92400e;display:block;margin-bottom:3px">Сумма</label>
+              <input type="number" id="bfrm-amt-${rowId}" value="${Math.round(amt)}" style="width:120px;padding:6px 8px;border:1px solid #fde68a;border-radius:6px;font-size:12px">
+            </div>
+            <div style="flex:1;min-width:160px"><label style="font-size:10px;color:#92400e;display:block;margin-bottom:3px">Название</label>
+              <input type="text" id="bfrm-name-${rowId}" value="${escHtmlAttr(row.counterparty)}" style="width:100%;padding:6px 8px;border:1px solid #fde68a;border-radius:6px;font-size:12px">
+            </div>
+            <div style="min-width:140px"><label style="font-size:10px;color:#92400e;display:block;margin-bottom:3px">Категория</label>
+              <input type="text" id="bfrm-cat-${rowId}" placeholder="например: услуги" style="width:100%;padding:6px 8px;border:1px solid #fde68a;border-radius:6px;font-size:12px">
+            </div>
+            <div style="flex:2;min-width:200px"><label style="font-size:10px;color:#92400e;display:block;margin-bottom:3px">Примечание</label>
+              <input type="text" id="bfrm-note-${rowId}" value="${escHtmlAttr(row.purpose)}" style="width:100%;padding:6px 8px;border:1px solid #fde68a;border-radius:6px;font-size:12px">
+            </div>
+            <button class="btn btn-save" style="font-size:12px;padding:7px 14px;white-space:nowrap" onclick="saveBankReconRow('${rowId}','${escJs(account)}')">Сохранить в кассу</button>
+          </div>
+          <div id="bfrm-msg-${rowId}" style="font-size:11px;margin-top:6px"></div>
+        </td>
+      </tr>`;
+    }
   });
   html += '</tbody></table></div>';
   document.getElementById('bankrecon-result-' + idx).innerHTML = html;
+}
+function escHtmlAttr(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function toggleBankReconAdd(idx, ri) {
+  const form = document.getElementById(`bankrecon-addform-${idx}-${ri}`);
+  if (form) form.style.display = form.style.display === 'none' ? 'table-row' : 'none';
+}
+// Сохраняет недостающую операцию из выписки напрямую в Касса-журнал
+// бухгалтера (backend action addExternalJournalRow, см. Apps Script) — по
+// прямому решению Гульмиры (обсуждали риски дублирования 20.08): бухгалтер
+// не всегда сразу видит новые строки, поэтому после сохранения показываем
+// явное напоминание нажать «Обновить данные», чтобы строка попала в отчёты
+// сайта — сама по себе запись в внешнюю таблицу этого не делает.
+async function saveBankReconRow(rowId, account) {
+  const msg = document.getElementById(`bfrm-msg-${rowId}`);
+  const type = document.getElementById(`bfrm-type-${rowId}`).value;
+  const date = document.getElementById(`bfrm-date-${rowId}`).value;
+  const amount = parseFloat(document.getElementById(`bfrm-amt-${rowId}`).value) || 0;
+  const name = document.getElementById(`bfrm-name-${rowId}`).value.trim();
+  const category = document.getElementById(`bfrm-cat-${rowId}`).value.trim();
+  const note = document.getElementById(`bfrm-note-${rowId}`).value.trim();
+  if (!date || !amount) { msg.textContent = 'Заполни дату и сумму'; msg.style.color = '#dc2626'; return; }
+  msg.textContent = 'Сохранение...'; msg.style.color = '#64748b';
+  const data = {
+    'Дата': date, 'Название': name, 'Тип операции': type,
+    'Категория': category, 'Счет': account, 'Сумма': Math.round(amount), 'Примечание': note
+  };
+  try {
+    const d = await postAction('addExternalJournalRow', data);
+    if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
+    msg.textContent = d.duplicate ? '✓ Такая операция уже была внесена ранее' : '✓ Внесено в кассу';
+    msg.style.color = '#16a34a';
+    const row = document.getElementById('bankrecon-row-' + rowId);
+    if (row) {
+      row.style.background = '#f0fdf4';
+      const iconCell = row.querySelector('.bfrm-status-icon');
+      if (iconCell) iconCell.textContent = '✅';
+      const btn = row.querySelector('.bfrm-add-btn');
+      if (btn) { btn.textContent = '✓ Внесено'; btn.disabled = true; btn.style.opacity = '0.6'; }
+    }
+    showToast('Добавлено в кассу — нажми «Обновить данные», чтобы увидеть в отчётах', 'success');
+  } catch(e) {
+    msg.textContent = '✗ Ошибка: ' + e.message;
+    msg.style.color = '#dc2626';
+  }
 }
 // ── ОСТАТОК СКЛАДА (ведомость по товарам на складах, 1С) ───────────
 // Формат: шапка с метаданными, затем таблица с колонками Период/Склад/
