@@ -763,20 +763,32 @@ function guessMarketingSubcatByName(name) {
   return null;
 }
 
-// ДОБАВЛЕНО 03.09 — категория "шеф" (вывод собственника, Темирлан ага) у
-// бухгалтера стала catch-all: туда же попадают расходы Дастана ага (у него
-// своя строка V "Дастан ага"), и обычные операционные расходы офиса —
-// аренда/коммунальные/уборка помещения "204 каб". Это НЕ личный вывод,
-// просто бухгалтер по привычке пишет "шеф" вместо нужной статьи. Проверяем
-// эти правила ТОЛЬКО для category==='шеф' (см. likeMisfiled ниже) — то же
-// слово в других категориях не трогаем (например "Уборка склада" в
-// категории "услуги" — легитимная операция, не про офис "204 каб").
+// ДОБАВЛЕНО 03.09, РАСШИРЕНО 03.09 — категории "шеф" (вывод собственника) и
+// "кредит" (справочная строка "Кредиты/займы", в ОПиУ не входит) у
+// бухгалтера обе стали catch-all для операций, где по названию видно, ЧЬИ
+// это на самом деле деньги — Дастана ага, Темирлана ага, Еркина (личный
+// вывод, статья V) или просто офисные расходы (аренда/коммунальные/уборка,
+// раздел III). Обнаружено 03.09: одна и та же по смыслу операция —
+// "Кредит Дастан ага" — то заведена категорией "шеф" (тогда раньше молча
+// падала в вывод Темирлана), то категорией "кредит" (тогда вообще выпадала
+// из ОПиУ — попадала в справочную "Кредиты/займы", как будто это долг
+// компании, а не личный расход Дастана). Оба случая ловим одним правилом
+// по названию, независимо от того, какую из двух категорий бухгалтер
+// написала. Настоящие займы компании ("Кредит 95 млн", "50млн Фон" и т.п.,
+// БЕЗ имени в названии) ни под одно правило не попадают — остаются в
+// справочной строке "Кредиты/займы", как и должны. Проверяем ТОЛЬКО для
+// category==='шеф'/'кредит' (см. likeMisfiled ниже) — то же слово в других
+// категориях не трогаем (например "Уборка склада" в категории "услуги" —
+// легитимная операция, не про офис "204 каб").
 const SHEF_MISFILE_RULES = [
   [/дастан/i, 'das', ''],
+  [/темирлан/i, 'shef', ''],
+  [/еркин/i, 'erk', ''],
   [/уборк/i, 'cUborka', ''],
   [/аренда/i, 'rentA', ''],
   [/коммунал|интернет/i, 'rentB', ''],
 ];
+const SHEF_MISFILE_CATEGORIES = ['шеф', 'кредит', 'кредиты'];
 function guessShefMisfileTarget(name) {
   for (const [re, target, sub] of SHEF_MISFILE_RULES) {
     if (re.test(name||'')) return { target, subcategory: sub };
@@ -2205,12 +2217,16 @@ async function buildCategoryMapping() {
   const likeMisfiled = {};
   allData.filter(r => r.type === 'расход').forEach(r => {
     const c = (r.category||'').toLowerCase().trim();
-    if (c !== 'шеф') return;
+    if (!SHEF_MISFILE_CATEGORIES.includes(c)) return;
     const nameKey = String(r.name||'').toLowerCase().trim();
     if (!nameKey) return;
     if (nameOverrideMap[nameKey]) return; // уже переопределено
     const guess = guessShefMisfileTarget(r.name);
     if (!guess) return;
+    // Если сырая категория и так уже по умолчанию считается в тот же бакет
+    // (например category='шеф' + имя "Темирлан" → бакет 'shef' — это и так
+    // верно без переопределения) — карточку не показываем, это не ошибка.
+    if ((OPIU_TARGET_DEFAULTS[guess.target] || []).includes(c)) return;
     if (!likeMisfiled[nameKey]) likeMisfiled[nameKey] = { category: c, name: r.name, sum: 0, count: 0, suggestedTarget: guess.target, suggestedSub: guess.subcategory };
     likeMisfiled[nameKey].sum += toNum(r.amount);
     likeMisfiled[nameKey].count += 1;
@@ -2333,13 +2349,13 @@ async function buildCategoryMapping() {
         <span style="font-size:14px;font-weight:600">${u.name}</span>
         <span style="font-size:14px;font-weight:600;white-space:nowrap">${fK(u.sum)}</span>
       </div>
-      <div style="font-size:12px;color:#64748b;margin:2px 0 10px">${fmt(u.count)} ${opCount} · сейчас категория «шеф» (вывод собственника), по названию похоже на «${OPIU_TARGET_LABELS[u.suggestedTarget]}»</div>
+      <div style="font-size:12px;color:#64748b;margin:2px 0 10px">${fmt(u.count)} ${opCount} · сейчас категория «${u.category}», по названию похоже на «${OPIU_TARGET_LABELS[u.suggestedTarget]}»</div>
       <div style="display:flex;gap:8px;align-items:center">
         <select id="sel-${idAttr}" style="flex:1;padding:6px 8px;border:1px solid #fed7aa;border-radius:8px;font-size:12.5px">
           ${targetOpts}
         </select>
         <button class="btn btn-save" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="confirmNameOverride('${escJs(u.name)}','${idAttr}','${escJs(u.suggestedSub||'')}')">Подтвердить</button>
-        <button class="btn btn-clear" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="dismissNameOverrideCard('${idAttr}')">Нет, это вывод «шеф»</button>
+        <button class="btn btn-clear" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="dismissNameOverrideCard('${idAttr}')">Нет, это «${u.category}»</button>
       </div>
     </div>`;
   };
@@ -2358,7 +2374,7 @@ async function buildCategoryMapping() {
       likeMarketingList.map(nameOverrideCardHtml).join('');
   }
   if (likeMisfiledList.length) {
-    html += `<div style="font-size:13px;color:#64748b;margin:${(unclassified.length||unSubList.length||likeMarketingList.length)?'22px':'0'} 0 14px">Похоже не вывод собственника (${likeMisfiledList.length}) — категория «шеф», но по названию это расход Дастана ага или расход офиса (аренда/уборка/коммунальные), а не личный вывод Темирлана. Подтверди — и такие операции будут попадать в нужную статью, даже если бухгалтер продолжит писать «шеф».</div>` +
+    html += `<div style="font-size:13px;color:#64748b;margin:${(unclassified.length||unSubList.length||likeMarketingList.length)?'22px':'0'} 0 14px">Похоже не туда (${likeMisfiledList.length}) — категория «шеф» или «кредит», но по названию видно, чьи это деньги (Дастан ага/Темирлан ага/Еркин) или что это расход офиса (аренда/уборка/коммунальные), а не то, что сейчас написано. Подтверди — и такие операции будут попадать в нужную статью, даже если бухгалтер продолжит писать прежнюю категорию.</div>` +
       likeMisfiledList.map(shefMisfileCardHtml).join('');
   }
   el.innerHTML = html;
