@@ -763,6 +763,27 @@ function guessMarketingSubcatByName(name) {
   return null;
 }
 
+// ДОБАВЛЕНО 03.09 — категория "шеф" (вывод собственника, Темирлан ага) у
+// бухгалтера стала catch-all: туда же попадают расходы Дастана ага (у него
+// своя строка V "Дастан ага"), и обычные операционные расходы офиса —
+// аренда/коммунальные/уборка помещения "204 каб". Это НЕ личный вывод,
+// просто бухгалтер по привычке пишет "шеф" вместо нужной статьи. Проверяем
+// эти правила ТОЛЬКО для category==='шеф' (см. likeMisfiled ниже) — то же
+// слово в других категориях не трогаем (например "Уборка склада" в
+// категории "услуги" — легитимная операция, не про офис "204 каб").
+const SHEF_MISFILE_RULES = [
+  [/дастан/i, 'das', ''],
+  [/уборк/i, 'cUborka', ''],
+  [/аренда/i, 'rentA', ''],
+  [/коммунал|интернет/i, 'rentB', ''],
+];
+function guessShefMisfileTarget(name) {
+  for (const [re, target, sub] of SHEF_MISFILE_RULES) {
+    if (re.test(name||'')) return { target, subcategory: sub };
+  }
+  return null;
+}
+
 // Кэш ручных назначений категорий (лист КатегорииОПиУ) — грузится один раз
 // за сессию (не за каждый рендер ОПиУ/ДДС), сбрасывается после сохранения
 // нового назначения на странице "Категории без статьи".
@@ -2175,6 +2196,27 @@ async function buildCategoryMapping() {
   });
   const likeMarketingList = Object.values(likeMarketing).sort((a,b) => b.sum - a.sum);
 
+  // ДОБАВЛЕНО 03.09 — операции с категорией "шеф" (вывод собственника), у
+  // которых по названию видно, что это на самом деле расход Дастана ага
+  // или операционный расход офиса (аренда/уборка/коммунальные) — см.
+  // guessShefMisfileTarget/SHEF_MISFILE_RULES выше. Только category==='шеф',
+  // остальные "шеф"-строки (Темирлан, Жанна Т, Ансар школа и т.п.) — это и
+  // есть вывод собственника, их не трогаем.
+  const likeMisfiled = {};
+  allData.filter(r => r.type === 'расход').forEach(r => {
+    const c = (r.category||'').toLowerCase().trim();
+    if (c !== 'шеф') return;
+    const nameKey = String(r.name||'').toLowerCase().trim();
+    if (!nameKey) return;
+    if (nameOverrideMap[nameKey]) return; // уже переопределено
+    const guess = guessShefMisfileTarget(r.name);
+    if (!guess) return;
+    if (!likeMisfiled[nameKey]) likeMisfiled[nameKey] = { category: c, name: r.name, sum: 0, count: 0, suggestedTarget: guess.target, suggestedSub: guess.subcategory };
+    likeMisfiled[nameKey].sum += toNum(r.amount);
+    likeMisfiled[nameKey].count += 1;
+  });
+  const likeMisfiledList = Object.values(likeMisfiled).sort((a,b) => b.sum - a.sum);
+
   // Строки известной категории (авторасходы/услуги/маркетинг), у которой
   // ЕСТЬ подкатегории, но по названию конкретной операции подкатегория не
   // угадалась (только "маркетинг" не имеет дефолта — см. SUBCATEGORY_RULES) —
@@ -2194,7 +2236,7 @@ async function buildCategoryMapping() {
   });
   const unSubList = Object.values(unSub).sort((a,b) => b.sum - a.sum);
 
-  if (!unclassified.length && !unSubList.length && !likeMarketingList.length) {
+  if (!unclassified.length && !unSubList.length && !likeMarketingList.length && !likeMisfiledList.length) {
     el.innerHTML = '<div class="empty-state"><div class="emoji">&#9989;</div>Все категории и подкатегории расходов уже определены</div>';
     return;
   }
@@ -2275,6 +2317,33 @@ async function buildCategoryMapping() {
     </div>`;
   };
 
+  // Карточка "похоже не вывод собственника, а расход Дастана/офиса" — см.
+  // likeMisfiledList/guessShefMisfileTarget выше. Устроена так же, как
+  // nameOverrideCardHtml (маркетинг), но подсказка — конкретная статья из
+  // SHEF_MISFILE_RULES (Дастан ага / Аренда / Коммунальные / Уборка), а не
+  // всегда "mark". confirmNameOverride переиспользуется без изменений — она
+  // уже читает выбранную статью из select, а не жёстко "mark".
+  const shefMisfileCardHtml = u => {
+    const idAttr = 'sm-' + btoa(unescape(encodeURIComponent(u.name))).replace(/[^a-zA-Z0-9]/g,'');
+    const opCount = u.count===1 ? 'операция' : (u.count<5 ? 'операции' : 'операций');
+    const targetOpts = Object.entries(OPIU_TARGET_LABELS)
+      .map(([key,label]) => `<option value="${key}" ${key===u.suggestedTarget?'selected':''}>${label}</option>`).join('');
+    return `<div class="card" id="${idAttr}" style="margin-bottom:12px;background:#fff7ed;border-color:#fed7aa">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+        <span style="font-size:14px;font-weight:600">${u.name}</span>
+        <span style="font-size:14px;font-weight:600;white-space:nowrap">${fK(u.sum)}</span>
+      </div>
+      <div style="font-size:12px;color:#64748b;margin:2px 0 10px">${fmt(u.count)} ${opCount} · сейчас категория «шеф» (вывод собственника), по названию похоже на «${OPIU_TARGET_LABELS[u.suggestedTarget]}»</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="sel-${idAttr}" style="flex:1;padding:6px 8px;border:1px solid #fed7aa;border-radius:8px;font-size:12.5px">
+          ${targetOpts}
+        </select>
+        <button class="btn btn-save" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="confirmNameOverride('${escJs(u.name)}','${idAttr}','${escJs(u.suggestedSub||'')}')">Подтвердить</button>
+        <button class="btn btn-clear" style="padding:6px 14px;font-size:12px;white-space:nowrap" onclick="dismissNameOverrideCard('${idAttr}')">Нет, это вывод «шеф»</button>
+      </div>
+    </div>`;
+  };
+
   let html = '';
   if (unclassified.length) {
     html += `<div style="font-size:13px;color:#64748b;margin-bottom:14px">${unclassified.length} категор${unclassified.length===1?'ия':(unclassified.length<5?'ии':'ий')} без статьи ОПиУ</div>` +
@@ -2287,6 +2356,10 @@ async function buildCategoryMapping() {
   if (likeMarketingList.length) {
     html += `<div style="font-size:13px;color:#64748b;margin:${(unclassified.length||unSubList.length)?'22px':'0'} 0 14px">Похоже на другую статью (${likeMarketingList.length}) — категория у бухгалтера одна, а по названию операции похоже на маркетинг/рекламу. Подтверди — и такие операции всегда будут попадать в "Маркетинг", даже если бухгалтер продолжит писать прежнюю категорию.</div>` +
       likeMarketingList.map(nameOverrideCardHtml).join('');
+  }
+  if (likeMisfiledList.length) {
+    html += `<div style="font-size:13px;color:#64748b;margin:${(unclassified.length||unSubList.length||likeMarketingList.length)?'22px':'0'} 0 14px">Похоже не вывод собственника (${likeMisfiledList.length}) — категория «шеф», но по названию это расход Дастана ага или расход офиса (аренда/уборка/коммунальные), а не личный вывод Темирлана. Подтверди — и такие операции будут попадать в нужную статью, даже если бухгалтер продолжит писать «шеф».</div>` +
+      likeMisfiledList.map(shefMisfileCardHtml).join('');
   }
   el.innerHTML = html;
 }
