@@ -738,6 +738,29 @@ function bucketSum(catM, m, key, dynamicMap) {
   });
   return sum;
 }
+// Определяет, в какой бакет ОПиУ (ключ OPIU_TARGET_DEFAULTS) попадёт
+// эффективная категория/тег c — или null, если она НИ В ОДИН бакет не
+// попадает (значит, сумма по ней выпадает из ОПиУ целиком: либо по
+// умолчанию у категории opiu:'' — «продажи», «закуп», «комиссия kaspi»,
+// «обналичка», «долг», «возврат покупателю» и т.п., либо она вручную
+// назначена как 'excluded' на странице «Категории без статьи»/через
+// переопределение по имени). ДОБАВЛЕНО 09.09 — для блока «Статьи, не
+// вошедшие в ОПиУ» (см. buildOPIU), чтобы можно было сверять сырые данные
+// Журнала с тем, что реально осело в отчёте.
+function resolveCategoryTarget(c, dynamicMap) {
+  if (c.startsWith('__override_')) {
+    const b = c.slice('__override_'.length);
+    return OPIU_TARGET_DEFAULTS.hasOwnProperty(b) ? b : null;
+  }
+  const override = dynamicMap ? dynamicMap[c] : undefined;
+  if (override !== undefined) {
+    return (override && OPIU_TARGET_DEFAULTS.hasOwnProperty(override)) ? override : null;
+  }
+  for (const key of Object.keys(OPIU_TARGET_DEFAULTS)) {
+    if (OPIU_TARGET_DEFAULTS[key].includes(c)) return key;
+  }
+  return null;
+}
 // Приводит "сырую" категорию строки Журнала к ЭФФЕКТИВНОЙ категории для
 // подсчёта bucketSum/подкатегорий — если для точного названия операции
 // сохранено переопределение (nameOverrideMap, см. loadNameOverrides), она
@@ -3222,6 +3245,12 @@ async function buildOPIU() {
   // см. effectiveCategory/loadNameOverrides выше.
   const nameOverrideMap = await loadNameOverrides();
   const catM = {};
+  // notInOpiuM[месяц][сырая категория Журнала] = сумма — строки Расхода,
+  // которые НЕ вошли ни в одну строку ОПиУ (см. resolveCategoryTarget).
+  // Заполняется в цикле ниже, рендерится отдельным сворачиваемым блоком —
+  // добавлено 09.09 по просьбе Гульмиры, чтобы можно было сверять сырые
+  // данные Журнала с тем, что реально осело в отчёте ОПиУ.
+  const notInOpiuM = {};
   // catSubM[месяц][категория][подкатегория] = сумма — только для категорий,
   // у которых есть подкатегории (SUBCATEGORY_RULES); используется ниже для
   // раскрывающейся детализации строк "Авторасходы"/"Услуги"/"Маркетинг".
@@ -3264,6 +3293,17 @@ async function buildOPIU() {
     // Журнала; bucketSum() трактует такой тег как абсолютное назначение.
     const c = effectiveCategory(r, nameOverrideMap);
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
+    // ДОБАВЛЕНО 09.09 — учёт строк, которые НЕ попадают ни в один бакет
+    // ОПиУ (opiu:'' по умолчанию — «обналичка», «долг», «возврат покупателю»
+    // и т.п. — или явно назначены 'excluded' переопределением). Копим по
+    // СЫРОЙ категории Журнала (r.category), а не по синтетическому тегу —
+    // так удобнее сверять с исходными данными кассы. См. блок «Статьи, не
+    // вошедшие в ОПиУ» ниже (resolveCategoryTarget).
+    if (resolveCategoryTarget(c, dynamicMap) === null) {
+      const rawLabel = String(r.category || '(без категории)').trim() || '(без категории)';
+      if (!notInOpiuM[m]) notInOpiuM[m] = {};
+      notInOpiuM[m][rawLabel] = (notInOpiuM[m][rawLabel]||0) + toNum(r.amount);
+    }
     // Для подбора подкатегории нужна "человеческая" категория из
     // SUBCATEGORY_RULES (например 'маркетинг') — если c это синтетический
     // тег переопределения, разворачиваем его обратно через
@@ -3366,6 +3406,46 @@ async function buildOPIU() {
       '<div style="font-size:12px;color:#92400e;line-height:1.7">' +
       unknownCatsList.map(([c,v]) => 'Категория «<b>' + c + '</b>» — ' + fmt(v) + ' ₸ за период. Не входит ни в одну статью ниже — скажи, куда её отнести, я добавлю в код.').join('<br>') +
       '</div></div>';
+  }
+  // ДОБАВЛЕНО 09.09 — сворачиваемый блок «Статьи, не вошедшие в ОПиУ»:
+  // сводка по СЫРЫМ категориям Журнала (notInOpiuM, см. цикл выше), сумма
+  // которых сознательно/по умолчанию не попадает ни в одну строку отчёта
+  // ниже (opiu:'' в CATEGORY_MAP — «обналичка», «долг», «возврат
+  // покупателю», «комиссия kaspi» и т.п. — или явное 'excluded' через
+  // переопределение по имени). В отличие от блока «Новые категории без
+  // статьи» выше (это ОШИБКА конфигурации, надо срочно доразметить) — здесь
+  // всё нормально, категории УЖЕ размечены и осознанно не входят в ОПиУ;
+  // блок только для сверки сырых данных, свёрнут по умолчанию.
+  const notInOpiuAgg = {};
+  cols.forEach(m => {
+    Object.entries(notInOpiuM[m] || {}).forEach(([label, v]) => {
+      notInOpiuAgg[label] = (notInOpiuAgg[label]||0) + v;
+    });
+  });
+  const notInOpiuList = Object.entries(notInOpiuAgg).filter(([,v]) => v).sort((a,b) => b[1]-a[1]);
+  if (notInOpiuList.length) {
+    const totalNotInOpiu = notInOpiuList.reduce((s,[,v]) => s+v, 0);
+    const rowsHtml2 = notInOpiuList.map(([label, v]) =>
+      `<tr><td style="padding:5px 8px;border-bottom:1px solid #e2e8f0">${label}</td>` +
+      `<td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap">${fmt(v)} ₸</td></tr>`
+    ).join('');
+    html += `<div class="card" style="margin-bottom:16px;background:#f8fafc;border:1px solid #e2e8f0">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div style="font-weight:700;color:#475569;cursor:pointer;flex:1" onclick="const b=this.parentElement.nextElementSibling;const h=b.style.display==='none';b.style.display=h?'block':'none';this.querySelector('span').textContent=h?'▾':'▸';">
+          <span style="display:inline-block;width:13px">▸</span>Статьи, не вошедшие в ОПиУ (${notInOpiuList.length}) — ${fmt(totalNotInOpiu)} ₸ за период
+        </div>
+      </div>
+      <div style="display:none;margin-top:8px">
+        <div style="font-size:11.5px;color:#64748b;margin-bottom:6px">Это не ошибка — эти категории Журнала сознательно не входят в ОПиУ (переводы между счетами, обналичка, долги, возвраты, kaspi-комиссии считаются отдельно, ручные исключения по конкретным операциям и т.п.). Список — для сверки с сырыми данными кассы.</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;color:#334155">
+          <thead><tr>
+            <th style="text-align:left;padding:5px 8px;border-bottom:2px solid #e2e8f0">Категория (как в Журнале)</th>
+            <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #e2e8f0">Сумма за период</th>
+          </tr></thead>
+          <tbody>${rowsHtml2}</tbody>
+        </table>
+      </div>
+    </div>`;
   }
   // Диагностика точности себестоимости (см. itemCostDetailAsOf.matched выше):
   // если ни за 1 мес, ни за 3 мес, ни разово не нашлось прихода этого товара
