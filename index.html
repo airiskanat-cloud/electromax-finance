@@ -155,6 +155,29 @@
   .kpi-val{font-size:15px;font-weight:700;color:#1e3a5f;margin-top:4px}
   .kpi-val.p{color:#16a34a}.kpi-val.n{color:#dc2626}
   .kpi-sub{font-size:11px;color:#94a3b8;margin-top:2px}
+  /* ── Дашборд: крупные карточки с цветным фоном + светофор-индикатор ──
+     Добавлено 09.09 по просьбе Гульмиры ("крупнее и проще по цвету",
+     "светофоры/индикаторы тренда"). Отдельный класс, а не правка .kpi-card,
+     чтобы не менять внешний вид карточек на ОПиУ/ДДС — там всё уже сверено
+     и трогать их незачем. */
+  .kpi-strip-xl{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:20px}
+  .kpi-card-xl{border-radius:14px;padding:18px 20px;box-shadow:0 1px 6px rgba(0,0,0,.07);background:#f8fafc;border:1px solid #e2e8f0}
+  .kpi-card-xl.pos{background:#f0fdf4;border-color:#bbf7d0}
+  .kpi-card-xl.neg{background:#fef2f2;border-color:#fecaca}
+  .kpi-card-xl.neu{background:#eff6ff;border-color:#bfdbfe}
+  .kpi-lbl-xl{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+  .kpi-val-xl{font-size:28px;font-weight:800;margin-top:6px;line-height:1.1}
+  .kpi-val-xl.p{color:#16a34a}.kpi-val-xl.n{color:#dc2626}
+  .kpi-sub-xl{font-size:12.5px;color:#64748b;margin-top:6px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  .trend-up{color:#16a34a;font-weight:700}.trend-down{color:#dc2626;font-weight:700}.trend-flat{color:#94a3b8;font-weight:700}
+  .status-banner{border-radius:14px;padding:16px 20px;margin-bottom:18px;display:flex;align-items:center;gap:14px;font-size:14px}
+  .status-banner .dot{width:16px;height:16px;border-radius:50%;flex-shrink:0}
+  .status-banner.green{background:#f0fdf4;border:1px solid #bbf7d0}
+  .status-banner.green .dot{background:#16a34a}
+  .status-banner.yellow{background:#fffbeb;border:1px solid #fde68a}
+  .status-banner.yellow .dot{background:#f59e0b}
+  .status-banner.red{background:#fef2f2;border:1px solid #fecaca}
+  .status-banner.red .dot{background:#dc2626}
   /* ── Monthly Report Table ── */
   .report-wrap{overflow-x:auto}
   .rt{width:100%;min-width:820px;border-collapse:collapse;font-size:12px;font-family:Arial,sans-serif}
@@ -209,8 +232,8 @@
       <p>Финансовый учёт</p>
     </div>
     <nav class="sidebar-nav">
-      <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="icon">&#128202;</span> Дашборд</div>
-      <div class="nav-item" onclick="showPage('daily-report',this)"><span class="icon">&#128197;</span> Отчёт дня</div>
+      <div class="nav-item" onclick="showPage('dashboard',this)"><span class="icon">&#128202;</span> Дашборд</div>
+      <div class="nav-item active" onclick="showPage('daily-report',this)"><span class="icon">&#128197;</span> Отчёт дня</div>
       <div class="nav-item" onclick="showPage('journal',this)"><span class="icon">&#128203;</span> Журнал</div>
       <div class="nav-item" onclick="showPage('dds-daily',this)"><span class="icon">&#128197;</span> ДДС Ежедневный</div>
       <div class="nav-item" onclick="showPage('dds',this)"><span class="icon">&#128184;</span> ДДС Месячный</div>
@@ -227,7 +250,7 @@
     </div>
   </div>
   <div class="main">
-    <div class="page active" id="page-dashboard">
+    <div class="page" id="page-dashboard">
       <div class="page-title">Финансовое табло — ElectroMax</div>
       <div class="form-card" style="max-width:400px;margin-bottom:16px;">
         <div class="field">
@@ -239,7 +262,7 @@
       </div>
       <div id="dashboard-content"><div class="loading"><div class="spinner"></div>Загрузка дашборда...</div></div>
     </div>
-    <div class="page" id="page-daily-report">
+    <div class="page active" id="page-daily-report">
       <div class="page-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
         <span>Отчёт дня</span>
         <button class="btn no-print" onclick="exportDailyReportPDF()" style="font-size:13px">PDF ↓</button>
@@ -621,6 +644,32 @@ const OPIU_TARGET_LABELS = {
   shef: 'V. Шеф — Темирлан ага', das: 'V. Дастан ага', erk: 'V. Еркин', cred: 'Справочно: кредиты/займы (не в ОПиУ)',
   excluded: '— Не входит в ОПиУ',
 };
+
+// Короткие причины "почему не входит в ОПиУ" по конкретным сырым
+// категориям Журнала — тексты сверены с комментариями в CATEGORY_MAP выше.
+// Используется и в buildOPIU (блок "Статьи, не вошедшие в ОПиУ"), и в
+// exportNotInOpiu() — общий источник, чтобы текст не разъезжался. Категория,
+// которой нет в этом списке (обычно конкретная операция, исключённая
+// вручную через ПереопределениеСтрок) — получает общий текст. Добавлено 09.09.
+const NOT_IN_OPIU_REASONS = {
+  'продажи': 'выручка считается отдельно, напрямую из данных 1С',
+  'закуп': 'себестоимость считается отдельной формулой по датам продаж — иначе задвоится с строкой "Себестоимость [1С Приход]"',
+  'комиссия kaspi': 'считается отдельно, из загрузки банковских выписок Kaspi — иначе задвоится с валовой прибылью',
+  'доставка kaspi': 'считается отдельно, из загрузки банковских выписок Kaspi — иначе задвоится с валовой прибылью',
+  'обналичка': 'это не расход компании — просто перевод безнала в нал, деньги остаются те же',
+  'долг': 'это факт займа/задолженности, а не трата денег компании',
+  'возврат покупателю': 'пока не включено в ОПиУ — уточняется у бухгалтера (в 1С возвраты не учитываются)',
+  'возврат поставщику': 'пока не включено в ОПиУ — ждём решения по методологии',
+  'возврат комиссии kaspi': 'корректировка комиссии Kaspi — считается вместе с ней, отдельно от ОПиУ',
+  'компенсация kaspi': 'возмещение за товар, повреждённый в дороге — под это ещё нет отдельной строки',
+  'овернайт': 'проценты по остатку на счёте — финансовый доход, не операционная выручка',
+  'аренда склада': 'доход от субаренды площади — пока не включён в ОПиУ',
+  'перевод': 'перевод между своими счетами — не доход и не расход компании',
+  'кредит': 'справочная статья — кредиты/займы не входят в ОПиУ',
+};
+function notInOpiuReason(label) {
+  return NOT_IN_OPIU_REASONS[label] || 'исключено вручную по конкретной операции (переопределение статьи)';
+}
 
 // ── ПОДКАТЕГОРИИ (детализация статей IV раздела ОПиУ — Авторасходы/
 // Услуги/Маркетинг) ─────────────────────────────────────────────────
@@ -1212,7 +1261,10 @@ async function loadData() {
     if (row.period) row.period = normalizePeriodStr(row.period);
   });
   await refreshMonthPickers();
-  buildDashboard(); renderBalances();
+  // ИЗМЕНЕНО 09.09 по просьбе Гульмиры — сайт по умолчанию открывается на
+  // «Отчёт дня» (см. page-daily-report/nav-item active выше), а не на
+  // «Дашборд», поэтому именно его и рендерим сразу после загрузки данных.
+  buildDailyReport(); renderBalances();
 }
 
 // Известные счета приложения теперь определяются динамически — это все
@@ -1507,7 +1559,14 @@ async function buildDashboard() {
   const revM = {}, cogsM = {}, revCity = {}; // revCity: { city: { month: amount } }
   const unitsM = {}, unitsCity = {}; // units — кол-во проданных штук (для средней цены продажи)
   try {
-    const { d1c: d } = await getReportData(); // общий кэш с ОПиУ/ДДС — см. getReportData()
+    // ИСПРАВЛЕНО 09.09 — раньше себестоимость здесь бралась из d.purchases[].cogs
+    // (упрощённый серверный расчёт, судя по всему не обновлённый вместе с
+    // методологией itemCostDetailAsOf от 18.08) — из-за этого Валовая
+    // прибыль на Дашборде показывала ~883 млн ₸ за 2026 год, а на странице
+    // ОПиУ (которая считает построчно, см. buildOPIU) — верные 479 млн ₸.
+    // Теперь считаем ТОЧНО так же, как ОПиУ: по каждой проданной позиции
+    // в её день продажи, ищем закупочную цену через itemCostDetailAsOf.
+    const { d1c: d, purchaseLines, itemDaily, itemPrices } = await getReportData();
     (d.sales||[]).forEach(s => {
       const mo = String(s.month||'');
       if (!mo) return;
@@ -1519,9 +1578,15 @@ async function buildDashboard() {
       if (!unitsCity[city]) unitsCity[city] = {};
       unitsCity[city][mo] = (unitsCity[city][mo]||0) + (+s.units||0);
     });
-    (d.purchases||[]).forEach(s => {
-      const mo = String(s.month||'');
-      if (mo) cogsM[mo] = (cogsM[mo]||0) + (+s.cogs||0);
+    const priceMap = {};
+    (itemPrices||[]).forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
+    const linesByItem = groupPurchaseLinesByItem(purchaseLines || []);
+    (itemDaily||[]).forEach(row => {
+      const dt = String(row.date||'');
+      const mo = dt.slice(0,7);
+      if (!mo || !row.qty) return;
+      const { cost } = itemCostDetailAsOf(row.item, dt, linesByItem, priceMap, row.item);
+      cogsM[mo] = (cogsM[mo]||0) + row.qty * cost;
     });
   } catch(e) {}
 
@@ -1567,32 +1632,48 @@ async function buildDashboard() {
   const prevYearRev = prevYearMonths.reduce((s,m) => s + (revM[m]||0), 0);
   const hasPrevYearData = prevYearRev > 0;
 
-  // Expense aggregation: by month×category and by city×category
+  // Expense aggregation: by month×category (для KPI, точно как в ОПиУ —
+  // см. ниже) и отдельно by city×category (для карточек по городам, сырые
+  // категории, без переопределений — детальность по городам ниже KPI).
+  // ИСПРАВЛЕНО 09.09 — раньше catM/calc() здесь были упрощённой копией
+  // логики ОПиУ: без переопределений по имени операции (nameOverrideMap/
+  // dynamicMap), без сдвига зарплаты/аванса на прошлый месяц (см.
+  // accrualPeriodForExternalRow) и без исключения строк «перевод» по
+  // названию — из-за этого верхние KPI-карточки Дашборда расходились с
+  // ОПиУ (например Валовая прибыль). Теперь считаем catM ТОЧНО так же, как
+  // buildOPIU (effectiveCategory + bucketSum + OPIU_TARGET_DEFAULTS).
+  const dashDynamicMap = await loadCategoryOverrides();
+  const dashNameOverrideMap = await loadNameOverrides();
   const catM = {}, cityExp = {};
   allData.filter(r => r.type === 'расход' && (!r.date || r.date.startsWith(dashYear))).forEach(r => {
-    const mo = r.date ? r.date.slice(0,7) : null;
     const city = r.city || 'Прочие';
-    const c = (r.category||'прочее').toLowerCase();
+    const rawC = (r.category||'прочее').toLowerCase();
     const amt = toNum(r.amount);
-    if (mo) { if(!catM[mo]) catM[mo]={}; catM[mo][c]=(catM[mo][c]||0)+amt; }
     if(!cityExp[city]) cityExp[city]={};
-    cityExp[city][c]=(cityExp[city][c]||0)+amt;
+    cityExp[city][rawC]=(cityExp[city][rawC]||0)+amt;
+
+    const mo = r.period ? String(r.period).slice(0,7) : (r.date ? r.date.slice(0,7) : null);
+    if (!mo) return;
+    if (/перевод/i.test(r.name||'')) return;
+    if(!catM[mo]) catM[mo] = {};
+    const c = effectiveCategory(r, dashNameOverrideMap);
+    catM[mo][c] = (catM[mo][c]||0) + amt;
   });
 
-  const C  = (mo,...cs) => cs.reduce((s,c) => s+(catM[mo]?.[c]||0), 0);
   const Cc = (city,...cs) => cs.reduce((s,c) => s+(cityExp[city]?.[c]||0), 0);
 
   const calc = mo => {
+    const B = key => bucketSum(catM, mo, key, dashDynamicMap);
     const rev=revM[mo]||0, cogs=cogsM[mo]||0, gp=rev-cogs;
-    const varE=C(mo,'комиссия','логистика','упаковка');
+    const varE=B('kom')+B('log')+B('upk');
     const mp=gp-varE;
-    const fix=C(mo,'аренда','ком платежи','зарплата','аванс','наемники','налоги','ос');
+    const fix=B('rentA')+B('rentB')+B('rentC')+B('fotZp')+B('fotAv')+B('naem')+B('tax')+B('os');
     const op=mp-fix;
-    const com=C(mo,'шашу','командировочные','авторасходы','обед','услуги','услуга','компенсация','канц товары','конц товары','бонусы','маркетинг','прочее');
+    const com=B('cShashu')+B('cKom')+B('cAvto')+B('cObed')+B('cUsl')+B('cKomp')+B('cKanc')+B('cUborka')+B('cOther')+B('kasp')+B('mark');
     const ebit=op-com;
-    const own=C(mo,'шеф','дастан','еркин');
+    const own=B('shef')+B('das')+B('erk');
     const net=ebit-own;
-    const cred=C(mo,'кредит');
+    const cred=B('cred');
     const totExp=cogs+varE+fix+com+own+cred;
     return {rev,cogs,gp,varE,mp,fix,op,com,ebit,own,net,cred,totExp};
   };
@@ -1636,7 +1717,59 @@ async function buildDashboard() {
   const pctOf = (v,b) => b ? (v/b*100).toFixed(1)+'%' : '—';
   const noSales = MONTHS.every(m => !revM[m]);
 
+  // ДОБАВЛЕНО 09.09 — сравнение с предыдущим периодом (для стрелок-трендов
+  // и светофора сверху). Если выбран конкретный месяц — сравниваем с
+  // предыдущим календарным месяцем (полностью, включая расходы). Если
+  // выбран "весь год" — выручку и себестоимость сравниваем с прошлым годом
+  // (revM/cogsM не ограничены годом), а расходы (fix/com/own) сравнить
+  // корректно нельзя (catM выше нарочно ограничен dashYear, см. комментарий
+  // там) — для них тренд просто не показываем в режиме "весь год".
+  let prevMonthKey = null, sameYearPrev = false;
+  if (dashPeriod !== 'all') {
+    const [py, pmo] = dashPeriod.split('-').map(Number);
+    const d = new Date(py, pmo - 2, 1);
+    prevMonthKey = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    sameYearPrev = prevMonthKey.startsWith(dashYear);
+  }
+  const prevRev = dashPeriod === 'all' ? (hasPrevYearData ? prevYearRev : null) : (revM[prevMonthKey] ?? null);
+  const prevCogsVal = dashPeriod === 'all'
+    ? prevYearMonths.reduce((s,m) => s+(cogsM[m]||0), 0)
+    : (cogsM[prevMonthKey] || 0);
+  const prevGp = (prevRev !== null) ? (prevRev - prevCogsVal) : null;
+  let prevOp = null, prevEbit = null, prevNet = null;
+  if (dashPeriod !== 'all' && sameYearPrev) {
+    const pc = calc(prevMonthKey);
+    prevOp = pc.op; prevEbit = pc.ebit; prevNet = pc.net;
+  }
+  const trendHtml = (cur, prev) => {
+    if (prev === null || prev === undefined || !prev) return '';
+    const pct = (cur - prev) / Math.abs(prev) * 100;
+    const cls = pct > 0.5 ? 'trend-up' : (pct < -0.5 ? 'trend-down' : 'trend-flat');
+    const arrow = pct > 0.5 ? '▲' : (pct < -0.5 ? '▼' : '▶');
+    return `<span class="${cls}">${arrow} ${pct>=0?'+':''}${pct.toFixed(1)}% к пред. периоду</span>`;
+  };
+
+  // ДОБАВЛЕНО 09.09 — светофор-сводка сверху ("всё в порядке" / "есть
+  // вопросы" / "нужно внимание"), чтобы ситуация была видна с первого
+  // взгляда, без чтения всех карточек по отдельности.
+  let bannerLevel = 'green';
+  const bannerMsgs = [];
+  if (tot.net < 0) { bannerLevel = 'red'; bannerMsgs.push('чистая прибыль за период отрицательная'); }
+  else if (tot.ebit < 0) { bannerLevel = 'yellow'; bannerMsgs.push('EBIT (до вывода собственников) отрицательный'); }
+  if (prevGp !== null && prevRev) {
+    const marginNow = tot.rev ? tot.gp/tot.rev : 0;
+    const marginPrev = prevGp/prevRev;
+    if (marginPrev - marginNow > 0.03) {
+      if (bannerLevel === 'green') bannerLevel = 'yellow';
+      bannerMsgs.push('валовая маржа просела к прошлому периоду (' + (marginPrev*100).toFixed(1) + '% → ' + (marginNow*100).toFixed(1) + '%)');
+    }
+  }
+  if (noSales) { bannerLevel = 'yellow'; bannerMsgs.push('нет данных о продажах за выбранный период'); }
+  const bannerLbl = bannerLevel==='green' ? '✅ Всё в порядке' : (bannerLevel==='red' ? '🔴 Нужно внимание' : '🟡 Есть вопросы');
+  const bannerText = bannerMsgs.length ? bannerMsgs.join(' · ') : 'Прибыль положительная, маржа стабильна к прошлому периоду';
+
   let html = '';
+  html += `<div class="status-banner ${bannerLevel}"><div class="dot"></div><div><b>${bannerLbl}</b><div style="margin-top:2px;color:#475569">${bannerText}</div></div></div>`;
 
   // Warning if no 1С data
   if (noSales) {
@@ -1650,31 +1783,29 @@ async function buildDashboard() {
     </div>`;
   }
 
-  // 6 KPI cards
-  const card = (lbl, val, cls, sub) =>
-    `<div class="kpi-card ${cls}">
-      <div class="kpi-lbl">${lbl}</div>
-      <div class="kpi-val ${val>=0?'p':'n'}">${fK(val)}</div>
-      ${sub?`<div class="kpi-sub">${sub}</div>`:''}
+  // 6 KPI cards — ИЗМЕНЕНО 09.09: крупный формат (.kpi-card-xl), цветной
+  // фон по знаку значения (не только левая полоска), плюс стрелка-тренд к
+  // предыдущему периоду (см. trendHtml выше).
+  const card = (lbl, val, tone, sub, trend) =>
+    `<div class="kpi-card-xl ${tone}">
+      <div class="kpi-lbl-xl">${lbl}</div>
+      <div class="kpi-val-xl ${val>=0?'p':'n'}">${fK(val)}</div>
+      <div class="kpi-sub-xl">${sub?`<span>${sub}</span>`:''}${trend?trend:''}</div>
     </div>`;
 
   // Подпись под "Выручка за период" — сам период + сравнение год-к-году
   // (тот же месяц или тот же год целиком, смотря что выбрано в фильтре).
   const periodLbl = MONTHS.length > 1 ? (monthLabel(MONTHS[0],true)+' — '+monthLabel(MONTHS[MONTHS.length-1],true)) : monthLabel(MONTHS[0],true);
-  const yoyPct = hasPrevYearData ? ((tot.rev - prevYearRev) / prevYearRev * 100) : null;
-  const yoyLbl = hasPrevYearData
-    ? ` · ${prevYear}: ${fK(prevYearRev)} (${yoyPct>=0?'+':''}${yoyPct.toFixed(1)}%)`
-    : ` · за ${prevYear} данных нет`;
-  const revSub = noSales ? '⚠ нет данных 1С' : (periodLbl + yoyLbl);
+  const revSub = noSales ? '⚠ нет данных 1С' : periodLbl;
 
-  html += `<div class="kpi-strip">
-    ${card('Выручка за период', tot.rev, noSales?'o':'', revSub)}
-    ${card('Валовая прибыль', tot.gp, 'g', pctOf(tot.gp,tot.rev)+' от выручки')}
-    ${card('Операционная прибыль', tot.op, 't', pctOf(tot.op,tot.rev)+' от выручки')}
-    ${card('EBIT (до вывода)', tot.ebit, tot.ebit>=0?'g':'o', pctOf(tot.ebit,tot.rev)+' от выручки')}
-    ${card('Вывод собственников', tot.own, 'd', 'шеф + Дастан + Еркин')}
-    ${card('Чистая прибыль', tot.net, tot.net>=0?'g':'o', pctOf(tot.net,tot.rev)+' маржа')}
-    ${hasUnits ? card('Средняя цена продажи', avgPrice, '', fmt(tot.units)+' шт. продано') : ''}
+  html += `<div class="kpi-strip-xl">
+    ${card('Выручка за период', tot.rev, noSales?'neu':'pos', revSub, trendHtml(tot.rev, prevRev))}
+    ${card('Валовая прибыль', tot.gp, tot.gp>=0?'pos':'neg', pctOf(tot.gp,tot.rev)+' от выручки', trendHtml(tot.gp, prevGp))}
+    ${card('Операционная прибыль', tot.op, tot.op>=0?'pos':'neg', pctOf(tot.op,tot.rev)+' от выручки', trendHtml(tot.op, prevOp))}
+    ${card('EBIT (до вывода)', tot.ebit, tot.ebit>=0?'pos':'neg', pctOf(tot.ebit,tot.rev)+' от выручки', trendHtml(tot.ebit, prevEbit))}
+    ${card('Вывод собственников', tot.own, 'neu', 'шеф + Дастан + Еркин', '')}
+    ${card('Чистая прибыль', tot.net, tot.net>=0?'pos':'neg', pctOf(tot.net,tot.rev)+' маржа', trendHtml(tot.net, prevNet))}
+    ${hasUnits ? card('Средняя цена продажи', avgPrice, 'neu', fmt(tot.units)+' шт. продано', '') : ''}
   </div>`;
 
   // Row 1: 2 charts
@@ -3149,6 +3280,9 @@ async function buildDDS() {
 // Excel (exportZeroCostItems) должен выгружать ВСЕ, а не только видимые.
 let _lastZeroCostItems = [];
 let _lastZeroCostPeriod = '';
+// { cols:[месяцы], labels:[категории], byMonth:{категория:{месяц:сумма}}, period }
+// — для exportNotInOpiu(), заполняется в buildOPIU. Добавлено 09.09.
+let _lastNotInOpiu = { cols: [], labels: [], byMonth: {}, period: '' };
 
 async function buildOPIU() {
   const period = document.getElementById('opiu-period').value;
@@ -3400,6 +3534,12 @@ async function buildOPIU() {
     </div>`;
 
   let html = '';
+  // ИЗМЕНЕНО 09.09 по просьбе Гульмиры — справочные диагностические блоки
+  // (не вошедшие в ОПиУ / нулевая себестоимость) переехали в конец страницы,
+  // после основной таблицы ОПиУ (см. refHtml, добавляется в html в самом
+  // конце функции) — это вспомогательная информация для сверки, не должна
+  // быть первым, что видно на странице.
+  let refHtml = '';
   if (unknownCatsList.length) {
     html += '<div class="card" style="margin-bottom:16px;background:#fffbeb;border:1px solid #fde68a">' +
       '<div style="font-weight:700;color:#92400e;margin-bottom:8px">&#9888; Новые категории без статьи в ОПиУ (' + unknownCatsList.length + ')</div>' +
@@ -3419,31 +3559,47 @@ async function buildOPIU() {
   const notInOpiuAgg = {};
   cols.forEach(m => {
     Object.entries(notInOpiuM[m] || {}).forEach(([label, v]) => {
-      notInOpiuAgg[label] = (notInOpiuAgg[label]||0) + v;
+      if (!notInOpiuAgg[label]) notInOpiuAgg[label] = {};
+      notInOpiuAgg[label][m] = (notInOpiuAgg[label][m]||0) + v;
     });
   });
-  const notInOpiuList = Object.entries(notInOpiuAgg).filter(([,v]) => v).sort((a,b) => b[1]-a[1]);
-  if (notInOpiuList.length) {
-    const totalNotInOpiu = notInOpiuList.reduce((s,[,v]) => s+v, 0);
-    const rowsHtml2 = notInOpiuList.map(([label, v]) =>
-      `<tr><td style="padding:5px 8px;border-bottom:1px solid #e2e8f0">${label}</td>` +
-      `<td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap">${fmt(v)} ₸</td></tr>`
-    ).join('');
-    html += `<div class="card" style="margin-bottom:16px;background:#f8fafc;border:1px solid #e2e8f0">
+  const notInOpiuTotals = Object.entries(notInOpiuAgg)
+    .map(([label, byM]) => [label, cols.reduce((s,m) => s+(byM[m]||0), 0)])
+    .filter(([,v]) => v)
+    .sort((a,b) => b[1]-a[1]);
+  _lastNotInOpiu = { cols, labels: notInOpiuTotals.map(([l])=>l), byMonth: notInOpiuAgg, period }; // для exportNotInOpiu()
+  if (notInOpiuTotals.length) {
+    const totalNotInOpiu = notInOpiuTotals.reduce((s,[,v]) => s+v, 0);
+    const monthHead = cols.map(m => `<th style="text-align:right;padding:5px 8px;border-bottom:2px solid #e2e8f0;white-space:nowrap">${monthLabel(m,true)}</th>`).join('');
+    const rowsHtml2 = notInOpiuTotals.map(([label, tv]) => {
+      const cells = multi ? cols.map(m => `<td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap">${(notInOpiuAgg[label][m]) ? fmt(notInOpiuAgg[label][m])+' ₸' : '—'}</td>`).join('') : '';
+      return `<tr>
+        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0">${label}</td>
+        ${cells}
+        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap;font-weight:600">${fmt(tv)} ₸</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:11px">${notInOpiuReason(label)}</td>
+      </tr>`;
+    }).join('');
+    refHtml += `<div class="card" style="margin-bottom:16px;background:#f8fafc;border:1px solid #e2e8f0">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
         <div style="font-weight:700;color:#475569;cursor:pointer;flex:1" onclick="const b=this.parentElement.nextElementSibling;const h=b.style.display==='none';b.style.display=h?'block':'none';this.querySelector('span').textContent=h?'▾':'▸';">
-          <span style="display:inline-block;width:13px">▸</span>Статьи, не вошедшие в ОПиУ (${notInOpiuList.length}) — ${fmt(totalNotInOpiu)} ₸ за период
+          <span style="display:inline-block;width:13px">▸</span>Статьи, не вошедшие в ОПиУ (${notInOpiuTotals.length}) — ${fmt(totalNotInOpiu)} ₸ за период
         </div>
+        <button class="btn btn-clear" onclick="exportNotInOpiu()" style="font-size:11px;padding:4px 10px;white-space:nowrap">Excel ↓</button>
       </div>
       <div style="display:none;margin-top:8px">
-        <div style="font-size:11.5px;color:#64748b;margin-bottom:6px">Это не ошибка — эти категории Журнала сознательно не входят в ОПиУ (переводы между счетами, обналичка, долги, возвраты, kaspi-комиссии считаются отдельно, ручные исключения по конкретным операциям и т.п.). Список — для сверки с сырыми данными кассы.</div>
+        <div style="font-size:11.5px;color:#64748b;margin-bottom:6px">Это не ошибка — эти категории Журнала сознательно не входят в ОПиУ (переводы между счетами, обналичка, долги, возвраты, kaspi-комиссии считаются отдельно, ручные исключения по конкретным операциям и т.п.). Список — для сверки с сырыми данными кассы, с разбивкой по месяцам и кратким объяснением.</div>
+        <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:12px;color:#334155">
           <thead><tr>
             <th style="text-align:left;padding:5px 8px;border-bottom:2px solid #e2e8f0">Категория (как в Журнале)</th>
-            <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #e2e8f0">Сумма за период</th>
+            ${multi ? monthHead : ''}
+            <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #e2e8f0">Итого</th>
+            <th style="text-align:left;padding:5px 8px;border-bottom:2px solid #e2e8f0">Почему не входит в ОПиУ</th>
           </tr></thead>
           <tbody>${rowsHtml2}</tbody>
         </table>
+        </div>
       </div>
     </div>`;
   }
@@ -3458,7 +3614,7 @@ async function buildOPIU() {
     const perMonth = cols.filter(m => (pm[m].unmatchedRev||0) > 0)
       .map(m => `${monthLabel(m,true)}: ${fmt(pm[m].unmatchedRev)} ₸ (${pctS(pm[m].unmatchedRev, pm[m].trackedRev)} от выручки месяца)`)
       .join('<br>');
-    html += '<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">' +
+    refHtml += '<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">' +
       '<div style="font-weight:700;color:#991b1b;margin-bottom:8px">&#9888; Себестоимость части продаж — 0 (нет прихода) — ' + pctS(tot.unmatchedRev, tot.trackedRev) + ' от отслеживаемой выручки за период (' + fmt(tot.unmatchedRev) + ' ₸)</div>' +
       '<div style="font-size:12px;color:#991b1b;line-height:1.7">Для этих товаров под точно таким названием, как в Продажах, вообще НЕ НАШЛОСЬ ни одного прихода в Приходе — ни в окне 1/3 мес. от даты продажи (методология Power BI), ни в любой другой момент истории (см. Шаг 5 в itemCostDetailAsOf, добавлено 18.08). Себестоимость взята как 0, это завышает валовую прибыль ровно на эту сумму. Обычно значит: товар реально ни разу не закупался под этим названием (см. блок ниже), либо на сайт ещё не загружен файл Прихода за нужный период — сверься со списком.<br><br>' + perMonth + '</div></div>';
 
@@ -3484,7 +3640,7 @@ async function buildOPIU() {
         `<td style="padding:5px 8px;border-bottom:1px solid #fecaca;text-align:right;white-space:nowrap">${fmt(x.revenue)} ₸</td></tr>`
       ).join('');
       const more = itemRows.length > 50 ? `<div style="font-size:11px;color:#991b1b;margin-top:6px">…и ещё ${itemRows.length-50} товар(ов) — полный список в Excel-экспорте</div>` : '';
-      html += `<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">
+      refHtml += `<div class="card" style="margin-bottom:16px;background:#fef2f2;border:1px solid #fecaca">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
           <div style="font-weight:700;color:#991b1b;cursor:pointer;flex:1" onclick="const b=this.parentElement.nextElementSibling;const h=b.style.display==='none';b.style.display=h?'block':'none';this.querySelector('span').textContent=h?'▾':'▸';">
             <span style="display:inline-block;width:13px">▸</span>Товары с нулевой себестоимостью за период (${itemRows.length})
@@ -3704,6 +3860,10 @@ async function buildOPIU() {
   }
 
   html += '</tbody></table></div>';
+  // ДОБАВЛЕНО 09.09 — справочные диагностические блоки (не вошедшие в
+  // ОПиУ / нулевая себестоимость) идут ПОСЛЕ основной таблицы, а не перед
+  // ней (см. refHtml, накапливался выше по ходу функции).
+  html += refHtml;
 
   if (!tot.rev) {
     html = `<div class="card" style="background:#fef3c7;border:1px solid #f59e0b;margin-bottom:16px;padding:16px">
@@ -5152,6 +5312,29 @@ function exportZeroCostItems() {
   ws['!cols'] = [{wch:60},{wch:10},{wch:16}];
   XLSX.utils.book_append_sheet(wb, ws, 'Нулевая себестоимость');
   XLSX.writeFile(wb, 'Товары_нулевая_себестоимость_' + (_lastZeroCostPeriod||'период') + '.xlsx');
+  showToast('Excel файл скачан', 'success');
+}
+
+// Полный список статей, не вошедших в ОПиУ (см. _lastNotInOpiu, заполняется
+// в buildOPIU), с разбивкой по месяцам и причиной — для выгрузки и сверки
+// с сырыми данными кассы вне сайта. Добавлено 09.09.
+function exportNotInOpiu() {
+  if (typeof XLSX === 'undefined') { showToast('Библиотека Excel не загружена', 'error'); return; }
+  if (!_lastNotInOpiu.labels.length) { showToast('Нет данных — сначала сформируйте ОПиУ', 'error'); return; }
+  const { cols, labels, byMonth } = _lastNotInOpiu;
+  const wb = XLSX.utils.book_new();
+  const header = ['Категория', ...cols.map(m => monthLabel(m,true)), 'Итого', 'Почему не входит в ОПиУ'];
+  const aoa = [header];
+  labels.forEach(label => {
+    const byM = byMonth[label] || {};
+    const monthVals = cols.map(m => byM[m] || 0);
+    const total = monthVals.reduce((s,v) => s+v, 0);
+    aoa.push([label, ...monthVals, total, notInOpiuReason(label)]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:26}, ...cols.map(()=>({wch:14})), {wch:14}, {wch:60}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Не вошедшие в ОПиУ');
+  XLSX.writeFile(wb, 'Статьи_не_вошедшие_в_ОПиУ_' + (_lastNotInOpiu.period||'период') + '.xlsx');
   showToast('Excel файл скачан', 'success');
 }
 
