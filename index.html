@@ -3655,7 +3655,7 @@ async function computeOpiuFacts() {
   const tot = {};
   Object.keys(calc(MONTHS[0])).forEach(k => { tot[k] = MONTHS.reduce((s,m) => s+(pm[m][k]||0), 0); });
 
-  _opiuFactsCache = { MONTHS, MLbl, calc, pm, tot, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem, dynamicMap, nameOverrideMap, subMap };
+  _opiuFactsCache = { MONTHS, MLbl, calc, pm, tot, catM, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem, dynamicMap, nameOverrideMap, subMap };
   return _opiuFactsCache;
 }
 
@@ -3667,7 +3667,7 @@ async function buildOPIU() {
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
   const facts = await computeOpiuFacts();
-  const { MONTHS, MLbl, calc, pm: pmAll, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem } = facts;
+  const { MONTHS, MLbl, calc, pm: pmAll, catM, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem } = facts;
   // period: 'all' — все месяцы, 'year:YYYY' — все месяцы этого года (выбор
   // "Весь <год>" в селекторе), иначе — конкретный месяц 'YYYY-MM'.
   const cols = (period === 'all' || !period) ? MONTHS
