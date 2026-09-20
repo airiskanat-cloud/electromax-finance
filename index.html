@@ -234,6 +234,8 @@
     <nav class="sidebar-nav">
       <div class="nav-item" onclick="showPage('dashboard',this)"><span class="icon">&#128202;</span> Дашборд</div>
       <div class="nav-item active" onclick="showPage('daily-report',this)"><span class="icon">&#128197;</span> Отчёт дня</div>
+      <div class="nav-item" onclick="showPage('budget',this)"><span class="icon">&#128181;</span> Бюджет</div>
+      <div class="nav-item" onclick="showPage('debts',this)"><span class="icon">&#129309;</span> Дебиторка</div>
       <div class="nav-item" onclick="showPage('journal',this)"><span class="icon">&#128203;</span> Журнал</div>
       <div class="nav-item" onclick="showPage('dds-daily',this)"><span class="icon">&#128197;</span> ДДС Ежедневный</div>
       <div class="nav-item" onclick="showPage('dds',this)"><span class="icon">&#128184;</span> ДДС Месячный</div>
@@ -381,6 +383,27 @@
         </div>
       </div>
     </div>
+    <div class="page" id="page-budget">
+      <div class="page-title">Бюджет — План / Факт / Отклонение</div>
+      <div class="form-card" style="max-width:560px;margin-bottom:20px;">
+        <div class="form-row">
+          <div class="field">
+            <label>Период</label>
+            <select id="budget-period">
+              <option value="all">Весь период</option>
+            </select>
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button class="btn btn-save" onclick="buildBudgetPage()" style="width:100%;">&#128181; Сформировать</button>
+          </div>
+        </div>
+      </div>
+      <div id="budget-result"></div>
+    </div>
+    <div class="page" id="page-debts">
+      <div class="page-title">Дебиторка — долги нам / наши долги</div>
+      <div id="debts-result"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
     <div class="page" id="page-journal">
       <div class="page-title">Журнал операций</div>
       <div class="table-wrapper">
@@ -502,7 +525,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwtLC9fbDg77HgCeKeJbMGaloMWMCSn-IcO4IEhzUO7o_aaGE1r3nFvWnZ6boK0skbN/exec'; // 02.09: новый деплой под gulmira@goodfinbusiness.com — добавлены addExternalJournalRow, saveNameOverride/getNameOverrides
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzLEaF0WMB3Q_wbRfValrlq8jpUQE191bO9cupNFXz4RdSNMkhDwgsyvdIbk--DScha/exec'; // 20.09: новый деплой — добавлены getBudget/getBudget-парсинг заголовка, схемогибкие addDebt/getDebts/updateDebtAmount/updateDebtStatus
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -520,7 +543,13 @@ let _dc = []; // Chart.js instances for dashboard
 // поэтому такие строки тоже считаются как надо.
 function toNum(val) {
   if (typeof val === 'number') return val;
-  const n = +String(val ?? '').replace(/[\s ,]/g, '');
+  // ДОБАВЛЕНО 20.09: раньше резали только пробелы (обычные/неразрывные) и
+  // запятые — хватало для сумм из кассы. Лист «Бюджет» после вставки в
+  // Google Sheets оказался текстом вида "557 000 000 ₸" (валюта — часть
+  // самого значения, не формат отображения) — режем вообще всё, что не
+  // цифра/точка/минус, а не только пробелы/запятые, иначе такие ячейки
+  // молча превращались бы в 0.
+  const n = +String(val ?? '').replace(/[^0-9.\-]/g, '');
   return isNaN(n) ? 0 : n;
 }
 
@@ -630,6 +659,7 @@ const OPIU_TARGET_DEFAULTS = {
   das:     ['дастан'],
   erk:     ['еркин'],
   cred:    ['кредит'],
+  returns: ['возврат покупателю'],
 };
 
 // Человекочитаемые подписи целей — для выпадающего списка на странице
@@ -641,7 +671,8 @@ const OPIU_TARGET_LABELS = {
   cShashu: 'IV. Шашу — бонусы ретейлерам', cKom: 'IV. Командировочные расходы', cAvto: 'IV. Авторасходы',
   cObed: 'IV. Обед / питание', cUsl: 'IV. Услуги', cKomp: 'IV. Компенсация', cKanc: 'IV. Канц. товары', cUborka: 'IV. Уборка',
   cOther: 'IV. Прочее', kasp: 'IV. Бонусы клиентам', mark: 'IV. Маркетинг и реклама',
-  shef: 'V. Шеф — Темирлан ага', das: 'V. Дастан ага', erk: 'V. Еркин', cred: 'Справочно: кредиты/займы (не в ОПиУ)',
+  shef: 'V. Шеф — Темирлан ага', das: 'V. Дастан ага', erk: 'V. Ерик', cred: 'Справочно: кредиты/займы (не в ОПиУ)',
+  returns: 'I. Возврат покупателю',
   excluded: '— Не входит в ОПиУ',
 };
 
@@ -658,7 +689,9 @@ const NOT_IN_OPIU_REASONS = {
   'доставка kaspi': 'считается отдельно, из загрузки банковских выписок Kaspi — иначе задвоится с валовой прибылью',
   'обналичка': 'это не расход компании — просто перевод безнала в нал, деньги остаются те же',
   'долг': 'это факт займа/задолженности, а не трата денег компании',
-  'возврат покупателю': 'пока не включено в ОПиУ — уточняется у бухгалтера (в 1С возвраты не учитываются)',
+  // 'возврат покупателю' с 20.09 включён в ОПиУ отдельной строкой (I. Возврат
+  // покупателю / Чистая выручка) — см. OPIU_TARGET_DEFAULTS.returns, поэтому
+  // здесь больше не значится как "не входит".
   'возврат поставщику': 'пока не включено в ОПиУ — ждём решения по методологии',
   'возврат комиссии kaspi': 'корректировка комиссии Kaspi — считается вместе с ней, отдельно от ОПиУ',
   'компенсация kaspi': 'возмещение за товар, повреждённый в дороге — под это ещё нет отдельной строки',
@@ -725,6 +758,14 @@ const SUBCATEGORY_RULES = {
   'шашу':        { keywords: [], default: 'шашу' },
   'бонусы':      { keywords: [], default: 'бонусы' },
   'компенсация': { keywords: [], default: 'компенсация' },
+  // ДОБАВЛЕНО 20.09 по просьбе Гульмиры — операции "Кредит Дастан ага" (и
+  // варианты названия) должны выделяться отдельной подстатьёй "Кредит"
+  // внутри строки "Дастан ага", а не смешиваться с обычными расходами
+  // Дастана. Раз в названии есть слово "кредит" — подкатегория "Кредит",
+  // иначе — "Другие расходы". Применяется только к бакету 'das' (см.
+  // BUCKET_TO_SUBCAT_CATEGORY ниже) — Шефа (Темирлана) не касается, у него
+  // подкатегорий как не было, так и нет.
+  'шеф':         { keywords: [[/кредит/i, 'Кредит']], default: 'Другие расходы' },
 };
 
 // Подкатегории, доступные для ручного выбора — для страницы "Категории
@@ -738,7 +779,7 @@ const SUBCATEGORY_OPTIONS_BY_BUCKET = {
 // SUBCATEGORY_RULES ищет ключевые слова (нужно и там, и там — например
 // при выборе подкатегории для только что классифицированной новой
 // категории на странице "Категории без статьи").
-const BUCKET_TO_SUBCAT_CATEGORY = { cAvto: 'авторасходы', cUsl: 'услуги', mark: 'маркетинг' };
+const BUCKET_TO_SUBCAT_CATEGORY = { cAvto: 'авторасходы', cUsl: 'услуги', mark: 'маркетинг', das: 'шеф' };
 
 // Определяет подкатегорию строки Журнала по категории (уже приведена к
 // нижнему регистру, как ключи SUBCATEGORY_RULES) и названию операции.
@@ -826,10 +867,10 @@ function resolveCategoryTarget(c, dynamicMap) {
 // Не система на будущее, а именно точечная правка исторических записей.
 const MANUAL_ROW_FIXES = [
   { date: '2026-08-29', name: 'жанна т', amount: 100000, target: 'das' },
-  // ДОБАВЛЕНО 10.09 — по подтверждению Гульмиры: "Ерик" и "Еркин" один и
-  // тот же человек, эта операция (заведена категорией "проценты", из-за
-  // чего молча оседала в общей строке "Прочее") — на самом деле вывод
-  // собственника Еркина.
+  // ДОБАВЛЕНО 10.09, ИСПРАВЛЕНО 20.09 — правильное имя "Ерик" (Гульмира
+  // ранее писала "Еркин" по ошибке). Эта операция (заведена категорией
+  // "проценты", из-за чего молча оседала в общей строке "Прочее") — на
+  // самом деле вывод собственника Ерика.
   { date: '2026-08-25', name: 'ерик зп', amount: 1725000, target: 'erk' },
 ];
 function effectiveCategory(row, nameOverrideMap) {
@@ -878,7 +919,7 @@ function guessMarketingSubcatByName(name) {
 // ДОБАВЛЕНО 03.09, РАСШИРЕНО 03.09, СУЖЕНО 03.09 — категории "шеф" (вывод
 // собственника) и "кредит" (справочная строка "Кредиты/займы", в ОПиУ не
 // входит) у бухгалтера обе стали catch-all для операций, где по названию
-// видно, ЧЬИ это на самом деле деньги — Дастана ага, Темирлана ага, Еркина.
+// видно, ЧЬИ это на самом деле деньги — Дастана ага, Темирлана ага, Ерика.
 // Обнаружено 03.09: одна и та же по смыслу операция — "Кредит Дастан ага" —
 // то заведена категорией "шеф", то категорией "кредит" (тогда вообще
 // выпадала из ОПиУ). Оба случая ловим одним правилом по названию. Настоящие
@@ -898,12 +939,14 @@ function guessMarketingSubcatByName(name) {
 const SHEF_MISFILE_RULES = [
   [/дастан/i, 'das', ''],
   [/темирлан/i, 'shef', ''],
+  // ИСПРАВЛЕНО 20.09 — правильное имя "Ерик" (Гульмира ранее писала
+  // "Еркин" по ошибке); правило на "еркин" оставлено на случай, если это
+  // написание всё же где-то встретится в старых данных Журнала. Слово
+  // "ерик" ищем ЦЕЛИКОМ (обрамлено пробелами или краем строки), а не
+  // подстрокой — иначе задело бы слова вроде "Америка"/"Америк..." (в
+  // кириллице \b не работает на границе буква/пробел, поэтому здесь свои
+  // явные границы).
   [/еркин/i, 'erk', ''],
-  // ДОБАВЛЕНО 10.09 — по подтверждению Гульмиры: "Ерик" это то же лицо, что
-  // и "Еркин" (короткое/разговорное имя). Слово ищем ЦЕЛИКОМ (обрамлено
-  // пробелами или краем строки), а не подстрокой — иначе задело бы слова
-  // вроде "Америка"/"Америк..." (в кириллице \b не работает на границе
-  // буква/пробел, поэтому здесь свои явные границы).
   [/(^|\s)ерик(\s|$)/i, 'erk', ''],
 ];
 // РАСШИРЕНО 10.09: нашли случай "Ерик зп" (25.08, 1 725 000 ₸) — категория
@@ -991,6 +1034,15 @@ async function loadSubcategoryOverrides() {
 // effectiveCategory выше) — сброс аналогично остальным, после сохранения
 // новой доводки в confirmNameOverride. items: { name: { target, subcategory } }.
 let _nameOverridesCache = null;
+
+// Кэш результата computeOpiuFacts() (см. ниже, добавлено 20.09) — общий
+// расчёт факта ОПиУ по месяцам, единый источник и для страницы ОПиУ, и для
+// страницы «Бюджет» (План/Факт), чтобы цифры не расходились между отчётами.
+// Сброс — как и у остальных кэшей отчётных данных, в loadData().
+let _opiuFactsCache = null;
+// Кэш листа «Бюджет» с бэкенда (см. getBudget() в Apps Script) — план по
+// статьям с ключом бакета ОПиУ (колонка «КлючБакета» в Бюджет_v2.xlsx).
+let _budgetDataCache = null;
 async function loadNameOverrides() {
   if (_nameOverridesCache) return _nameOverridesCache;
   const map = {};
@@ -1001,6 +1053,33 @@ async function loadNameOverrides() {
   } catch(e) {}
   _nameOverridesCache = map;
   return map;
+}
+
+// Лист «Бюджет» с бэкенда (см. getBudget() в Apps Script) — план по статьям
+// с ключом бакета ОПиУ (колонка «КлючБакета»). Добавлено 20.09.
+async function loadBudgetData() {
+  if (_budgetDataCache) return _budgetDataCache;
+  let data = { headers: [], items: [] };
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getBudget');
+    data = await r.json();
+  } catch(e) {}
+  _budgetDataCache = data;
+  return data;
+}
+
+// Лист «Долги» (см. getDebts() в Apps Script — отдаёт и сырые поля, и
+// канонические _date/_counterparty/_direction/_amount). Добавлено 20.09.
+let _debtsDataCache = null;
+async function loadDebtsData() {
+  if (_debtsDataCache) return _debtsDataCache;
+  let data = { items: [] };
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getDebts');
+    data = await r.json();
+  } catch(e) {}
+  _debtsDataCache = data;
+  return data;
 }
 
 // ── Внешний Журнал (Касса-журнал бухгалтера, с августа 2026) ───────────
@@ -1170,6 +1249,8 @@ function showPage(name, el) {
   if (name === 'dds') buildDDSMonthDash();
   if (name === 'dashboard') buildDashboard();
   if (name === 'daily-report') buildDailyReport();
+  if (name === 'budget') buildBudgetPage();
+  if (name === 'debts') buildDebtsPage();
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
   }
@@ -1263,6 +1344,9 @@ async function loadData() {
   // Сброс кэша отчётных данных (см. getReportData()) — при «Обновить
   // данные» ОПиУ/ДДС должны подхватить свежие цифры, а не старые из кэша.
   _reportDataCache = null;
+  _opiuFactsCache = null; // факт ОПиУ (общий с страницей «Бюджет») — тоже пересчитать
+  _budgetDataCache = null; // план из листа «Бюджет» — тоже перечитать заново
+  _debtsDataCache = null; // лист «Долги» — тоже перечитать заново
   // Раньше эти запросы шли последовательно (каждый ждал предыдущий) —
   // при подтормаживающем Apps Script задержки складывались. Теперь все
   // уходят одновременно и ждём самый медленный, а не сумму всех.
@@ -1445,6 +1529,12 @@ const BALANCE_TODAY_SENTINEL = '9999-12-31';
 // 1С (выручка/себестоимость) и Журнал (любые операции).
 const RU_MONTH_FULL  = {'01':'Январь','02':'Февраль','03':'Март','04':'Апрель','05':'Май','06':'Июнь','07':'Июль','08':'Август','09':'Сентябрь','10':'Октябрь','11':'Ноябрь','12':'Декабрь'};
 const RU_MONTH_SHORT = {'01':'Янв','02':'Фев','03':'Мар','04':'Апр','05':'Май','06':'Июн','07':'Июл','08':'Авг','09':'Сен','10':'Окт','11':'Ноя','12':'Дек'};
+// Обратный словарь RU_MONTH_FULL (в нижнем регистре) — колонки-месяцы листа
+// «Бюджет» подписаны просто "сентябрь"/"октябрь" (без года), нужно узнавать
+// номер месяца по названию, чтобы сопоставить с фактом 'YYYY-MM'. Добавлено
+// 20.09 для страницы «Бюджет».
+const MONTH_NAME_TO_NUM = {};
+Object.entries(RU_MONTH_FULL).forEach(([num, name]) => { MONTH_NAME_TO_NUM[name.toLowerCase()] = num; });
 function monthLabel(m, short) {
   const mo = String(m||'').slice(5,7), y = String(m||'').slice(0,4);
   const name = short ? RU_MONTH_SHORT[mo] : RU_MONTH_FULL[mo];
@@ -1497,6 +1587,18 @@ async function refreshMonthPickers() {
     selDds.innerHTML = optsDds;
     const valid = prevD === 'all' || prevD.startsWith('year:') || months.includes(prevD);
     selDds.value = (prevD && valid) ? prevD : ('year:' + years[years.length-1]);
+  }
+  // Бюджет: тот же список периодов, что у ОПиУ (по требованию — расчёт
+  // должен быть согласован месяц-в-месяц с ОПиУ).
+  const selBudget = document.getElementById('budget-period');
+  if (selBudget) {
+    const prevB = selBudget.value;
+    let optsBudget = '<option value="all">Весь период (' + monthLabel(months[0]) + ' — ' + monthLabel(months[months.length-1]) + ')</option>';
+    optsBudget += years.map(y => `<option value="year:${y}">Весь ${y} год</option>`).join('');
+    optsBudget += months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+    selBudget.innerHTML = optsBudget;
+    const validB = prevB === 'all' || (prevB && prevB.startsWith('year:')) || months.includes(prevB);
+    selBudget.value = (prevB && validB) ? prevB : ('year:' + years[years.length-1]);
   }
   const picker = document.getElementById('dds-month-pick');
   if (picker) {
@@ -1843,7 +1945,7 @@ async function buildDashboard() {
     ${card('Валовая прибыль', tot.gp, tot.gp>=0?'pos':'neg', pctOf(tot.gp,tot.rev)+' от выручки', trendHtml(tot.gp, prevGp))}
     ${card('Операционная прибыль', tot.op, tot.op>=0?'pos':'neg', pctOf(tot.op,tot.rev)+' от выручки', trendHtml(tot.op, prevOp))}
     ${card('EBIT (до вывода)', tot.ebit, tot.ebit>=0?'pos':'neg', pctOf(tot.ebit,tot.rev)+' от выручки', trendHtml(tot.ebit, prevEbit))}
-    ${card('Вывод собственников', tot.own, 'neu', 'шеф + Дастан + Еркин', '')}
+    ${card('Вывод собственников', tot.own, 'neu', 'шеф + Дастан + Ерик', '')}
     ${card('Чистая прибыль', tot.net, tot.net>=0?'pos':'neg', pctOf(tot.net,tot.rev)+' маржа', trendHtml(tot.net, prevNet))}
     ${hasUnits ? card('Средняя цена продажи', avgPrice, 'neu', fmt(tot.units)+' шт. продано', '') : ''}
   </div>`;
@@ -2582,7 +2684,7 @@ async function buildCategoryMapping() {
       likeMarketingList.map(nameOverrideCardHtml).join('');
   }
   if (likeMisfiledList.length) {
-    html += `<div style="font-size:13px;color:#64748b;margin:${(unclassified.length||unSubList.length||likeMarketingList.length)?'22px':'0'} 0 14px">Похоже не туда (${likeMisfiledList.length}) — категория «шеф» или «кредит», но по названию видно, чьи это деньги (Дастан ага/Темирлан ага/Еркин) или что это расход офиса (аренда/уборка/коммунальные), а не то, что сейчас написано. Подтверди — и такие операции будут попадать в нужную статью, даже если бухгалтер продолжит писать прежнюю категорию.</div>` +
+    html += `<div style="font-size:13px;color:#64748b;margin:${(unclassified.length||unSubList.length||likeMarketingList.length)?'22px':'0'} 0 14px">Похоже не туда (${likeMisfiledList.length}) — категория «шеф» или «кредит», но по названию видно, чьи это деньги (Дастан ага/Темирлан ага/Ерик) или что это расход офиса (аренда/уборка/коммунальные), а не то, что сейчас написано. Подтверди — и такие операции будут попадать в нужную статью, даже если бухгалтер продолжит писать прежнюю категорию.</div>` +
       likeMisfiledList.map(shefMisfileCardHtml).join('');
   }
   el.innerHTML = html;
@@ -2626,6 +2728,7 @@ async function confirmCategoryMapping(category, cardId) {
     const d = await r.json();
     if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
     _categoryOverridesCache = null; // сброс кэша — ОПиУ/ДДС подхватят назначение на следующем открытии
+    _opiuFactsCache = null; // и общий факт ОПиУ/Бюджет тоже пересчитать
     if (card) card.remove();
     showToast('Сохранено — ' + (OPIU_TARGET_LABELS[target] || target), 'success');
   } catch(e) {
@@ -2662,6 +2765,7 @@ async function confirmSubcategoryMapping(name, cardId) {
     const d = await r.json();
     if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
     _subcategoryOverridesCache = null; // сброс кэша — ОПиУ подхватит назначение на следующем открытии
+    _opiuFactsCache = null;
     if (card) card.remove();
     showToast('Сохранено — ' + subcategory, 'success');
   } catch(e) {
@@ -2703,6 +2807,7 @@ async function confirmNameOverride(name, cardId, suggestedSub) {
     const d = await r.json();
     if (!d || !d.success) throw new Error((d && d.error) || 'сервер не подтвердил сохранение');
     _nameOverridesCache = null; // сброс кэша — ОПиУ/ДДС подхватят переопределение на следующем открытии
+    _opiuFactsCache = null;
     if (card) card.remove();
     showToast('Сохранено — теперь всегда «' + (OPIU_TARGET_LABELS[target] || target) + '»', 'success');
   } catch(e) {
@@ -3305,7 +3410,7 @@ async function buildDDS() {
   html += hdr('ФИНАНСОВАЯ ДЕЯТЕЛЬНОСТЬ', 'rs-sub');
   html += dRow('(-) Вывод собственника — Шеф (Темирлан ага)', 'shef', true, true);
   html += dRow('(-) Вывод собственника — Дастан ага', 'das', true, true);
-  html += dRow('(-) Вывод собственника — Еркин', 'erk', true, true);
+  html += dRow('(-) Вывод собственника — Ерик', 'erk', true, true);
   html += dRow('(-) Погашение / комиссии по кредитам', 'cred', true, true);
   html += sumRow('ИТОГО ФИНАНСОВЫЕ ВЫПЛАТЫ', 'finOut', 'rs-sub2');
   html += sumRow('НЕТТО ИЗМЕНЕНИЕ ДЕНЕЖНЫХ СРЕДСТВ', 'netFlow', 'rs-net');
@@ -3324,10 +3429,18 @@ let _lastZeroCostPeriod = '';
 // — для exportNotInOpiu(), заполняется в buildOPIU. Добавлено 09.09.
 let _lastNotInOpiu = { cols: [], labels: [], byMonth: {}, period: '' };
 
-async function buildOPIU() {
-  const period = document.getElementById('opiu-period').value;
-  const resultEl = document.getElementById('opiu-result');
-  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+// ── computeOpiuFacts() — общий расчёт факта ОПиУ по ВСЕМ доступным месяцам.
+// Добавлено 20.09: раньше вся эта логика (загрузка 1С/Kaspi, построение
+// catM из Журнала, calc() по бакетам) жила только внутри buildOPIU() и
+// пересчитывалась заново при каждом «Сформировать». Теперь это отдельная
+// функция со своим кэшем (_opiuFactsCache, см. объявление выше — сбрасывается
+// вместе с остальными кэшами отчётных данных в loadData() и после сохранения
+// любого переопределения категории/подкатегории/названия). Страница «Бюджет»
+// (buildBudgetPage) использует ЕЁ ЖЕ для расчёта Факта — по требованию
+// Гульмиры от 20.09 логика Факта в ОПиУ и в Бюджете должна быть одна и та
+// же формула из одного источника, а не две параллельные реализации.
+async function computeOpiuFacts() {
+  if (_opiuFactsCache) return _opiuFactsCache;
 
   const revM = {}, cogsM = {}, kaspiMkM = {}, kaspiDlM = {};
   // Диагностика точности себестоимости: сколько из проданного в месяце НЕ
@@ -3399,16 +3512,6 @@ async function buildOPIU() {
 
   const MONTHS = getAvailableMonths(revM, cogsM);
   const MLbl = {}; MONTHS.forEach(m => { MLbl[m] = RU_MONTH_FULL[m.slice(5,7)] || m; });
-  // period: 'all' — все месяцы, 'year:YYYY' — все месяцы этого года (выбор
-  // "Весь <год>" в селекторе), иначе — конкретный месяц 'YYYY-MM'.
-  // Раньше здесь не было ветки 'year:' — при её выборе cols оказывался
-  // пустым (ни один месяц не равен строке "year:2026" целиком), из-за чего
-  // ОПиУ считался по несуществующему месяцу и показывал везде 0 / ложное
-  // предупреждение "нет данных о продажах", хотя данные были.
-  const cols = (period === 'all' || !period) ? MONTHS
-    : period.startsWith('year:') ? MONTHS.filter(m => m.startsWith(period.slice(5)))
-    : MONTHS.filter(m => m === period);
-  const multi = cols.length > 1;
 
   const dynamicMap = await loadCategoryOverrides();
   // Подкатегории (Авторасходы/Услуги/Маркетинг) — см. SUBCATEGORY_RULES/
@@ -3461,8 +3564,9 @@ async function buildOPIU() {
     const c = effectiveCategory(r, nameOverrideMap);
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
     // ДОБАВЛЕНО 09.09 — учёт строк, которые НЕ попадают ни в один бакет
-    // ОПиУ (opiu:'' по умолчанию — «обналичка», «долг», «возврат покупателю»
-    // и т.п. — или явно назначены 'excluded' переопределением). Копим по
+    // ОПиУ (opiu:'' по умолчанию — «обналичка», «долг» и т.п. — или явно
+    // назначены 'excluded' переопределением; «возврат покупателю» с 20.09
+    // сюда больше не попадает — у него теперь свой бакет 'returns'). Копим по
     // СЫРОЙ категории Журнала (r.category), а не по синтетическому тегу —
     // так удобнее сверять с исходными данными кассы. См. блок «Статьи, не
     // вошедшие в ОПиУ» ниже (resolveCategoryTarget).
@@ -3509,6 +3613,12 @@ async function buildOPIU() {
     // учитываются как часть себестоимости (входят в валовую прибыль), а не
     // в переменных торговых расходах после неё.
     const kaspiMk=kaspiMkM[m]||0, kaspiDl=kaspiDlM[m]||0;
+    // Возврат покупателю — отдельная строка (I раздел), из неё же считается
+    // чистая выручка. На валовую прибыль (gp) пока не влияет — по фактическим
+    // данным она считалась от "грязной" выручки весь год, менять базу
+    // задним числом не стали; netRev — информационная строка.
+    const returns=B('returns');
+    const netRev=rev-returns;
     const gp=rev-cogs-kaspiMk-kaspiDl;
     const kom=B('kom'), log_=B('log'), upk=B('upk');
     const varE=kom+log_+upk, mp=gp-varE;
@@ -3527,18 +3637,48 @@ async function buildOPIU() {
     const com=cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther;
     const comTotal=com+kasp+mark;
     const ebit=op-comTotal;
+    // Общий расход (справочно) — сумма всех расходов ОПиУ (разделы II+III+IV),
+    // кроме комиссии/доставки Kaspi (те сидят внутри валовой прибыли, gp) и
+    // кроме себестоимости — т.е. ровно то, что "съедает" валовую прибыль до
+    // EBIT. Вывод собственника (раздел V) сюда по её решению не входит.
+    const totalExp=gp-ebit;
     const shef=B('shef'), das=B('das'), erk=B('erk'), own=shef+das+erk, net=ebit-own;
     const cred=B('cred');
     const unmatchedRev=unmatchedRevM[m]||0, trackedRev=trackedRevM[m]||0;
-    return {rev,cogs,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rentC,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
-            kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,shef,das,erk,own,net,cred,
+    return {rev,cogs,returns,netRev,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rentC,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
+            kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,totalExp,shef,das,erk,own,net,cred,
             unmatchedRev,trackedRev};
   };
 
   const pm = {};
-  cols.forEach(m => { pm[m] = calc(m); });
+  MONTHS.forEach(m => { pm[m] = calc(m); });
   const tot = {};
-  Object.keys(calc(cols[0])).forEach(k => { tot[k] = cols.reduce((s,m) => s+(pm[m][k]||0), 0); });
+  Object.keys(calc(MONTHS[0])).forEach(k => { tot[k] = MONTHS.reduce((s,m) => s+(pm[m][k]||0), 0); });
+
+  _opiuFactsCache = { MONTHS, MLbl, calc, pm, tot, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem, dynamicMap, nameOverrideMap, subMap };
+  return _opiuFactsCache;
+}
+
+// ── buildOPIU() — рендер страницы ОПиУ. Сам расчёт факта — см.
+// computeOpiuFacts() выше; здесь только выбор периода (селектор) и HTML.
+async function buildOPIU() {
+  const period = document.getElementById('opiu-period').value;
+  const resultEl = document.getElementById('opiu-result');
+  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+
+  const facts = await computeOpiuFacts();
+  const { MONTHS, MLbl, calc, pm: pmAll, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem } = facts;
+  // period: 'all' — все месяцы, 'year:YYYY' — все месяцы этого года (выбор
+  // "Весь <год>" в селекторе), иначе — конкретный месяц 'YYYY-MM'.
+  const cols = (period === 'all' || !period) ? MONTHS
+    : period.startsWith('year:') ? MONTHS.filter(m => m.startsWith(period.slice(5)))
+    : MONTHS.filter(m => m === period);
+  const multi = cols.length > 1;
+
+  const pm = {};
+  cols.forEach(m => { pm[m] = pmAll[m] || calc(m); });
+  const tot = {};
+  Object.keys(pmAll[MONTHS[0]] || calc(MONTHS[0])).forEach(k => { tot[k] = cols.reduce((s,m) => s+((pm[m]&&pm[m][k])||0), 0); });
 
   const NC  = 1 + cols.length + (multi ? 1 : 0);
   const pctS = (v,b) => b ? (v/b*100).toFixed(1)+'%' : '—';
@@ -3827,6 +3967,8 @@ async function buildOPIU() {
   // I. ВЫРУЧКА И СЕБЕСТОИМОСТЬ
   html += hdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
   html += dRow('Выручка (нетто)  [1С Продажи]', 'rev');
+  html += dRow('(-) Возврат покупателю', 'returns', true, true);
+  html += profRow('▶  ЧИСТАЯ ВЫРУЧКА  (за минусом возвратов)', 'netRev', 'rs-op');
   html += dRow('(-) Себестоимость  [1С Приход]', 'cogs', false, true);
   html += dRow('(-) Комиссия маркетплейса Kaspi', 'kaspiMk', false, true);
   html += dRow('(-) Доставка Kaspi', 'kaspiDl', false, true);
@@ -3886,12 +4028,21 @@ async function buildOPIU() {
     html += sc.rows;
   }
   html += profRow('▶  EBIT  (прибыль до вывода)', 'ebit', 'rs-ebit');
+  html += dRow('Справочно: Общий расход  (II+III+IV, без вывода собственника)', 'totalExp', true, true);
 
   // V. ВЫВОД СОБСТВЕННИКА
   html += hdr('V.  ВЫВОД СОБСТВЕННИКА', 'rs-sub');
   html += dRow('(-) Шеф — Темирлан ага', 'shef', true, true);
-  html += dRow('(-) Дастан ага', 'das', true, true);
-  html += dRow('(-) Еркин', 'erk', true, true);
+  {
+    // ДОБАВЛЕНО 20.09 — выделяем "Кредит" отдельной подстатьёй внутри
+    // Дастана (см. SUBCATEGORY_RULES.шеф выше). Все операции Дастана
+    // приходят через переопределение по имени ('__override_das'), т.к.
+    // сырая категория у бухгалтера всегда "шеф".
+    const sc = subCatRows('opiu-das', ['__override_das']);
+    html += dRowSub('(-) Дастан ага', 'das', 'opiu-das', true, sc.hasSub);
+    html += sc.rows;
+  }
+  html += dRow('(-) Ерик', 'erk', true, true);
   html += profRow('▶  НЕРАСПРЕДЕЛЁННАЯ ПРИБЫЛЬ', 'net', 'rs-net');
 
   if (tot.cred > 0) {
@@ -3913,6 +4064,376 @@ async function buildOPIU() {
   }
 
   resultEl.innerHTML = html;
+}
+
+// ── БЮДЖЕТ (План / Факт / Отклонение) ──────────────────────────────────
+// Добавлено 20.09. План — из листа «Бюджет» (см. loadBudgetData/getBudget),
+// Факт — ИЗ ТОЙ ЖЕ функции computeOpiuFacts(), что считает страницу ОПиУ
+// (см. её объявление выше) — сознательно НЕ отдельная копия логики, чтобы
+// План/Факт здесь и цифры на странице ОПиУ никогда не расходились.
+//
+// Строки листа «Бюджет» бывают трёх видов:
+//  1) агрегатные (КлючБакета начинается с "_": _GP/_MP/_OP/_EBIT/_TOTALEXP/
+//     _NET/_GM_PCT) — готовое значение Плана берём прямо из ячейки (там уже
+//     формула-подытог), Факт сопоставляем с соответствующим полем calc();
+//  2) строки-листья с обычным ключом бакета (rev, cogs, kom, rentA, ...) —
+//     таких может быть НЕСКОЛЬКО с одинаковым ключом (например 11 городов
+//     аренды под ключом rentA — это детализация ВНУТРИ статьи для её
+//     собственного планирования). Факт по городам ОПиУ не разбивает, только
+//     по бакету целиком — поэтому Плановую сумму по такому ключу берём из
+//     строки-подытога "…ИТОГО", если она есть среди повторов, иначе —
+//     единственная строка и есть подытог;
+//  3) строки без ключа (заголовки разделов, комментарии, блок "УТОЧНИТЬ") —
+//     в расчёт Плана/Факта не идут, показываются только текстом.
+function budgetCanonicalLabel(key, rawLabel) {
+  return (OPIU_TARGET_LABELS[key] || String(rawLabel||key)).replace(/^[▶\s]+/, '').trim();
+}
+async function buildBudgetPage() {
+  const period = document.getElementById('budget-period') ? document.getElementById('budget-period').value : 'all';
+  const resultEl = document.getElementById('budget-result');
+  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+
+  let budget, facts;
+  try {
+    [budget, facts] = await Promise.all([loadBudgetData(), computeOpiuFacts()]);
+  } catch(e) {
+    resultEl.innerHTML = '<div class="card" style="background:#fef2f2;border:1px solid #fca5a5">✗ Не удалось загрузить данные: ' + e.message + '</div>';
+    return;
+  }
+  const { headers, items } = budget;
+  const { MONTHS, pm: pmAll } = facts;
+
+  if (!items || !items.length) {
+    resultEl.innerHTML = '<div class="card" style="background:#fef3c7;border:1px solid #f59e0b">⚠ Лист «Бюджет» пуст или не найден на бэкенде (проверьте, что в Google Sheets есть лист «Бюджет» со строкой заголовков, содержащей «КлючБакета»).</div>';
+    return;
+  }
+
+  // Колонки-месяцы бюджета (подписаны просто "сентябрь" и т.п., без года) —
+  // сопоставляем с реальным 'YYYY-MM' по ПОСЛЕДНЕМУ году в MONTHS с таким же
+  // номером месяца; если такого месяца ещё нет в факте (будущий период) —
+  // Факта по нему просто не будет ("нет данных" в таблице).
+  const monthHeaders = headers.filter(h => MONTH_NAME_TO_NUM[String(h).toLowerCase().trim()]);
+  const monthKeyOf = {};
+  monthHeaders.forEach(h => {
+    const mm = MONTH_NAME_TO_NUM[String(h).toLowerCase().trim()];
+    const matches = MONTHS.filter(m => m.slice(5,7) === mm);
+    monthKeyOf[h] = matches.length ? matches[matches.length-1] : null;
+  });
+  const cols = monthHeaders.filter(h => {
+    if (period === 'all' || !period) return true;
+    const mk = monthKeyOf[h];
+    if (period.startsWith('year:')) return mk && mk.startsWith(period.slice(5));
+    return mk === period;
+  });
+  const useCols = cols.length ? cols : monthHeaders;
+  const multi = useCols.length > 1;
+
+  // Строки-листья, сгруппированные по ключу бакета.
+  const leafByKey = {};
+  items.forEach(it => {
+    const key = String(it['КлючБакета']||'').trim();
+    if (!key || key.startsWith('_')) return;
+    (leafByKey[key] = leafByKey[key]||[]).push(it);
+  });
+  const LEAF_ORDER = ['rev','cogs','kaspiMk','kaspiDl','kom','log','upk','rentA','rentB','rentC','fotZp','fotAv','fot','naem','tax','os',
+    'cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther','kasp','mark','shef','das','erk','cred'];
+  const planLeaf = {}; // key -> { [monthHeader]: план }
+  LEAF_ORDER.forEach(key => {
+    const rows = leafByKey[key];
+    if (!rows || !rows.length) return;
+    const canonical = rows.length > 1 ? (rows.find(r => /итого/i.test(String(r['Статья (как в ОПиУ)']||''))) || rows[rows.length-1]) : rows[0];
+    const plan = {};
+    useCols.forEach(h => { plan[h] = toNum(canonical[h]); });
+    planLeaf[key] = plan;
+  });
+
+  // Агрегатные (подытоговые) строки — Плановое значение готово в самой ячейке.
+  const AGG_MAP = { _GP:'gp', _MP:'mp', _OP:'op', _EBIT:'ebit', _TOTALEXP:'totalExp', _NET:'net' };
+  const AGG_LABEL = { _GP:'▶ ВАЛОВАЯ ПРИБЫЛЬ', _MP:'▶ МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', _OP:'▶ ОПЕРАЦИОННАЯ ПРИБЫЛЬ',
+    _EBIT:'▶ EBIT (прибыль до вывода)', _TOTALEXP:'Справочно: Общий расход (II+III+IV, без вывода собственника)', _NET:'▶ НЕРАСПРЕДЕЛЁННАЯ ПРИБЫЛЬ' };
+  const planAgg = {}; // aggKey -> { [monthHeader]: план }
+  let gmPctPlan = null;
+  items.forEach(it => {
+    const key = String(it['КлючБакета']||'').trim();
+    if (key === '_GM_PCT') {
+      // Эта строка может остаться настоящим числом (0.09), а не текстом —
+      // Google Sheets не переломал формат "0%" при вставке, только "₸"
+      // (см. toNum) — но пропускаем через toNum на всякий случай, вреда нет.
+      gmPctPlan = {}; useCols.forEach(h => { gmPctPlan[h] = toNum(it[h]) * 100; });
+    } else if (AGG_MAP[key]) {
+      const plan = {}; useCols.forEach(h => { plan[h] = toNum(it[h]); });
+      planAgg[key] = plan;
+    }
+  });
+
+  // Строки-расходы (для направления "хорошо/плохо" в отклонении — для них
+  // благоприятно, когда Факт МЕНЬШЕ Плана, а не больше).
+  const COST_KEYS = new Set(['cogs','kaspiMk','kaspiDl','kom','log','upk','rentA','rentB','rentC','fot','fotZp','fotAv','naem','tax','os',
+    'cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther','kasp','mark','shef','das','erk','cred','totalExp']);
+
+  const fmt2 = v => fmt(v) + ' ₸';
+  const devColor = (dev, isCost) => {
+    if (dev === null || dev === undefined || Math.round(dev) === 0) return 'color:#94a3b8';
+    const favorable = isCost ? dev < 0 : dev > 0;
+    return favorable ? 'color:#16a34a' : 'color:#dc2626';
+  };
+  const sign = v => (v > 0 ? '+' : '');
+
+  // Одна строка План/Факт/Откл(₸)/Откл(%) — factGetter(monthKey) достаёт факт
+  // из pmAll (или null, если по этому ключу вообще нет прямого поля в calc()).
+  const row = (label, planM, factGetter, isCost, isPct, indent) => {
+    let cells = '';
+    let sumPlan = 0, sumFact = 0, anyFact = false;
+    useCols.forEach(h => {
+      const plan = planM[h] || 0;
+      sumPlan += plan;
+      const mk = monthKeyOf[h];
+      const fact = mk ? factGetter(mk) : null;
+      if (fact !== null && fact !== undefined) { sumFact += fact; anyFact = true; }
+      const dev = (fact === null || fact === undefined) ? null : (fact - plan);
+      const devPct = (dev === null || !plan) ? null : (dev/Math.abs(plan)*100);
+      const planStr = isPct ? plan.toFixed(1)+'%' : fmt2(plan);
+      const factStr = (fact === null || fact === undefined) ? '<span style="color:#cbd5e1">нет данных</span>' : (isPct ? fact.toFixed(1)+'%' : fmt2(fact));
+      const devStr = dev === null ? '—' : (isPct ? sign(dev)+dev.toFixed(1)+'%' : sign(dev)+fmt2(dev));
+      const devPctStr = devPct === null ? '—' : sign(devPct)+devPct.toFixed(1)+'%';
+      cells += `<td>${planStr}</td><td>${factStr}</td><td style="${devColor(dev,isCost)}">${devStr}</td><td style="${devColor(dev,isCost)}">${devPctStr}</td>`;
+    });
+    let totCell = '';
+    if (multi) {
+      const totDev = anyFact ? (sumFact - sumPlan) : null;
+      const totDevPct = (totDev === null || !sumPlan) ? null : (totDev/Math.abs(sumPlan)*100);
+      const pStr = isPct ? (sumPlan/useCols.length).toFixed(1)+'%' : fmt2(sumPlan);
+      const fStr = !anyFact ? '<span style="color:#cbd5e1">—</span>' : (isPct ? (sumFact/useCols.length).toFixed(1)+'%' : fmt2(sumFact));
+      const dStr = totDev === null ? '—' : (isPct ? sign(totDev)+totDev.toFixed(1)+'%' : sign(totDev)+fmt2(totDev));
+      const dpStr = totDevPct === null ? '—' : sign(totDevPct)+totDevPct.toFixed(1)+'%';
+      totCell = `<td class="tc">${pStr}</td><td class="tc">${fStr}</td><td class="tc" style="${devColor(totDev,isCost)}">${dStr}</td><td class="tc" style="${devColor(totDevPct,isCost)}">${dpStr}</td>`;
+    }
+    return `<tr class="rs-data"><td style="${indent?'padding-left:22px':''}">${label}</td>${cells}${totCell}</tr>`;
+  };
+  const sectionHdr = (label) => `<tr class="rs-sub"><td colspan="${1+useCols.length*4+(multi?4:0)}">${label}</td></tr>`;
+  const profRowB = (label, planM, factGetter) => row(`<b>${label}</b>`, planM, factGetter, false, false, false);
+
+  let html = `<div class="table-wrapper report-wrap">
+    <div class="table-header"><strong>Бюджет — План / Факт / Отклонение</strong></div>
+    <table class="rt">
+      <thead>
+        <tr><th rowspan="2">Статья</th>${useCols.map(h => `<th colspan="4" style="text-align:center">${h[0].toUpperCase()+h.slice(1)}${monthKeyOf[h]?'':' <span style=\"color:#f59e0b\" title=\"этот месяц ещё не наступил — факта нет\">•</span>'}</th>`).join('')}${multi?'<th colspan="4" style="text-align:center" class="tc">Итого</th>':''}</tr>
+        <tr>${useCols.map(()=>`<th>План</th><th>Факт</th><th>Откл ₸</th><th>Откл %</th>`).join('')}${multi?'<th class="tc">План</th><th class="tc">Факт</th><th class="tc">Откл ₸</th><th class="tc">Откл %</th>':''}</tr>
+      </thead>
+      <tbody>`;
+
+  html += sectionHdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
+  if (planLeaf.rev) html += row('Выручка (нетто)', planLeaf.rev, mk => pmAll[mk] && pmAll[mk].rev, false, false, false);
+  if (planLeaf.cogs) html += row('(-) Себестоимость', planLeaf.cogs, mk => pmAll[mk] && pmAll[mk].cogs, true, false, true);
+  if (planLeaf.kaspiMk) html += row('(-) Комиссия маркетплейса Kaspi', planLeaf.kaspiMk, mk => pmAll[mk] && pmAll[mk].kaspiMk, true, false, true);
+  if (planLeaf.kaspiDl) html += row('(-) Доставка Kaspi', planLeaf.kaspiDl, mk => pmAll[mk] && pmAll[mk].kaspiDl, true, false, true);
+  if (planAgg._GP) html += profRowB(AGG_LABEL._GP, planAgg._GP, mk => pmAll[mk] && pmAll[mk].gp);
+  if (gmPctPlan) html += row('Валовая маржа % (план)', gmPctPlan, mk => (pmAll[mk] && pmAll[mk].rev) ? (pmAll[mk].gp/pmAll[mk].rev*100) : null, false, true, true);
+  html += `<tr class="rs-data"><td style="padding-left:22px;color:#64748b;font-size:12px" colspan="${1+useCols.length*4+(multi?4:0)}">Возврат покупателю / Чистая выручка — план пока не заведён, смотрите факт на странице ОПиУ.</td></tr>`;
+
+  html += sectionHdr('II.  ПЕРЕМЕННЫЕ ТОРГОВЫЕ РАСХОДЫ');
+  if (planLeaf.kom) html += row('(-) Банковские комиссии и сборы', planLeaf.kom, mk => pmAll[mk] && pmAll[mk].kom, true, false, true);
+  if (planLeaf.log) html += row('(-) Логистика (доставка)', planLeaf.log, mk => pmAll[mk] && pmAll[mk].log, true, false, true);
+  if (planLeaf.upk) html += row('(-) Упаковочные материалы', planLeaf.upk, mk => pmAll[mk] && pmAll[mk].upk, true, false, true);
+  if (planAgg._MP) html += profRowB(AGG_LABEL._MP, planAgg._MP, mk => pmAll[mk] && pmAll[mk].mp);
+
+  html += sectionHdr('III.  ПОСТОЯННЫЕ РАСХОДЫ');
+  if (planLeaf.rentA) html += row('(-) Аренда', planLeaf.rentA, mk => pmAll[mk] && pmAll[mk].rentA, true, false, true);
+  if (planLeaf.rentB) html += row('(-) Коммунальные платежи', planLeaf.rentB, mk => pmAll[mk] && pmAll[mk].rentB, true, false, true);
+  if (planLeaf.rentC) html += row('(-) Аренда/содержание магазина', planLeaf.rentC, mk => pmAll[mk] && pmAll[mk].rentC, true, false, true);
+  if (planLeaf.fotZp) html += row('Зарплата', planLeaf.fotZp, mk => pmAll[mk] && pmAll[mk].fotZp, true, false, true);
+  if (planLeaf.fotAv) html += row('Авансы', planLeaf.fotAv, mk => pmAll[mk] && pmAll[mk].fotAv, true, false, true);
+  if (planLeaf.fot) html += row('(-) ФОТ (зарплата + авансы)', planLeaf.fot, mk => pmAll[mk] && pmAll[mk].fot, true, false, true);
+  if (planLeaf.naem) html += row('(-) Наёмники', planLeaf.naem, mk => pmAll[mk] && pmAll[mk].naem, true, false, true);
+  if (planLeaf.tax) html += row('(-) Налоги и социальные взносы', planLeaf.tax, mk => pmAll[mk] && pmAll[mk].tax, true, false, true);
+  if (planLeaf.os) html += row('(-) ОС / Лизинг', planLeaf.os, mk => pmAll[mk] && pmAll[mk].os, true, false, true);
+  if (planAgg._OP) html += profRowB(AGG_LABEL._OP, planAgg._OP, mk => pmAll[mk] && pmAll[mk].op);
+
+  html += sectionHdr('IV.  КОММЕРЧЕСКИЕ РАСХОДЫ');
+  const IV = [['cShashu','Шашу — бонусы ретейлерам'],['cKom','Командировочные расходы'],['cAvto','Авторасходы'],['cObed','Обед / питание'],
+    ['cUsl','Услуги'],['cKomp','Компенсация'],['cKanc','Канц. товары'],['cUborka','Уборка'],['cOther','Прочее'],['kasp','Бонусы клиентам'],['mark','Маркетинг и реклама']];
+  IV.forEach(([k,label]) => { if (planLeaf[k]) html += row('(-) '+label, planLeaf[k], mk => pmAll[mk] && pmAll[mk][k], true, false, true); });
+  if (planAgg._EBIT) html += profRowB(AGG_LABEL._EBIT, planAgg._EBIT, mk => pmAll[mk] && pmAll[mk].ebit);
+  if (planAgg._TOTALEXP) html += row(AGG_LABEL._TOTALEXP, planAgg._TOTALEXP, mk => pmAll[mk] && pmAll[mk].totalExp, true, false, true);
+
+  html += sectionHdr('V.  ВЫВОД СОБСТВЕННИКА');
+  if (planLeaf.shef) html += row('(-) Шеф — Темирлан ага', planLeaf.shef, mk => pmAll[mk] && pmAll[mk].shef, true, false, true);
+  if (planLeaf.das) html += row('(-) Дастан ага', planLeaf.das, mk => pmAll[mk] && pmAll[mk].das, true, false, true);
+  if (planLeaf.erk) html += row('(-) Ерик', planLeaf.erk, mk => pmAll[mk] && pmAll[mk].erk, true, false, true);
+  if (planAgg._NET) html += profRowB(AGG_LABEL._NET, planAgg._NET, mk => pmAll[mk] && pmAll[mk].net);
+
+  html += '</tbody></table></div>';
+
+  // Блок "УТОЧНИТЬ" и прочие текстовые примечания из листа — показываем как
+  // есть, без Плана/Факта (это просто заметки для бухгалтера/Гульмиры).
+  const notes = items.filter(it => {
+    const key = String(it['КлючБакета']||'').trim();
+    const label = String(it['Статья (как в ОПиУ)']||'').trim();
+    return !key && label && !/^[IVX]+\.\s/.test(label);
+  });
+  if (notes.length) {
+    html += `<div class="card" style="margin-top:16px;background:#fffbeb;border:1px solid #fde68a">
+      <div style="font-weight:700;color:#92400e;margin-bottom:8px">📝 Заметки из листа «Бюджет»</div>
+      <div style="font-size:12.5px;color:#78350f;line-height:1.7">${notes.map(n => (n['Статья (как в ОПиУ)']||'')).filter(Boolean).map(t=>'• '+t).join('<br>')}</div>
+    </div>`;
+  }
+
+  resultEl.innerHTML = html;
+}
+
+// ── ДЕБИТОРКА (долги нам / наши долги) ─────────────────────────────────
+// Добавлено 20.09. База — лист «Долги» (см. loadDebtsData/getDebts), у
+// каждого должника там своя базовая сумма (последняя известная вручную).
+// Поверх неё — автосвязь с Журналом ПО ИМЕНИ: операции с категорией «долг»
+// (см. NOT_IN_OPIU_REASONS.долг — это займы, не расход компании, поэтому в
+// ОПиУ они не идут вообще, а полностью своя история — здесь) двигают остаток:
+//   • «Нам должны» (нам — актив): приход = вернули долг (остаток МЕНЬШЕ),
+//     расход = дали в долг ещё (остаток БОЛЬШЕ).
+//   • «Мы должны» (наш — пассив): расход = мы вернули часть (остаток МЕНЬШЕ),
+//     приход = мы взяли в долг ещё (остаток БОЛЬШЕ).
+// Это стандартная бухгалтерская логика, но проверить на паре реальных
+// примеров (Мараел/Технодом/Лидброс) стоит отдельно — если знак не совпадёт
+// с ожиданием, поправить одной строкой в matchAmount() ниже.
+// Сопоставление по имени — не точное совпадение (в Журнале название операции
+// обычно длиннее, например «Возврат долга Мараел»), а по вхождению подстроки
+// в любую сторону, без регистра.
+function debtNameMatch(counterparty, journalName) {
+  const a = String(counterparty||'').toLowerCase().trim();
+  const b = String(journalName||'').toLowerCase().trim();
+  if (!a || !b) return false;
+  return b.indexOf(a) !== -1 || a.indexOf(b) !== -1;
+}
+async function buildDebtsPage() {
+  const resultEl = document.getElementById('debts-result');
+  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+
+  let debts;
+  try { debts = await loadDebtsData(); }
+  catch(e) { resultEl.innerHTML = '<div class="card" style="background:#fef2f2;border:1px solid #fca5a5">✗ Не удалось загрузить долги: ' + e.message + '</div>'; return; }
+
+  // Строки-подытоги вроде «Мараел итого» — есть имя, но нет направления
+  // («Нам должны»/«Мы должны») — исключаем, это просто справочные суммы
+  // внутри самого листа, не отдельный должник.
+  const rows = (debts.items||[]).filter(it => it._counterparty && it._direction);
+  if (!rows.length) {
+    resultEl.innerHTML = '<div class="card" style="background:#fef3c7;border:1px solid #f59e0b">⚠ Лист «Долги» пуст или не найден на бэкенде.</div>';
+    return;
+  }
+
+  // Журнал: операции с категорией «долг» — сырая категория (effectiveCategory
+  // здесь намеренно НЕ используем — «долг» не входит ни в один бакет ОПиУ, но
+  // сюда, в Дебиторку, должны попасть все такие строки как есть).
+  const debtJournalRows = allData.filter(r => String(r.category||'').trim().toLowerCase() === 'долг');
+
+  // Группируем должников по (имя+направление) — на случай если один и тот же
+  // контрагент встречается в обоих направлениях (маловероятно, но не рушим
+  // расчёт, если так).
+  const groups = {}; // key -> { counterparty, direction, id (первой строки), baseline, dateLatest }
+  rows.forEach(it => {
+    const key = it._counterparty.toLowerCase() + '|' + it._direction.toLowerCase();
+    if (!groups[key]) groups[key] = { counterparty: it._counterparty, direction: it._direction, id: it.id, baseline: 0, dateLatest: it._date||'' };
+    groups[key].baseline += (+it._amount || 0);
+    if ((it._date||'') > groups[key].dateLatest) groups[key].dateLatest = it._date||'';
+  });
+
+  const isOursAsset = (direction) => /нам\s*должны/i.test(direction);
+
+  // Раскладываем совпавшие операции Журнала по должникам; несопоставленные —
+  // в отдельный список для диагностики (чтобы не терялись молча).
+  const matchedRowIds = new Set();
+  Object.values(groups).forEach(g => {
+    let adj = 0;
+    const matches = [];
+    debtJournalRows.forEach((r, idx) => {
+      if (!debtNameMatch(g.counterparty, r.name)) return;
+      const amt = toNum(r.amount);
+      const asset = isOursAsset(g.direction);
+      let delta;
+      if (asset) delta = (r.type === 'приход') ? -amt : amt;
+      else       delta = (r.type === 'расход') ? -amt : amt;
+      adj += delta;
+      matches.push({ date: r.date, name: r.name, type: r.type, amount: amt, delta });
+      matchedRowIds.add(idx);
+    });
+    g.journalAdj = adj;
+    g.journalMatches = matches;
+    g.balance = g.baseline + adj;
+  });
+  const unmatchedDebtRows = debtJournalRows.filter((r, idx) => !matchedRowIds.has(idx));
+
+  const fmt2 = v => fmt(v) + ' ₸';
+  const listGroups = Object.values(groups).sort((a,b) => Math.abs(b.balance) - Math.abs(a.balance));
+  const weOwe = listGroups.filter(g => !isOursAsset(g.direction));
+  const theyOwe = listGroups.filter(g => isOursAsset(g.direction));
+  const sumBal = arr => arr.reduce((s,g) => s + g.balance, 0);
+
+  const debtorRow = (g, cls) => {
+    const hasHist = g.journalMatches.length > 0;
+    const histRows = g.journalMatches.map(m => `
+      <tr class="rs-data grp-${cls}-${g.id}" style="display:none">
+        <td style="padding-left:36px;color:#64748b;font-size:11.5px">${m.date||''} — ${m.name||''} (${m.type})</td>
+        <td style="text-align:right;color:${m.delta<0?'#16a34a':'#dc2626'}">${m.delta>0?'+':''}${fmt2(m.delta)}</td>
+        <td></td>
+      </tr>`).join('');
+    return `<tr class="rs-data"${hasHist?` style="cursor:pointer" onclick="toggleGrp('${cls}-${g.id}',this)"`:''}>
+        <td>${hasHist?`<span class="grp-ic" style="display:inline-block;width:13px;color:#94a3b8">▸</span>`:''}${g.counterparty}
+          <div style="font-size:11px;color:#94a3b8;font-weight:400">Базовая сумма (лист): ${fmt2(g.baseline)}${g.dateLatest?' · на '+g.dateLatest:''}</div>
+        </td>
+        <td style="text-align:right;font-weight:700">${fmt2(g.balance)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <input type="number" id="adj-${g.id}" placeholder="±сумма" style="width:100px;padding:4px 6px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px">
+          <button class="btn btn-clear" style="font-size:11px;padding:4px 8px" onclick="adjustDebtBalance(${g.id}, ${g.baseline}, 1)">+ Добавить</button>
+          <button class="btn btn-clear" style="font-size:11px;padding:4px 8px" onclick="adjustDebtBalance(${g.id}, ${g.baseline}, -1)">− Списать</button>
+        </td>
+      </tr>${histRows}`;
+  };
+
+  const sectionTable = (title, arr, cls, color) => {
+    if (!arr.length) return `<div class="card" style="margin-bottom:16px;color:#94a3b8;font-size:13px">${title}: нет данных</div>`;
+    return `<div class="table-wrapper report-wrap" style="margin-bottom:20px">
+      <div class="table-header"><strong style="color:${color}">${title}</strong><span style="color:#64748b;font-size:13px">Итого: ${fmt2(sumBal(arr))}</span></div>
+      <table class="rt"><thead><tr><th>Контрагент</th><th style="text-align:right">Текущий остаток</th><th style="text-align:right">Корректировка</th></tr></thead>
+      <tbody>${arr.map(g => debtorRow(g, cls)).join('')}</tbody></table>
+    </div>`;
+  };
+
+  let html = '';
+  html += sectionTable('Нам должны', theyOwe, 'debt-in', '#15803d');
+  html += sectionTable('Мы должны', weOwe, 'debt-out', '#b91c1c');
+
+  if (unmatchedDebtRows.length) {
+    const totalUnmatched = unmatchedDebtRows.reduce((s,r) => s + toNum(r.amount), 0);
+    html += `<div class="table-wrapper report-wrap" style="margin-top:8px">
+      <div class="table-header" style="cursor:pointer" onclick="toggleGrp('debt-unmatched',this.parentElement)"><strong style="color:#b45309">⚠ Не сопоставлено с должником (${unmatchedDebtRows.length}) — ${fmt2(totalUnmatched)} ₸</strong></div>
+      <table class="rt"><tbody>
+      ${unmatchedDebtRows.map(r => `<tr class="rs-data grp-debt-unmatched" style="display:none"><td>${r.date||''} — ${r.name||'(без названия)'} (${r.type})</td><td style="text-align:right">${fmt2(toNum(r.amount))}</td></tr>`).join('')}
+      </tbody></table>
+      <div style="padding:8px 14px;font-size:12px;color:#92400e">Операции Журнала с категорией «долг», для которых имя не совпало ни с одним контрагентом из листа «Долги» — возможно, опечатка в имени или новый должник, ещё не занесённый в лист.</div>
+    </div>`;
+  }
+
+  resultEl.innerHTML = html;
+}
+
+// Ручная корректировка остатка долга (+/- сумма из поля рядом с кнопкой) —
+// пишет НОВОЕ абсолютное значение через updateDebtAmount (id — строка
+// БАЗОВОЙ записи должника на листе «Долги»; корректировка меняет именно её
+// базовую сумму, автосвязь с Журналом продолжает считаться поверх неё).
+async function adjustDebtBalance(id, currentBaseline, sign) {
+  const input = document.getElementById('adj-' + id);
+  const delta = +((input && input.value) || 0);
+  if (!delta) { showToast('Введите сумму корректировки', 'error'); return; }
+  const newAmount = currentBaseline + sign * Math.abs(delta);
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=updateDebtAmount&id=' + encodeURIComponent(id) + '&amount=' + encodeURIComponent(newAmount));
+    const d = await r.json();
+    if (!d || !d.success) throw new Error('сервер не подтвердил сохранение');
+    _debtsDataCache = null; // перечитать при следующем открытии
+    showToast('Сохранено — новая базовая сумма ' + fmt(newAmount) + ' ₸', 'success');
+    buildDebtsPage();
+  } catch(e) {
+    showToast('Не удалось сохранить (' + e.message + ')', 'error');
+  }
 }
 
 // ── FILE UPLOAD ─────────────────────────────────────
@@ -4488,6 +5009,7 @@ async function confirmAndSave() {
     // даже если в Google Sheets уже лежали верные, свежие числа. Теперь
     // кэш сбрасывается сразу после каждого успешного сохранения.
     _reportDataCache = null;
+    _opiuFactsCache = null; // факт ОПиУ (общий с страницей «Бюджет») тоже устарел
     showToast('Данные 1С сохранены в Google Sheets!', 'success');
   } catch(e) {
     msg.textContent = '✗ Ошибка: ' + e.message;
