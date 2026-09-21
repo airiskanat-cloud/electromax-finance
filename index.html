@@ -4214,7 +4214,10 @@ async function buildBudgetPage() {
   const profRowB = (label, planM, factGetter) => row(`<b>${label}</b>`, planM, factGetter, false, false, false);
 
   let html = `<div class="table-wrapper report-wrap">
-    <div class="table-header"><strong>Бюджет — План / Факт / Отклонение</strong></div>
+    <div class="table-header">
+      <strong>Бюджет — План / Факт / Отклонение</strong>
+      <button class="btn btn-clear" onclick="exportBudget('${period}')" style="font-size:12px;padding:5px 12px">Excel ↓</button>
+    </div>
     <table class="rt">
       <thead>
         <tr><th rowspan="2">Статья</th>${useCols.map(h => `<th colspan="4" style="text-align:center">${h[0].toUpperCase()+h.slice(1)}${monthKeyOf[h]?'':' <span style=\"color:#f59e0b\" title=\"этот месяц ещё не наступил — факта нет\">•</span>'}</th>`).join('')}${multi?'<th colspan="4" style="text-align:center" class="tc">Итого</th>':''}</tr>
@@ -5857,6 +5860,22 @@ function exportOPIU(period) {
   ws['!cols'] = [{wch:52},{wch:18},{wch:12}];
   XLSX.utils.book_append_sheet(wb, ws, 'ОПУ');
   XLSX.writeFile(wb, 'ОПУ_ElectroMax_' + period + '.xlsx');
+  showToast('Excel файл скачан', 'success');
+}
+
+// Экспорт страницы «Бюджет» (План/Факт/Отклонение) — тем же способом, что
+// exportOPIU(): забираем уже отрисованную таблицу как есть (со всеми
+// колонками План/Факт/Откл ₸/Откл %), а не пересчитываем заново — так
+// выгрузка гарантированно совпадает с тем, что видно на экране. Добавлено 21.09.
+function exportBudget(period) {
+  if (typeof XLSX === 'undefined') { showToast('Библиотека Excel не загружена', 'error'); return; }
+  const tbl = document.querySelector('#budget-result table.rt');
+  if (!tbl) { showToast('Сначала сформируйте Бюджет', 'error'); return; }
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.table_to_sheet(tbl);
+  ws['!cols'] = [{wch:46}, ...Array(40).fill({wch:14})];
+  XLSX.utils.book_append_sheet(wb, ws, 'Бюджет');
+  XLSX.writeFile(wb, 'Бюджет_ElectroMax_' + (period||'период') + '.xlsx');
   showToast('Excel файл скачан', 'success');
 }
 
