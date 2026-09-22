@@ -1059,13 +1059,21 @@ async function loadNameOverrides() {
 // с ключом бакета ОПиУ (колонка «КлючБакета»). Добавлено 20.09.
 async function loadBudgetData() {
   if (_budgetDataCache) return _budgetDataCache;
-  let data = { headers: [], items: [] };
+  // ДОБАВЛЕНО 22.09: раньше при сетевом сбое (Apps Script не ответил вовремя,
+  // разовая ошибка сети и т.п.) сюда всё равно записывался ПУСТОЙ результат
+  // и кэшировался — «Бюджет» после этого молча показывал «лист пуст» при
+  // каждом следующем нажатии «Сформировать», пока не перезагрузишь страницу
+  // целиком, хотя данные на бэкенде всё это время были на месте. Теперь кэш
+  // сохраняем только при успешном ответе — неудачная попытка не залипает,
+  // следующее нажатие «Сформировать» просто попробует заново.
   try {
     const r = await fetch(SCRIPT_URL + '?action=getBudget');
-    data = await r.json();
-  } catch(e) {}
-  _budgetDataCache = data;
-  return data;
+    const data = await r.json();
+    _budgetDataCache = data;
+    return data;
+  } catch(e) {
+    return { headers: [], items: [] };
+  }
 }
 
 // Лист «Долги» (см. getDebts() в Apps Script — отдаёт и сырые поля, и
@@ -1073,13 +1081,17 @@ async function loadBudgetData() {
 let _debtsDataCache = null;
 async function loadDebtsData() {
   if (_debtsDataCache) return _debtsDataCache;
-  let data = { items: [] };
+  // См. комментарий в loadBudgetData() — при сбое сети НЕ кэшируем пустой
+  // результат, иначе «Дебиторка» так же залипла бы на «пусто» до перезагрузки
+  // страницы.
   try {
     const r = await fetch(SCRIPT_URL + '?action=getDebts');
-    data = await r.json();
-  } catch(e) {}
-  _debtsDataCache = data;
-  return data;
+    const data = await r.json();
+    _debtsDataCache = data;
+    return data;
+  } catch(e) {
+    return { items: [] };
+  }
 }
 
 // ── Внешний Журнал (Касса-журнал бухгалтера, с августа 2026) ───────────
@@ -3453,6 +3465,12 @@ async function computeOpiuFacts() {
   // взамен убранной страницы "Товары без цены" — это просто список для
   // информации, никаких кнопок сопоставления/подтверждения здесь нет).
   const zeroCostByItem = {};
+  // ДОБАВЛЕНО 22.09: если этот запрос упадёт (сеть/Apps Script не ответил),
+  // раньше функция всё равно досчитывала и КЭШИРОВАЛА факт с пустой
+  // выручкой/себестоимостью — ОПиУ и Бюджет потом молча показывали бы «нет
+  // данных» до перезагрузки страницы, хотя данные на бэкенде есть. factsOk
+  // решает, кэшировать ли результат в конце функции.
+  let factsOk = true;
   try {
     // Раньше эти 5 запросов уходили на сервер заново при каждом клике
     // «Сформировать» (даже просто при смене периода). getReportData()
@@ -3508,7 +3526,7 @@ async function computeOpiuFacts() {
       if (c.category === 'маркетплейс') kaspiMkM[mo] = (kaspiMkM[mo]||0) + (+c.amount||0);
       else if (c.category === 'доставка') kaspiDlM[mo] = (kaspiDlM[mo]||0) + (+c.amount||0);
     });
-  } catch(e) {}
+  } catch(e) { factsOk = false; }
 
   const MONTHS = getAvailableMonths(revM, cogsM);
   const MLbl = {}; MONTHS.forEach(m => { MLbl[m] = RU_MONTH_FULL[m.slice(5,7)] || m; });
@@ -3655,8 +3673,9 @@ async function computeOpiuFacts() {
   const tot = {};
   Object.keys(calc(MONTHS[0])).forEach(k => { tot[k] = MONTHS.reduce((s,m) => s+(pm[m][k]||0), 0); });
 
-  _opiuFactsCache = { MONTHS, MLbl, calc, pm, tot, catM, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem, dynamicMap, nameOverrideMap, subMap };
-  return _opiuFactsCache;
+  const facts = { MONTHS, MLbl, calc, pm, tot, catM, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem, dynamicMap, nameOverrideMap, subMap };
+  if (factsOk) _opiuFactsCache = facts; // не кэшируем, если запрос 1С/Kaspi выше сорвался — следующий вызов попробует заново
+  return facts;
 }
 
 // ── buildOPIU() — рендер страницы ОПиУ. Сам расчёт факта — см.
