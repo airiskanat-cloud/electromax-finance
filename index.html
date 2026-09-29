@@ -3024,13 +3024,18 @@ async function buildDailyReport() {
   const avgMajorMonthly = lastMonths.length ? lastMonths.reduce((s,m)=>s+byMonth[m],0)/lastMonths.length : 0;
   const runwayMonths = avgMajorMonthly > 0 ? totalBalance / avgMajorMonthly : null;
 
-  // ── 4. Долги: нам должны / мы должны — из кассы (столбец «Дебиторка»),
-  // за сегодня, точно так же, как считает собственный Отчёт дня внутри
-  // самой кассы (см. kassaDayAgg). Своей страницы «Долг» на сайте больше
-  // нет — единственный источник теперь касса бухгалтера.
+  // ── 4. Долги: нам должны / мы должны ──────────────────────────────────
+  // ИЗМЕНЕНО 29.09 по просьбе Гульмиры — раньше KPI «Дебиторка» показывал
+  // только СЕГОДНЯШНИЙ флоу из колонки «Дебиторка» кассы (сколько за
+  // сегодня дали/вернули в долг), а не реальный текущий остаток. Теперь
+  // берём тот же накопленный остаток, что показывает страница «Дебиторка»
+  // (лист «Долги» + автосвязь с Журналом, см. computeDebtsSummary) — единый
+  // источник для обеих страниц. Если лист «Долги» недоступен/пуст —
+  // подстраховка: старый расчёт по кассе за сегодня, чтобы KPI не пустовал.
   const kassaToday = kassaDayAgg(today);
-  const receivablesSum = kassaToday.byDebitDir['Нам должен'] || 0;
-  const payablesSum = kassaToday.byDebitDir['Мы должны'] || 0;
+  const debtsSummary = await computeDebtsSummary();
+  const receivablesSum = debtsSummary.ok ? sumBal(debtsSummary.theyOwe) : (kassaToday.byDebitDir['Нам должен'] || 0);
+  const payablesSum = debtsSummary.ok ? sumBal(debtsSummary.weOwe) : (kassaToday.byDebitDir['Мы должны'] || 0);
   // Детали — сами строки кассы за сегодня с заполненной «Дебиторка». В кассе
   // нет отдельного поля «контрагент», поэтому показываем «Название» операции —
   // это то же, что видит бухгалтер в своей таблице.
@@ -3199,7 +3204,7 @@ async function buildDailyReport() {
       ${stockUnmatched>0 ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px">Без цены: ${fmt(stockUnmatched)} шт — товар ещё не встречался ни в приходах, ни в продажах</div>` : ''}
     </div>
     <div class="card">
-      <div class="card-label" style="margin-bottom:12px">Долги — за сегодня (касса)</div>
+      <div class="card-label" style="margin-bottom:12px">Долги — текущий остаток (страница «Дебиторка»)</div>
       <div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#16a34a">Нам должны</span><span style="font-size:12px;font-weight:700;color:#16a34a">${fK(receivablesSum)}</span></div>
         <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,receivablesSum/maxDebt*100)}%;height:100%;background:#16a34a;border-radius:4px"></div></div>
@@ -3247,11 +3252,11 @@ async function buildDailyReport() {
     html += `<div class="card" style="margin-bottom:16px">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div>
-          <div class="card-label" style="color:#16a34a;margin-bottom:6px">Нам должны — детали</div>
+          <div class="card-label" style="color:#16a34a;margin-bottom:6px">Нам должны — движения сегодня</div>
           ${weOwed.length ? weOwed.map(debtRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет</div>'}
         </div>
         <div>
-          <div class="card-label" style="color:#dc2626;margin-bottom:6px">Мы должны — детали</div>
+          <div class="card-label" style="color:#dc2626;margin-bottom:6px">Мы должны — движения сегодня</div>
           ${weOwe.length ? weOwe.map(debtRow).join('') : '<div style="font-size:12px;color:#94a3b8">Нет</div>'}
         </div>
       </div>
@@ -3365,6 +3370,13 @@ async function buildDDS() {
   const calc = m => {
     const B = key => bucketSum(catM, m, key, dynamicMap);
     const rev  = revM[m]||0;
+    // ДОБАВЛЕНО 29.09 — «Возврат покупателю» (category='возврат покупателю')
+    // раньше считался в catM (через bucketSum), но НИГДЕ не суммировался в
+    // ДДС — B('returns') просто не вызывался, хотя это реальный отток денег
+    // (возврат клиенту), не меньше многих строк "Коммерческих расходов".
+    // Найдено по вопросу Гульмиры "по ддс все расходы зашли?".
+    const returns = B('returns');
+    const netRev = rev - returns;
     const cogs = cogsM[m]||0;
     const fotZp=B('fotZp'), fotAv=B('fotAv'), fotNaem=B('naem'), fotTax=B('tax');
     const fot  = fotZp+fotAv+fotNaem+fotTax;
@@ -3382,13 +3394,16 @@ async function buildDDS() {
     const oKaspiKom = kaspiKomM[m]||0;
     const other= oOs+oUpk+oLog+oKom+oKaspiKom;
     const opOut = cogs + fot + rent + com + other;
-    const opFlow = rev - opOut;
+    // ИЗМЕНЕНО 29.09 — операционный поток считаем от netRev (за минусом
+    // возвратов), а не от «грязной» rev — возврат покупателю реально уводит
+    // деньги со счёта, как и любая другая выплата.
+    const opFlow = netRev - opOut;
     const shef = B('shef'), das = B('das'), erk = B('erk');
     const own  = shef + das + erk;
     const cred = B('cred');
     const finOut = own + cred;
     const netFlow = opFlow - finOut;
-    return {rev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rentC,rent,
+    return {rev,returns,netRev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rentC,rent,
             cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,cKasp,cMark,com,
             oOs,oUpk,oLog,oKom,oKaspiKom,other,
             opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
@@ -3466,7 +3481,8 @@ async function buildDDS() {
 
   html += hdr('ПОСТУПЛЕНИЯ ОТ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ');
   html += dRow('Выручка от реализации товаров  [1С, Продажи]', 'rev');
-  html += sumRow('ИТОГО ПОСТУПЛЕНИЯ', 'rev', 'rs-sub2');
+  html += dRow('(-) Возврат покупателю', 'returns', true, true);
+  html += sumRow('ИТОГО ПОСТУПЛЕНИЯ (нетто)', 'netRev', 'rs-sub2');
 
   html += hdr('ВЫПЛАТЫ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ', 'rs-sub');
   html += dRow('(-) Поставщикам — закупки товаров  [1С, Приход]', 'cogs', true, true);
@@ -4439,22 +4455,23 @@ function debtNameMatch(counterparty, journalName) {
   if (!a || !b) return false;
   return b.indexOf(a) !== -1 || a.indexOf(b) !== -1;
 }
-async function buildDebtsPage() {
-  const resultEl = document.getElementById('debts-result');
-  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
-
+// ── Общий расчёт остатков долгов (Нам должны / Мы должны) ──────────────
+// ДОБАВЛЕНО 29.09 — вынесено из buildDebtsPage() в отдельную функцию, чтобы
+// KPI «Дебиторка» в «Отчёте дня» показывал ТОТ ЖЕ накопленный остаток, что и
+// страница «Дебиторка» (раньше там считался только сегодняшний флоу из
+// колонки «Дебиторка» кассы — это другое число и вводило в заблуждение, по
+// просьбе Гульмиры теперь единый источник). Логика расчёта — как в исходном
+// buildDebtsPage, без изменений.
+async function computeDebtsSummary() {
   let debts;
   try { debts = await loadDebtsData(); }
-  catch(e) { resultEl.innerHTML = '<div class="card" style="background:#fef2f2;border:1px solid #fca5a5">✗ Не удалось загрузить долги: ' + e.message + '</div>'; return; }
+  catch(e) { return { ok: false, error: e.message, theyOwe: [], weOwe: [], unmatchedDebtRows: [] }; }
 
   // Строки-подытоги вроде «Мараел итого» — есть имя, но нет направления
   // («Нам должны»/«Мы должны») — исключаем, это просто справочные суммы
   // внутри самого листа, не отдельный должник.
   const rows = (debts.items||[]).filter(it => it._counterparty && it._direction);
-  if (!rows.length) {
-    resultEl.innerHTML = '<div class="card" style="background:#fef3c7;border:1px solid #f59e0b">⚠ Лист «Долги» пуст или не найден на бэкенде.</div>';
-    return;
-  }
+  if (!rows.length) return { ok: false, empty: true, theyOwe: [], weOwe: [], unmatchedDebtRows: [] };
 
   // Журнал: операции с категорией «долг» — сырая категория (effectiveCategory
   // здесь намеренно НЕ используем — «долг» не входит ни в один бакет ОПиУ, но
@@ -4497,11 +4514,28 @@ async function buildDebtsPage() {
   });
   const unmatchedDebtRows = debtJournalRows.filter((r, idx) => !matchedRowIds.has(idx));
 
-  const fmt2 = v => fmt(v) + ' ₸';
   const listGroups = Object.values(groups).sort((a,b) => Math.abs(b.balance) - Math.abs(a.balance));
   const weOwe = listGroups.filter(g => !isOursAsset(g.direction));
   const theyOwe = listGroups.filter(g => isOursAsset(g.direction));
-  const sumBal = arr => arr.reduce((s,g) => s + g.balance, 0);
+
+  return { ok: true, theyOwe, weOwe, unmatchedDebtRows };
+}
+function sumBal(arr) { return (arr||[]).reduce((s,g) => s + g.balance, 0); }
+
+async function buildDebtsPage() {
+  const resultEl = document.getElementById('debts-result');
+  resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+
+  const summary = await computeDebtsSummary();
+  if (!summary.ok) {
+    resultEl.innerHTML = summary.empty
+      ? '<div class="card" style="background:#fef3c7;border:1px solid #f59e0b">⚠ Лист «Долги» пуст или не найден на бэкенде.</div>'
+      : '<div class="card" style="background:#fef2f2;border:1px solid #fca5a5">✗ Не удалось загрузить долги: ' + summary.error + '</div>';
+    return;
+  }
+  const { theyOwe, weOwe, unmatchedDebtRows } = summary;
+
+  const fmt2 = v => fmt(v) + ' ₸';
 
   const debtorRow = (g, cls) => {
     const hasHist = g.journalMatches.length > 0;
