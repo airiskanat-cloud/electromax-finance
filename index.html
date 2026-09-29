@@ -204,6 +204,26 @@
   .rs-sub2 td.tc{background:#dbeafe!important}
   .rs-ref td{background:#f5f5f5!important;color:#888!important;font-style:italic}
   .rs-data:hover td{background:#f0f4ff!important}
+
+  /* ── Печать таблицы в PDF (см. exportPdf) — скрытая область, куда клонируем
+     нужную таблицу перед window.print(). В обычном режиме не видна; при
+     печати (body.pdf-printing) прячем всё остальное на странице и показываем
+     только её. Добавлено 29.09. */
+  #pdf-print-area { display: none; }
+  @media print {
+    body.pdf-printing > *:not(#pdf-print-area) { display: none !important; }
+    body.pdf-printing #pdf-print-area {
+      display: block !important;
+      position: static;
+      margin: 0;
+      padding: 0;
+    }
+    #pdf-print-area h2 { font-size: 16px; margin: 0 0 12px; }
+    #pdf-print-area .table-header { display: none !important; }
+    #pdf-print-area table.rt { width: 100%; border-collapse: collapse; font-size: 10px; }
+    #pdf-print-area table.rt th, #pdf-print-area table.rt td { border: 1px solid #ccc; padding: 3px 5px; }
+    @page { size: A4 landscape; margin: 10mm; }
+  }
 </style>
 </head>
 <body>
@@ -524,6 +544,7 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<div id="pdf-print-area"></div>
 <script>
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzLEaF0WMB3Q_wbRfValrlq8jpUQE191bO9cupNFXz4RdSNMkhDwgsyvdIbk--DScha/exec'; // 20.09: новый деплой — добавлены getBudget/getBudget-парсинг заголовка, схемогибкие addDebt/getDebts/updateDebtAmount/updateDebtStatus
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
@@ -645,9 +666,15 @@ const OPIU_TARGET_DEFAULTS = {
   tax:     ['налоги'],
   os:      ['ос'],
   cShashu: ['шашу', 'шашу — бонусы ретейлерам'],
-  cKom:    ['командировочные'],
-  cAvto:   ['авторасходы', 'авторасходы прочие (запчасти, ремонт и др.)'],
-  cObed:   ['обед'],
+  // ДОБАВЛЕНО 29.09 — бухгалтер продолжила заводить точные подкатегории
+  // напрямую в "Категория" (не только для Услуг, как 22.09, но и для
+  // Командировочных/Авторасходов/Обеда/Канц.товаров) — найдено по блоку
+  // "Статьи, не вошедшие в ОПиУ", где эти суммы молча выпадали, хотя явно
+  // относятся к своим статьям.
+  cKom:    ['командировочные', 'командировочные расходы'],
+  cAvto:   ['авторасходы', 'авторасходы прочие (запчасти, ремонт и др.)',
+            'авторасходы гсм', 'авторасходы парковка', 'авторасходы мойка'],
+  cObed:   ['обед', 'обед / питание'],
   // ДОБАВЛЕНО 22.09 — бухгалтер с сентября заводит подкатегории Услуг сразу
   // отдельной строкой "Категория" (точный текст = будущая подстрока
   // детализации), а не общим "услуги" + название. Новые точные строки —
@@ -663,7 +690,7 @@ const OPIU_TARGET_DEFAULTS = {
             'поддержка powerbi (ермек)',
             'уборка склада'],
   cKomp:   ['компенсация'],
-  cKanc:   ['канц товары','конц товары'],
+  cKanc:   ['канц товары','конц товары','канц. товары'],
   cUborka: ['уборка'],
   cOther:  ['прочее','проценты'],
   kasp:    ['бонусы', 'бонусы за отзывы', 'бонусы клиенту от продаж'],
@@ -798,6 +825,9 @@ const SUBCATEGORY_RULES = {
   'поддержка powerbi (ермек)':                             { keywords: [], default: 'Поддержка PowerBI' },
   'уборка склада':                                         { keywords: [], default: 'Уборка' },
   'авторасходы прочие (запчасти, ремонт и др.)':           { keywords: [], default: 'Прочие ( запчасти,ремонт идр)' },
+  'авторасходы гсм':                                       { keywords: [], default: 'ГСМ' },
+  'авторасходы парковка':                                  { keywords: [], default: 'Парковка' },
+  'авторасходы мойка':                                     { keywords: [], default: 'Мойка' },
   'рекламма  прочие':                                      { keywords: [], default: 'Рекламма' },
   'рекламма — алгатоп':                                    { keywords: [], default: 'Рекламма' },
   'wa рассылка':                                           { keywords: [], default: 'WA рассылка' },
@@ -3413,7 +3443,8 @@ async function buildDDS() {
   html += `<div class="table-wrapper report-wrap">
     <div class="table-header">
       <strong>ДДС — ${periodLbl}</strong>
-      <span style="font-size:12px;color:#64748b">Косвенный метод (упрощённый) · KZT</span>
+      <span style="font-size:12px;color:#64748b;margin-right:auto">Косвенный метод (упрощённый) · KZT</span>
+      <button class="btn btn-clear" onclick="exportPdf('#dds-result table.rt', 'ДДС — ${periodLbl}')" style="font-size:12px;padding:5px 12px">PDF ↓</button>
     </div>
     <table class="rt">
       <thead>
@@ -4008,7 +4039,10 @@ async function buildOPIU() {
   html += `<div class="table-wrapper report-wrap">
     <div class="table-header">
       <strong>ОПУ — ${periodLbl}</strong>
-      <button class="btn btn-clear" onclick="exportOPIU('${period}')" style="font-size:12px;padding:5px 12px">Excel ↓</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-clear" onclick="exportOPIU('${period}')" style="font-size:12px;padding:5px 12px">Excel ↓</button>
+        <button class="btn btn-clear" onclick="exportPdf('#opiu-result table.rt', 'ОПУ — ${periodLbl}')" style="font-size:12px;padding:5px 12px">PDF ↓</button>
+      </div>
     </div>
     <table class="rt">
       <thead>
@@ -4065,7 +4099,8 @@ async function buildOPIU() {
   html += subRow('Шашу — бонусы ретейлерам', 'cShashu', 'opiu-com');
   html += subRow('Командировочные расходы', 'cKom', 'opiu-com');
   {
-    const sc = subCatRows('opiu-com-avto', ['авторасходы', 'авторасходы прочие (запчасти, ремонт и др.)']);
+    const sc = subCatRows('opiu-com-avto', ['авторасходы', 'авторасходы прочие (запчасти, ремонт и др.)',
+      'авторасходы гсм', 'авторасходы парковка', 'авторасходы мойка']);
     html += subRowSub('Авторасходы', 'cAvto', 'opiu-com', 'opiu-com-avto', sc.hasSub);
     html += sc.rows;
   }
@@ -4250,7 +4285,19 @@ async function buildBudgetPage() {
 
   // Одна строка План/Факт/Откл(₸)/Откл(%) — factGetter(monthKey) достаёт факт
   // из pmAll (или null, если по этому ключу вообще нет прямого поля в calc()).
+  // ДОБАВЛЕНО 29.09 — по просьбе Гульмиры: раньше строка бакета ВООБЩЕ не
+  // рисовалась, если в листе «Бюджет» для него нет строки с планом (см.
+  // проверку if(planLeaf[x]) на местах вызова ниже) — это молча прятало
+  // Факт по бакетам, которые бухгалтер забыла завести в таблице (нашлось на
+  // примере «Прочее»/cOther — 1 743 000 ₸ в сентябре не показывались нигде
+  // на странице Бюджет, хотя корректно учтены в итогах ЕБИТ/Общий расход).
+  // Теперь planM может быть null/undefined ("плана вообще нет в таблице") —
+  // отличаем это от "план заведён и равен 0": в первом случае показываем
+  // "план не задан" и не считаем отклонение (это было бы бессмысленным
+  // "+100%" от нулевой базы), во втором — считаем как обычно.
   const row = (label, planM, factGetter, isCost, isPct, indent) => {
+    const hasPlan = !!planM;
+    planM = planM || {};
     let cells = '';
     let sumPlan = 0, sumFact = 0, anyFact = false;
     useCols.forEach(h => {
@@ -4259,9 +4306,9 @@ async function buildBudgetPage() {
       const mk = monthKeyOf[h];
       const fact = mk ? factGetter(mk) : null;
       if (fact !== null && fact !== undefined) { sumFact += fact; anyFact = true; }
-      const dev = (fact === null || fact === undefined) ? null : (fact - plan);
+      const dev = (!hasPlan || fact === null || fact === undefined) ? null : (fact - plan);
       const devPct = (dev === null || !plan) ? null : (dev/Math.abs(plan)*100);
-      const planStr = isPct ? plan.toFixed(1)+'%' : fmt2(plan);
+      const planStr = !hasPlan ? '<span style="color:#cbd5e1">не задан</span>' : (isPct ? plan.toFixed(1)+'%' : fmt2(plan));
       const factStr = (fact === null || fact === undefined) ? '<span style="color:#cbd5e1">нет данных</span>' : (isPct ? fact.toFixed(1)+'%' : fmt2(fact));
       const devStr = dev === null ? '—' : (isPct ? sign(dev)+dev.toFixed(1)+'%' : sign(dev)+fmt2(dev));
       const devPctStr = devPct === null ? '—' : sign(devPct)+devPct.toFixed(1)+'%';
@@ -4269,9 +4316,9 @@ async function buildBudgetPage() {
     });
     let totCell = '';
     if (multi) {
-      const totDev = anyFact ? (sumFact - sumPlan) : null;
+      const totDev = (!hasPlan || !anyFact) ? null : (sumFact - sumPlan);
       const totDevPct = (totDev === null || !sumPlan) ? null : (totDev/Math.abs(sumPlan)*100);
-      const pStr = isPct ? (sumPlan/useCols.length).toFixed(1)+'%' : fmt2(sumPlan);
+      const pStr = !hasPlan ? '<span style="color:#cbd5e1">не задан</span>' : (isPct ? (sumPlan/useCols.length).toFixed(1)+'%' : fmt2(sumPlan));
       const fStr = !anyFact ? '<span style="color:#cbd5e1">—</span>' : (isPct ? (sumFact/useCols.length).toFixed(1)+'%' : fmt2(sumFact));
       const dStr = totDev === null ? '—' : (isPct ? sign(totDev)+totDev.toFixed(1)+'%' : sign(totDev)+fmt2(totDev));
       const dpStr = totDevPct === null ? '—' : sign(totDevPct)+totDevPct.toFixed(1)+'%';
@@ -4285,7 +4332,10 @@ async function buildBudgetPage() {
   let html = `<div class="table-wrapper report-wrap">
     <div class="table-header">
       <strong>Бюджет — План / Факт / Отклонение</strong>
-      <button class="btn btn-clear" onclick="exportBudget('${period}')" style="font-size:12px;padding:5px 12px">Excel ↓</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-clear" onclick="exportBudget('${period}')" style="font-size:12px;padding:5px 12px">Excel ↓</button>
+        <button class="btn btn-clear" onclick="exportPdf('#budget-result table.rt', 'Бюджет — План / Факт / Отклонение')" style="font-size:12px;padding:5px 12px">PDF ↓</button>
+      </div>
     </div>
     <table class="rt">
       <thead>
@@ -4295,43 +4345,49 @@ async function buildBudgetPage() {
       <tbody>`;
 
   html += sectionHdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
-  if (planLeaf.rev) html += row('Выручка (нетто)', planLeaf.rev, mk => pmAll[mk] && pmAll[mk].rev, false, false, false);
-  if (planLeaf.cogs) html += row('(-) Себестоимость', planLeaf.cogs, mk => pmAll[mk] && pmAll[mk].cogs, true, false, true);
-  if (planLeaf.kaspiMk) html += row('(-) Комиссия маркетплейса Kaspi', planLeaf.kaspiMk, mk => pmAll[mk] && pmAll[mk].kaspiMk, true, false, true);
-  if (planLeaf.kaspiDl) html += row('(-) Доставка Kaspi', planLeaf.kaspiDl, mk => pmAll[mk] && pmAll[mk].kaspiDl, true, false, true);
+  html += row('Выручка (нетто)', planLeaf.rev, mk => pmAll[mk] && pmAll[mk].rev, false, false, false);
+  html += row('(-) Себестоимость', planLeaf.cogs, mk => pmAll[mk] && pmAll[mk].cogs, true, false, true);
+  html += row('(-) Комиссия маркетплейса Kaspi', planLeaf.kaspiMk, mk => pmAll[mk] && pmAll[mk].kaspiMk, true, false, true);
+  html += row('(-) Доставка Kaspi', planLeaf.kaspiDl, mk => pmAll[mk] && pmAll[mk].kaspiDl, true, false, true);
   if (planAgg._GP) html += profRowB(AGG_LABEL._GP, planAgg._GP, mk => pmAll[mk] && pmAll[mk].gp);
   if (gmPctPlan) html += row('Валовая маржа % (план)', gmPctPlan, mk => (pmAll[mk] && pmAll[mk].rev) ? (pmAll[mk].gp/pmAll[mk].rev*100) : null, false, true, true);
   html += `<tr class="rs-data"><td style="padding-left:22px;color:#64748b;font-size:12px" colspan="${1+useCols.length*4+(multi?4:0)}">Возврат покупателю / Чистая выручка — план пока не заведён, смотрите факт на странице ОПиУ.</td></tr>`;
 
   html += sectionHdr('II.  ПЕРЕМЕННЫЕ ТОРГОВЫЕ РАСХОДЫ');
-  if (planLeaf.kom) html += row('(-) Банковские комиссии и сборы', planLeaf.kom, mk => pmAll[mk] && pmAll[mk].kom, true, false, true);
-  if (planLeaf.log) html += row('(-) Логистика (доставка)', planLeaf.log, mk => pmAll[mk] && pmAll[mk].log, true, false, true);
-  if (planLeaf.upk) html += row('(-) Упаковочные материалы', planLeaf.upk, mk => pmAll[mk] && pmAll[mk].upk, true, false, true);
+  html += row('(-) Банковские комиссии и сборы', planLeaf.kom, mk => pmAll[mk] && pmAll[mk].kom, true, false, true);
+  html += row('(-) Логистика (доставка)', planLeaf.log, mk => pmAll[mk] && pmAll[mk].log, true, false, true);
+  html += row('(-) Упаковочные материалы', planLeaf.upk, mk => pmAll[mk] && pmAll[mk].upk, true, false, true);
   if (planAgg._MP) html += profRowB(AGG_LABEL._MP, planAgg._MP, mk => pmAll[mk] && pmAll[mk].mp);
 
   html += sectionHdr('III.  ПОСТОЯННЫЕ РАСХОДЫ');
-  if (planLeaf.rentA) html += row('(-) Аренда', planLeaf.rentA, mk => pmAll[mk] && pmAll[mk].rentA, true, false, true);
-  if (planLeaf.rentB) html += row('(-) Коммунальные платежи', planLeaf.rentB, mk => pmAll[mk] && pmAll[mk].rentB, true, false, true);
-  if (planLeaf.rentC) html += row('(-) Аренда/содержание магазина', planLeaf.rentC, mk => pmAll[mk] && pmAll[mk].rentC, true, false, true);
-  if (planLeaf.fotZp) html += row('Зарплата', planLeaf.fotZp, mk => pmAll[mk] && pmAll[mk].fotZp, true, false, true);
-  if (planLeaf.fotAv) html += row('Авансы', planLeaf.fotAv, mk => pmAll[mk] && pmAll[mk].fotAv, true, false, true);
-  if (planLeaf.fot) html += row('(-) ФОТ (зарплата + авансы)', planLeaf.fot, mk => pmAll[mk] && pmAll[mk].fot, true, false, true);
-  if (planLeaf.naem) html += row('(-) Наёмники', planLeaf.naem, mk => pmAll[mk] && pmAll[mk].naem, true, false, true);
-  if (planLeaf.tax) html += row('(-) Налоги и социальные взносы', planLeaf.tax, mk => pmAll[mk] && pmAll[mk].tax, true, false, true);
-  if (planLeaf.os) html += row('(-) ОС / Лизинг', planLeaf.os, mk => pmAll[mk] && pmAll[mk].os, true, false, true);
+  html += row('(-) Аренда', planLeaf.rentA, mk => pmAll[mk] && pmAll[mk].rentA, true, false, true);
+  html += row('(-) Коммунальные платежи', planLeaf.rentB, mk => pmAll[mk] && pmAll[mk].rentB, true, false, true);
+  html += row('(-) Аренда/содержание магазина', planLeaf.rentC, mk => pmAll[mk] && pmAll[mk].rentC, true, false, true);
+  html += row('Зарплата', planLeaf.fotZp, mk => pmAll[mk] && pmAll[mk].fotZp, true, false, true);
+  html += row('Авансы', planLeaf.fotAv, mk => pmAll[mk] && pmAll[mk].fotAv, true, false, true);
+  html += row('(-) ФОТ (зарплата + авансы)', planLeaf.fot, mk => pmAll[mk] && pmAll[mk].fot, true, false, true);
+  html += row('(-) Наёмники', planLeaf.naem, mk => pmAll[mk] && pmAll[mk].naem, true, false, true);
+  html += row('(-) Налоги и социальные взносы', planLeaf.tax, mk => pmAll[mk] && pmAll[mk].tax, true, false, true);
+  html += row('(-) ОС / Лизинг', planLeaf.os, mk => pmAll[mk] && pmAll[mk].os, true, false, true);
   if (planAgg._OP) html += profRowB(AGG_LABEL._OP, planAgg._OP, mk => pmAll[mk] && pmAll[mk].op);
 
   html += sectionHdr('IV.  КОММЕРЧЕСКИЕ РАСХОДЫ');
+  // ДОБАВЛЕНО 29.09 — раньше строка бакета рисовалась только "if (planLeaf[k])",
+  // т.е. молча пропадала, если бухгалтер не завела для него строку в листе
+  // «Бюджет» (нашлось на «Прочее»/cOther — 1 743 000 ₸ в сентябре были не
+  // видны на этой странице вообще, хотя корректно входили в ЕБИТ/Общий
+  // расход). Теперь рисуем ВСЕГДА — если строки в таблице нет, план просто
+  // покажется "не задан", а факт всё равно возьмётся из ОПиУ.
   const IV = [['cShashu','Шашу — бонусы ретейлерам'],['cKom','Командировочные расходы'],['cAvto','Авторасходы'],['cObed','Обед / питание'],
     ['cUsl','Услуги'],['cKomp','Компенсация'],['cKanc','Канц. товары'],['cUborka','Уборка'],['cOther','Прочее'],['kasp','Бонусы клиентам'],['mark','Маркетинг и реклама']];
-  IV.forEach(([k,label]) => { if (planLeaf[k]) html += row('(-) '+label, planLeaf[k], mk => pmAll[mk] && pmAll[mk][k], true, false, true); });
+  IV.forEach(([k,label]) => { html += row('(-) '+label, planLeaf[k], mk => pmAll[mk] && pmAll[mk][k], true, false, true); });
   if (planAgg._EBIT) html += profRowB(AGG_LABEL._EBIT, planAgg._EBIT, mk => pmAll[mk] && pmAll[mk].ebit);
   if (planAgg._TOTALEXP) html += row(AGG_LABEL._TOTALEXP, planAgg._TOTALEXP, mk => pmAll[mk] && pmAll[mk].totalExp, true, false, true);
 
   html += sectionHdr('V.  ВЫВОД СОБСТВЕННИКА');
-  if (planLeaf.shef) html += row('(-) Шеф — Темирлан ага', planLeaf.shef, mk => pmAll[mk] && pmAll[mk].shef, true, false, true);
-  if (planLeaf.das) html += row('(-) Дастан ага', planLeaf.das, mk => pmAll[mk] && pmAll[mk].das, true, false, true);
-  if (planLeaf.erk) html += row('(-) Ерик', planLeaf.erk, mk => pmAll[mk] && pmAll[mk].erk, true, false, true);
+  html += row('(-) Шеф — Темирлан ага', planLeaf.shef, mk => pmAll[mk] && pmAll[mk].shef, true, false, true);
+  html += row('(-) Дастан ага', planLeaf.das, mk => pmAll[mk] && pmAll[mk].das, true, false, true);
+  html += row('(-) Ерик', planLeaf.erk, mk => pmAll[mk] && pmAll[mk].erk, true, false, true);
   if (planAgg._NET) html += profRowB(AGG_LABEL._NET, planAgg._NET, mk => pmAll[mk] && pmAll[mk].net);
 
   html += '</tbody></table></div>';
@@ -5912,6 +5968,34 @@ async function initSalesInSheets() {
   }
   btn.disabled = false;
   btn.innerHTML = '&#8659; Загрузить данные продаж 1С в Google Sheets';
+}
+
+// Экспорт таблицы в PDF — через нативную печать браузера (Ctrl+P →
+// "Сохранить как PDF"), а не отдельную библиотеку (jsPDF и т.п.): так
+// итоговый файл гарантированно выглядит ровно как сама таблица на экране
+// (те же цвета, шрифты, уже раскрытые строки), без риска, что библиотека
+// криво отрендерит кириллицу или сложную разметку. Добавлено 29.09 по
+// просьбе Гульмиры — кнопка "PDF ↓" рядом с "Excel ↓" на ОПиУ/Бюджет/ДДС.
+// Работает так: клонируем нужную таблицу в скрытый #pdf-print-area,
+// временно (через класс body.pdf-printing, см. CSS) прячем всё остальное
+// на странице и вызываем window.print() — пользователь в диалоге печати
+// выбирает "Сохранить как PDF" вместо реального принтера.
+function exportPdf(selector, title) {
+  const el = document.querySelector(selector);
+  if (!el) { showToast('Сначала сформируйте отчёт', 'error'); return; }
+  const area = document.getElementById('pdf-print-area');
+  area.innerHTML = '<h2>' + String(title||'').replace(/</g,'&lt;') + '</h2>' + el.outerHTML;
+  document.body.classList.add('pdf-printing');
+  const cleanup = () => {
+    document.body.classList.remove('pdf-printing');
+    area.innerHTML = '';
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  // afterprint не всегда надёжно срабатывает (особенно в мобильных браузерах) —
+  // подчищаем ещё и по таймеру на всякий случай; cleanup() безопасно вызвать дважды.
+  setTimeout(cleanup, 3000);
+  window.print();
 }
 
 function exportOPIU(period) {
