@@ -654,7 +654,9 @@ const CATEGORY_MAP = {
 // на бэкенде и подмешивается поверх дефолтов при каждом расчёте (см.
 // bucketSum). Ручное назначение всегда сильнее дефолта.
 const OPIU_TARGET_DEFAULTS = {
-  kom:     ['комиссия'],
+  // 05.10: комиссии конкретных банков (бухгалтер пишет 'комиссия <банк>');
+  // 'комиссия kaspi' сюда НЕ входит — она считается отдельно из выписок Kaspi.
+  kom:     ['комиссия', 'комиссия халык', 'комиссия forte', 'комиссия бцк', 'комиссия жусан', 'комиссия freedom'],
   log:     ['логистика'],
   upk:     ['упаковка'],
   rentA:   ['аренда'],
@@ -694,7 +696,7 @@ const OPIU_TARGET_DEFAULTS = {
   cUborka: ['уборка'],
   cOther:  ['прочее','проценты'],
   kasp:    ['бонусы', 'бонусы за отзывы', 'бонусы клиенту от продаж'],
-  mark:    ['маркетинг', 'рекламма  прочие', 'рекламма — алгатоп', 'wa рассылка', 'таргет'],
+  mark:    ['маркетинг', 'рекламма прочие', 'рекламма — алгатоп', 'wa рассылка', 'таргет', 'бот — техно'],
   shef:    ['шеф'],
   das:     ['дастан'],
   erk:     ['еркин'],
@@ -828,10 +830,11 @@ const SUBCATEGORY_RULES = {
   'авторасходы гсм':                                       { keywords: [], default: 'ГСМ' },
   'авторасходы парковка':                                  { keywords: [], default: 'Парковка' },
   'авторасходы мойка':                                     { keywords: [], default: 'Мойка' },
-  'рекламма  прочие':                                      { keywords: [], default: 'Рекламма' },
+  'рекламма прочие':                                      { keywords: [], default: 'Рекламма' },
   'рекламма — алгатоп':                                    { keywords: [], default: 'Рекламма' },
   'wa рассылка':                                           { keywords: [], default: 'WA рассылка' },
   'таргет':                                                { keywords: [], default: 'Таргет' },
+  'бот — техно':                                           { keywords: [], default: 'Бот — Техно' },
 };
 
 // Подкатегории, доступные для ручного выбора — для страницы "Категории
@@ -940,7 +943,9 @@ const MANUAL_ROW_FIXES = [
   { date: '2026-08-25', name: 'ерик зп', amount: 1725000, target: 'erk' },
 ];
 function effectiveCategory(row, nameOverrideMap) {
-  const raw = (row.category || '').toLowerCase().trim();
+  // 05.10: схлопываем повторные пробелы — бухгалтер иногда ставит двойной пробел
+  // ('рекламма  прочие'), и такая категория не совпадала бы с ключами ниже.
+  const raw = (row.category || '').toLowerCase().replace(/\s+/g,' ').trim();
   const nameKey = String(row.name || '').toLowerCase().trim();
   const manualFix = MANUAL_ROW_FIXES.find(f =>
     f.date === row.date && f.name === nameKey && Math.abs(f.amount - toNum(row.amount)) < 1
@@ -4151,7 +4156,7 @@ async function buildOPIU() {
     // (например "услуги"/"зарплата"), переопределённые вручную в
     // "Маркетинг" по точному названию, см. effectiveCategory выше.
     const sc = subCatRows('opiu-mark', ['маркетинг', '__override_mark',
-      'рекламма  прочие', 'рекламма — алгатоп', 'wa рассылка', 'таргет']);
+      'рекламма прочие', 'рекламма — алгатоп', 'wa рассылка', 'таргет', 'бот — техно']);
     html += dRowSub('(-) Маркетинг и реклама', 'mark', 'opiu-mark', true, sc.hasSub);
     html += sc.rows;
   }
