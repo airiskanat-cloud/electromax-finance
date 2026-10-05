@@ -745,7 +745,7 @@ const NOT_IN_OPIU_REASONS = {
   'налоги (ндс)': 'НДС по продажам фактически платит покупатель (заложен в цену) — компания лишь переводит его государству, это не расход бизнеса',
 };
 function notInOpiuReason(label) {
-  return NOT_IN_OPIU_REASONS[label] || 'исключено вручную по конкретной операции (переопределение статьи)';
+  return NOT_IN_OPIU_REASONS[normCatKey(label)] || 'исключено вручную по конкретной операции (переопределение статьи)';
 }
 
 // ── ПОДКАТЕГОРИИ (детализация статей IV раздела ОПиУ — Авторасходы/
@@ -836,6 +836,14 @@ const SUBCATEGORY_RULES = {
   'таргет':                                                { keywords: [], default: 'Таргет' },
   'бот — техно':                                           { keywords: [], default: 'Бот — Техно' },
 };
+
+// Приводим ключи таблиц правил к той же нормализации, что и категорию из Журнала.
+(function normalizeCategoryTables() {
+  Object.keys(OPIU_TARGET_DEFAULTS).forEach(k => { OPIU_TARGET_DEFAULTS[k] = OPIU_TARGET_DEFAULTS[k].map(normCatKey); });
+  [SUBCATEGORY_RULES, NOT_IN_OPIU_REASONS].forEach(tbl => {
+    Object.keys(tbl).forEach(k => { const n = normCatKey(k); if (n !== k) { tbl[n] = tbl[k]; delete tbl[k]; } });
+  });
+})();
 
 // Подкатегории, доступные для ручного выбора — для страницы "Категории
 // без статьи" (и когда авто-подбор не сработал, см. guessSubcategory).
@@ -945,7 +953,7 @@ const MANUAL_ROW_FIXES = [
 function effectiveCategory(row, nameOverrideMap) {
   // 05.10: схлопываем повторные пробелы — бухгалтер иногда ставит двойной пробел
   // ('рекламма  прочие'), и такая категория не совпадала бы с ключами ниже.
-  const raw = (row.category || '').toLowerCase().replace(/\s+/g,' ').trim();
+  const raw = normCatKey(row.category);
   const nameKey = String(row.name || '').toLowerCase().trim();
   const manualFix = MANUAL_ROW_FIXES.find(f =>
     f.date === row.date && f.name === nameKey && Math.abs(f.amount - toNum(row.amount)) < 1
@@ -1085,14 +1093,54 @@ async function getReportData() {
   };
   return _reportDataCache;
 }
+// ДОБАВЛЕНО 05.10 — единая нормализация названия категории Журнала: нижний
+// регистр, ё→е, 'рекламма'→'реклама' (бухгалтер пишет и так и так), единый
+// формат тире, без двойных пробелов. Применяется и к категории из Журнала
+// (effectiveCategory), и к таблицам правил (см. normalizeCategoryTables) — так
+// опечатки/варианты написания больше не роняют сумму в «категории без статьи».
+function normCatKey(s) {
+  return String(s||'').toLowerCase().replace(/ё/g,'е').replace(/рекламма/g,'реклама')
+    .replace(/\s*[–—]\s*/g,' — ').replace(/\s+-\s+/g,' — ').replace(/\s+/g,' ').trim();
+}
+// Подкатегории, найденные автоматически по листу «Бюджет» (см. budgetAutoCategoryMap).
+const _autoSubCats = { cAvto: [], cUsl: [], mark: [] };
+// ДОБАВЛЕНО 05.10 по просьбе Гульмиры: правила статей берём из листа «Бюджет»
+// в базе. Каждая строка-лист там (колонка «Статья» + «КлючБакета») — это
+// точное название категории, которое бухгалтер вводит в Журнал, и бакет ОПиУ,
+// куда она идёт. Новая строка в листе → категория сразу попадает в ОПиУ/Бюджет/ДДС
+// без правок кода. Уже известные коду категории не трогаем (они приоритетнее).
+async function budgetAutoCategoryMap() {
+  const out = {};
+  try {
+    const b = await loadBudgetData();
+    const known = new Set();
+    Object.values(OPIU_TARGET_DEFAULTS).forEach(a => a.forEach(x => known.add(x)));
+    (b.items||[]).forEach(it => {
+      const key = String(it['КлючБакета']||'').trim();
+      const label = String(it['Статья (как в ОПиУ)']||'').trim();
+      if (!key || key.startsWith('_') || !OPIU_TARGET_DEFAULTS.hasOwnProperty(key) || !label || /итого/i.test(label)) return;
+      const n = normCatKey(label);
+      if (known.has(n) || out[n] !== undefined) return;
+      out[n] = key;
+      if (_autoSubCats[key]) {
+        if (!_autoSubCats[key].includes(n)) _autoSubCats[key].push(n);
+        if (!SUBCATEGORY_RULES[n]) SUBCATEGORY_RULES[n] = { keywords: [], default: label.replace(/^\(-\)\s*/,'') };
+      }
+    });
+  } catch(e) {}
+  return out;
+}
 async function loadCategoryOverrides() {
   if (_categoryOverridesCache) return _categoryOverridesCache;
   const map = {};
   try {
     const r = await fetch(SCRIPT_URL + '?action=getCategoryMappings');
     const d = await r.json();
-    (d.items||[]).forEach(x => { if (x.category) map[x.category] = x.target; });
+    (d.items||[]).forEach(x => { if (x.category) map[normCatKey(x.category)] = x.target; });
   } catch(e) {}
+  // ручные назначения (страница «Категории без статьи») сильнее авто-правил из «Бюджета»
+  const auto = await budgetAutoCategoryMap();
+  Object.keys(auto).forEach(k => { if (map[k] === undefined) map[k] = auto[k]; });
   _categoryOverridesCache = map;
   return map;
 }
@@ -3788,7 +3836,7 @@ async function buildOPIU() {
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
   const facts = await computeOpiuFacts();
-  const { MONTHS, MLbl, calc, pm: pmAll, catM, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem } = facts;
+  const { MONTHS, MLbl, calc, pm: pmAll, catM, catSubM, notInOpiuM, unmatchedRevM, trackedRevM, zeroCostByItem, dynamicMap } = facts;
   // period: 'all' — все месяцы, 'year:YYYY' — все месяцы этого года (выбор
   // "Весь <год>" в селекторе), иначе — конкретный месяц 'YYYY-MM'.
   const cols = (period === 'all' || !period) ? MONTHS
@@ -3821,7 +3869,7 @@ async function buildOPIU() {
       // "__override_..." — синтетический тег переопределения по названию
       // (см. effectiveCategory), не настоящая категория Журнала — не
       // предупреждаем о ней как о "новой категории без статьи".
-      if (c && !c.startsWith('__override_') && !CATEGORY_MAP_LOOKUP[c]) unknownCats[c] = (unknownCats[c]||0) + catM[m][c];
+      if (c && !c.startsWith('__override_') && !CATEGORY_MAP_LOOKUP[c] && !NOT_IN_OPIU_REASONS[c] && (dynamicMap||{})[c] === undefined && resolveCategoryTarget(c, dynamicMap) === null) unknownCats[c] = (unknownCats[c]||0) + catM[m][c];
     });
   });
   const unknownCatsList = Object.entries(unknownCats).filter(([,v]) => v).sort((a,b) => b[1]-a[1]);
@@ -4005,6 +4053,7 @@ async function buildOPIU() {
   // одной или нескольких категорий Журнала (обычно одна) из catSubM,
   // возвращает { rows: готовый HTML, hasSub: есть ли вообще что показывать }.
   const subCatRows = (toggleCls, categories) => {
+    categories = categories.map(normCatKey);
     const subs = new Set();
     cols.forEach(m => categories.forEach(cat => {
       const s = (catSubM[m] && catSubM[m][cat]) || {};
@@ -4129,7 +4178,7 @@ async function buildOPIU() {
   html += subRow('Командировочные расходы', 'cKom', 'opiu-com');
   {
     const sc = subCatRows('opiu-com-avto', ['авторасходы', 'авторасходы прочие (запчасти, ремонт и др.)',
-      'авторасходы гсм', 'авторасходы парковка', 'авторасходы мойка']);
+      'авторасходы гсм', 'авторасходы парковка', 'авторасходы мойка', ..._autoSubCats.cAvto]);
     html += subRowSub('Авторасходы', 'cAvto', 'opiu-com', 'opiu-com-avto', sc.hasSub);
     html += sc.rows;
   }
@@ -4142,7 +4191,7 @@ async function buildOPIU() {
       'нотариус, оформление, фотосалон, документы',
       'финансист (гульмира)',
       'поддержка powerbi (ермек)',
-      'уборка склада']);
+      'уборка склада', ..._autoSubCats.cUsl]);
     html += subRowSub('Услуги', 'cUsl', 'opiu-com', 'opiu-com-usl', sc.hasSub);
     html += sc.rows;
   }
@@ -4156,7 +4205,7 @@ async function buildOPIU() {
     // (например "услуги"/"зарплата"), переопределённые вручную в
     // "Маркетинг" по точному названию, см. effectiveCategory выше.
     const sc = subCatRows('opiu-mark', ['маркетинг', '__override_mark',
-      'рекламма прочие', 'рекламма — алгатоп', 'wa рассылка', 'таргет', 'бот — техно']);
+      'рекламма прочие', 'рекламма — алгатоп', 'wa рассылка', 'таргет', 'бот — техно', ..._autoSubCats.mark]);
     html += dRowSub('(-) Маркетинг и реклама', 'mark', 'opiu-mark', true, sc.hasSub);
     html += sc.rows;
   }
