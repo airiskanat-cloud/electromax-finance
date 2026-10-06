@@ -629,9 +629,10 @@ const CATEGORY_MAP = {
   // (регулярный доход), в ОПиУ пока не включаем — решим по факту суммы.
   'аренда склада':     { dds: 'Операционная', opiu: '' },
   // Компенсация Kaspi — возмещение за товар, повреждённый в дороге.
-  // В ОПиУ пока не включаем: нет отдельной строки "потери от брака", с
-  // которой это нужно было бы сводить, иначе прибыль исказится в плюс.
-  'компенсация kaspi': { dds: 'Операционная', opiu: '' },
+  // С 06.10: ПРИХОД (возмещение от Kaspi) идёт отдельной строкой «Компенсации
+  // от Kaspi» в разделе I ОПиУ/Бюджета/ДДС (см. kaspCompByMonth); РАСХОД с этой
+  // же категорией (выплата клиенту) — в IV. Компенсация (cKomp).
+  'компенсация kaspi': { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   'прочее':          { dds: 'Операционная', opiu: 'Коммерческие расходы' },
   // Добавлены 15.08 — новые категории из кассы бухгалтера.
   // 'проценты' — реальный расход, попадает в строку "Прочее" раздела IV
@@ -691,7 +692,7 @@ const OPIU_TARGET_DEFAULTS = {
             'финансист (гульмира)',
             'поддержка powerbi (ермек)',
             'уборка склада'],
-  cKomp:   ['компенсация'],
+  cKomp:   ['компенсация','компенсация kaspi'],
   cKanc:   ['канц товары','конц товары','канц. товары'],
   cUborka: ['уборка'],
   cOther:  ['прочее','проценты'],
@@ -736,7 +737,6 @@ const NOT_IN_OPIU_REASONS = {
   // здесь больше не значится как "не входит".
   'возврат поставщику': 'пока не включено в ОПиУ — ждём решения по методологии',
   'возврат комиссии kaspi': 'корректировка комиссии Kaspi — считается вместе с ней, отдельно от ОПиУ',
-  'компенсация kaspi': 'возмещение за товар, повреждённый в дороге — под это ещё нет отдельной строки',
   'овернайт': 'проценты по остатку на счёте — финансовый доход, не операционная выручка',
   'аренда склада': 'доход от субаренды площади — пока не включён в ОПиУ',
   'перевод': 'перевод между своими счетами — не доход и не расход компании',
@@ -950,6 +950,24 @@ const MANUAL_ROW_FIXES = [
   // самом деле вывод собственника Ерика.
   { date: '2026-08-25', name: 'ерик зп', amount: 1725000, target: 'erk' },
 ];
+// «Доп доходы» / «Прочие доходы» — служебная номенклатура в 1С-продажах
+// (клиент «ФИЗ. ЛИЦО», одна запись в конце месяца). Это не продажа товара, а
+// прочий доход — показываем в ОПиУ/Бюджете/ДДС отдельной строкой, а из
+// «Выручки» вычитаем (иначе попадает в неё и считается как товар без себестоимости).
+const OTHER_INCOME_ITEM_RE = /^\s*(доп(олнительные)?\.?\s*доходы?|прочие\s+доходы?)\s*$/i;
+// Компенсации от Kaspi (ПРИХОД): возмещение за повреждённый/утерянный товар.
+// useAccrual=true (ОПиУ/Бюджет) — месяц по period, иначе по дате оплаты (ДДС).
+function kaspCompByMonth(useAccrual) {
+  const out = {};
+  allData.filter(r => r.type === 'доход' || r.type === 'приход').forEach(r => {
+    const k = normCatKey(r.category);
+    if (k !== 'компенсация kaspi' && k !== 'компенсация') return;
+    const m = (useAccrual && r.period) ? String(r.period).slice(0,7) : (r.date ? r.date.slice(0,7) : null);
+    if (!m) return;
+    out[m] = (out[m]||0) + toNum(r.amount);
+  });
+  return out;
+}
 function effectiveCategory(row, nameOverrideMap) {
   // 05.10: схлопываем повторные пробелы — бухгалтер иногда ставит двойной пробел
   // ('рекламма  прочие'), и такая категория не совпадала бы с ключами ниже.
@@ -1298,8 +1316,21 @@ function mapExternalJournal(rows) {
       // Явный столбец «Период» в кассе (если бухгалтер его заведёт) —
       // в приоритете; иначе — автосдвиг для зарплаты/аванса, выплаченных
       // в первые дни месяца (см. accrualPeriodForExternalRow выше).
+      // ДОБАВЛЕНО 05.10 — в кассе появились колонки «Месяц» (номер месяца 1-12)
+      // и «Год»: бухгалтер указывает, к какому месяцу ОПиУ относится операция,
+      // хотя дата фактическая. Это сильнее автосдвига зарплаты по дате. «Год»
+      // бывает пустым — тогда берём год даты, с поправкой на переход через
+      // Новый год (оплата в декабре «за январь» и наоборот).
+      const periodFromMonthCol = (() => {
+        const mm = parseInt(r['Месяц'], 10);
+        if (!(mm >= 1 && mm <= 12)) return '';
+        const dY = +dateStr.slice(0,4), dM = +dateStr.slice(5,7);
+        let yy = parseInt(r['Год'], 10);
+        if (!(yy > 2000)) yy = (mm - dM > 6) ? dY - 1 : (dM - mm > 6) ? dY + 1 : dY;
+        return yy + '-' + String(mm).padStart(2,'0');
+      })();
       const period = r['Период'] ? normalizePeriodStr(r['Период'])
-                                  : accrualPeriodForExternalRow(dateStr, canonicalKey);
+                                  : (periodFromMonthCol || accrualPeriodForExternalRow(dateStr, canonicalKey));
       return {
         id: r.id,
         date: dateStr,
@@ -3378,12 +3409,19 @@ async function buildDDS() {
   const resultEl = document.getElementById('dds-result');
   resultEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
 
-  const revM = {}, cogsM = {}, kaspiKomM = {};
+  const revM = {}, cogsM = {}, kaspiKomM = {}, othIncM = {};
   try {
-    const { d1c: d } = await getReportData(); // общий кэш с ОПиУ — см. getReportData()
+    const { d1c: d, itemDaily: itemDailyD } = await getReportData(); // общий кэш с ОПиУ — см. getReportData()
     (d.sales||[]).forEach(s => {
       const mo = String(s.month||'');
       if (mo) revM[mo] = (revM[mo]||0) + (+s.revenue||0);
+    });
+    (itemDailyD||[]).forEach(row => {
+      if (!OTHER_INCOME_ITEM_RE.test(row.item||'')) return;
+      const mo = String(row.date||'').slice(0,7);
+      if (!mo) return;
+      othIncM[mo] = (othIncM[mo]||0) + (+row.revenue||0);
+      revM[mo] = (revM[mo]||0) - (+row.revenue||0);
     });
     (d.purchases||[]).forEach(s => {
       const mo = String(s.month||'');
@@ -3420,16 +3458,18 @@ async function buildDDS() {
     const c = effectiveCategory(r, nameOverrideMap);
     catM[m][c] = (catM[m][c]||0) + (toNum(r.amount));
   });
+  const kaspCompM = kaspCompByMonth(false);
   const calc = m => {
     const B = key => bucketSum(catM, m, key, dynamicMap);
     const rev  = revM[m]||0;
+    const kaspComp = kaspCompM[m]||0, othInc = othIncM[m]||0;
     // ДОБАВЛЕНО 29.09 — «Возврат покупателю» (category='возврат покупателю')
     // раньше считался в catM (через bucketSum), но НИГДЕ не суммировался в
     // ДДС — B('returns') просто не вызывался, хотя это реальный отток денег
     // (возврат клиенту), не меньше многих строк "Коммерческих расходов".
     // Найдено по вопросу Гульмиры "по ддс все расходы зашли?".
     const returns = B('returns');
-    const netRev = rev - returns;
+    const netRev = rev - returns + kaspComp + othInc;
     const cogs = cogsM[m]||0;
     const fotZp=B('fotZp'), fotAv=B('fotAv'), fotNaem=B('naem'), fotTax=B('tax');
     const fot  = fotZp+fotAv+fotNaem+fotTax;
@@ -3456,7 +3496,7 @@ async function buildDDS() {
     const cred = B('cred');
     const finOut = own + cred;
     const netFlow = opFlow - finOut;
-    return {rev,returns,netRev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rentC,rent,
+    return {rev,returns,kaspComp,othInc,netRev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rentC,rent,
             cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,cKasp,cMark,com,
             oOs,oUpk,oLog,oKom,oKaspiKom,other,
             opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
@@ -3535,6 +3575,8 @@ async function buildDDS() {
   html += hdr('ПОСТУПЛЕНИЯ ОТ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ');
   html += dRow('Выручка от реализации товаров  [1С, Продажи]', 'rev');
   html += dRow('(-) Возврат покупателю', 'returns', true, true);
+  html += dRow('(+) Компенсации от Kaspi  [возмещение за товар]', 'kaspComp');
+  html += dRow('(+) Доп. доходы  [1С, физ. лицо]', 'othInc');
   html += sumRow('ИТОГО ПОСТУПЛЕНИЯ (нетто)', 'netRev', 'rs-sub2');
 
   html += hdr('ВЫПЛАТЫ ОПЕРАЦИОННОЙ ДЕЯТЕЛЬНОСТИ', 'rs-sub');
@@ -3608,7 +3650,7 @@ async function computeOpiuFacts() {
   // Диагностика точности себестоимости: сколько из проданного в месяце НЕ
   // нашло цену прихода и посчитано по запасному варианту (средняя цена
   // продажи, ≈0% маржи по этому товару) — см. itemCostDetailAsOf.matched.
-  const unmatchedRevM = {}, trackedRevM = {};
+  const unmatchedRevM = {}, trackedRevM = {}, othIncM = {};
   // Товары с себестоимостью = 0 за период (нет совпадения в Приходе по
   // точному названию, см. itemCostDetailAsOf) — накапливаем по товару,
   // для read-only блока диагностики ниже (см. task #148, добавлено 18.08
@@ -3652,6 +3694,11 @@ async function computeOpiuFacts() {
       const dt = String(row.date||'');
       const mo = dt.slice(0,7);
       if (!mo || !row.qty) return;
+      if (OTHER_INCOME_ITEM_RE.test(row.item||'')) {
+        othIncM[mo] = (othIncM[mo]||0) + (+row.revenue||0);
+        revM[mo] = (revM[mo]||0) - (+row.revenue||0);
+        return;
+      }
       const { cost, matched } = itemCostDetailAsOf(row.item, dt, linesByItem, priceMap, row.item);
       cogsM[mo] = (cogsM[mo]||0) + row.qty * cost;
       trackedRevM[mo] = (trackedRevM[mo]||0) + (+row.revenue||0);
@@ -3774,9 +3821,11 @@ async function computeOpiuFacts() {
       catSubM[m][c][sub] = (catSubM[m][c][sub]||0) + toNum(r.amount);
     }
   });
+  const kaspCompM = kaspCompByMonth(true);
   const calc = m => {
     const B = key => bucketSum(catM, m, key, dynamicMap);
     const rev=revM[m]||0, cogs=cogsM[m]||0;
+    const kaspComp=kaspCompM[m]||0, othInc=othIncM[m]||0;
     // Комиссия Kaspi-маркетплейса и доставка Kaspi — по требованию заказчика
     // учитываются как часть себестоимости (входят в валовую прибыль), а не
     // в переменных торговых расходах после неё.
@@ -3786,8 +3835,9 @@ async function computeOpiuFacts() {
     // данным она считалась от "грязной" выручки весь год, менять базу
     // задним числом не стали; netRev — информационная строка.
     const returns=B('returns');
-    const netRev=rev-returns;
-    const gp=rev-cogs-kaspiMk-kaspiDl;
+    const netRev=rev-returns+kaspComp+othInc;
+    // Компенсации Kaspi и «Доп доходы» (приход) входят в валовую прибыль — с 06.10.
+    const gp=rev-cogs-kaspiMk-kaspiDl+kaspComp+othInc;
     const kom=B('kom'), log_=B('log'), upk=B('upk');
     const varE=kom+log_+upk, mp=gp-varE;
     const rentA=B('rentA'), rentB=B('rentB'), rentC=B('rentC'), rent=rentA+rentB+rentC;
@@ -3813,7 +3863,7 @@ async function computeOpiuFacts() {
     const shef=B('shef'), das=B('das'), erk=B('erk'), own=shef+das+erk, net=ebit-own;
     const cred=B('cred');
     const unmatchedRev=unmatchedRevM[m]||0, trackedRev=trackedRevM[m]||0;
-    return {rev,cogs,returns,netRev,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rentC,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
+    return {rev,cogs,returns,kaspComp,othInc,netRev,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rentC,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
             kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,totalExp,shef,das,erk,own,net,cred,
             unmatchedRev,trackedRev};
   };
@@ -4141,7 +4191,9 @@ async function buildOPIU() {
   html += hdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
   html += dRow('Выручка (нетто)  [1С Продажи]', 'rev');
   html += dRow('(-) Возврат покупателю', 'returns', true, true);
-  html += profRow('▶  ЧИСТАЯ ВЫРУЧКА  (за минусом возвратов)', 'netRev', 'rs-op');
+  html += dRow('(+) Компенсации от Kaspi  [возмещение за товар]', 'kaspComp');
+  html += dRow('(+) Доп. доходы  [1С, физ. лицо]', 'othInc');
+  html += profRow('▶  ЧИСТАЯ ВЫРУЧКА  (минус возвраты, плюс компенсации и доп. доходы)', 'netRev', 'rs-op');
   html += dRow('(-) Себестоимость  [1С Приход]', 'cogs', false, true);
   html += dRow('(-) Комиссия маркетплейса Kaspi', 'kaspiMk', false, true);
   html += dRow('(-) Доставка Kaspi', 'kaspiDl', false, true);
@@ -4317,7 +4369,7 @@ async function buildBudgetPage() {
     if (!key || key.startsWith('_')) return;
     (leafByKey[key] = leafByKey[key]||[]).push(it);
   });
-  const LEAF_ORDER = ['rev','cogs','kaspiMk','kaspiDl','kom','log','upk','rentA','rentB','rentC','fotZp','fotAv','fot','naem','tax','os',
+  const LEAF_ORDER = ['rev','returns','kaspComp','othInc','cogs','kaspiMk','kaspiDl','kom','log','upk','rentA','rentB','rentC','fotZp','fotAv','fot','naem','tax','os',
     'cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther','kasp','mark','shef','das','erk','cred'];
   const planLeaf = {}; // key -> { [monthHeader]: план }
   LEAF_ORDER.forEach(key => {
@@ -4330,8 +4382,8 @@ async function buildBudgetPage() {
   });
 
   // Агрегатные (подытоговые) строки — Плановое значение готово в самой ячейке.
-  const AGG_MAP = { _GP:'gp', _MP:'mp', _OP:'op', _EBIT:'ebit', _TOTALEXP:'totalExp', _NET:'net' };
-  const AGG_LABEL = { _GP:'▶ ВАЛОВАЯ ПРИБЫЛЬ', _MP:'▶ МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', _OP:'▶ ОПЕРАЦИОННАЯ ПРИБЫЛЬ',
+  const AGG_MAP = { _NETREV:'netRev', _GP:'gp', _MP:'mp', _OP:'op', _EBIT:'ebit', _TOTALEXP:'totalExp', _NET:'net' };
+  const AGG_LABEL = { _NETREV:'▶ ЧИСТАЯ ВЫРУЧКА (минус возвраты, плюс компенсации и доп. доходы)', _GP:'▶ ВАЛОВАЯ ПРИБЫЛЬ', _MP:'▶ МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', _OP:'▶ ОПЕРАЦИОННАЯ ПРИБЫЛЬ',
     _EBIT:'▶ EBIT (прибыль до вывода)', _TOTALEXP:'Справочно: Общий расход (II+III+IV, без вывода собственника)', _NET:'▶ НЕРАСПРЕДЕЛЁННАЯ ПРИБЫЛЬ' };
   const planAgg = {}; // aggKey -> { [monthHeader]: план }
   let gmPctPlan = null;
@@ -4350,7 +4402,7 @@ async function buildBudgetPage() {
 
   // Строки-расходы (для направления "хорошо/плохо" в отклонении — для них
   // благоприятно, когда Факт МЕНЬШЕ Плана, а не больше).
-  const COST_KEYS = new Set(['cogs','kaspiMk','kaspiDl','kom','log','upk','rentA','rentB','rentC','fot','fotZp','fotAv','naem','tax','os',
+  const COST_KEYS = new Set(['returns','cogs','kaspiMk','kaspiDl','kom','log','upk','rentA','rentB','rentC','fot','fotZp','fotAv','naem','tax','os',
     'cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther','kasp','mark','shef','das','erk','cred','totalExp']);
 
   const fmt2 = v => fmt(v) + ' ₸';
@@ -4422,51 +4474,71 @@ async function buildBudgetPage() {
       </thead>
       <tbody>`;
 
+  // Строки ниже — ОДИН В ОДИН как на странице ОПиУ (порядок, названия, группы).
+  // План: листья — из листа «Бюджет» по КлючБакета; группы (аренда/ФОТ/коммерческие)
+  // и чистая выручка, если нет своей строки в листе, считаются суммой планов листьев.
+  const sumPlans = (...keys) => {
+    const present = keys.map(k => planLeaf[k]).filter(Boolean);
+    if (!present.length) return null;
+    const o = {}; useCols.forEach(h => { o[h] = present.reduce((x,pl) => x + (pl[h]||0), 0); });
+    return o;
+  };
+  const planNetRev = planAgg._NETREV || (planLeaf.rev ? (() => {
+    const o = {}; useCols.forEach(h => { o[h] = (planLeaf.rev[h]||0) - ((planLeaf.returns||{})[h]||0) + ((planLeaf.kaspComp||{})[h]||0) + ((planLeaf.othInc||{})[h]||0); });
+    return o; })() : null);
+  const pctPlan = agg => (agg && planLeaf.rev) ? (() => { const o = {}; useCols.forEach(h => { o[h] = planLeaf.rev[h] ? agg[h]/planLeaf.rev[h]*100 : 0; }); return o; })() : null;
+  const pctRowB = (label, planPct, key) => row(`<i>${label}</i>`, planPct, mk => (pmAll[mk] && pmAll[mk].rev) ? (pmAll[mk][key]/pmAll[mk].rev*100) : null, false, true, true);
+  const F = k => (mk => pmAll[mk] && pmAll[mk][k]);
+  const L = (label, k, isCost=true, indent=true) => row(label, planLeaf[k], F(k), isCost, false, indent);
+
   html += sectionHdr('I.  ВЫРУЧКА И СЕБЕСТОИМОСТЬ');
-  html += row('Выручка (нетто)', planLeaf.rev, mk => pmAll[mk] && pmAll[mk].rev, false, false, false);
-  html += row('(-) Себестоимость', planLeaf.cogs, mk => pmAll[mk] && pmAll[mk].cogs, true, false, true);
-  html += row('(-) Комиссия маркетплейса Kaspi', planLeaf.kaspiMk, mk => pmAll[mk] && pmAll[mk].kaspiMk, true, false, true);
-  html += row('(-) Доставка Kaspi', planLeaf.kaspiDl, mk => pmAll[mk] && pmAll[mk].kaspiDl, true, false, true);
-  if (planAgg._GP) html += profRowB(AGG_LABEL._GP, planAgg._GP, mk => pmAll[mk] && pmAll[mk].gp);
-  if (gmPctPlan) html += row('Валовая маржа % (план)', gmPctPlan, mk => (pmAll[mk] && pmAll[mk].rev) ? (pmAll[mk].gp/pmAll[mk].rev*100) : null, false, true, true);
-  html += `<tr class="rs-data"><td style="padding-left:22px;color:#64748b;font-size:12px" colspan="${1+useCols.length*4+(multi?4:0)}">Возврат покупателю / Чистая выручка — план пока не заведён, смотрите факт на странице ОПиУ.</td></tr>`;
+  html += L('Выручка (нетто)  [1С Продажи]', 'rev', false, false);
+  html += L('(-) Возврат покупателю', 'returns');
+  html += L('(+) Компенсации от Kaspi  [возмещение за товар]', 'kaspComp', false);
+  html += L('(+) Доп. доходы  [1С, физ. лицо]', 'othInc', false);
+  html += profRowB('ЧИСТАЯ ВЫРУЧКА  (минус возвраты, плюс компенсации и доп. доходы)', planNetRev, F('netRev'));
+  html += L('(-) Себестоимость  [1С Приход]', 'cogs');
+  html += L('(-) Комиссия маркетплейса Kaspi', 'kaspiMk');
+  html += L('(-) Доставка Kaspi', 'kaspiDl');
+  html += profRowB('ВАЛОВАЯ ПРИБЫЛЬ', planAgg._GP, F('gp'));
+  html += pctRowB('Валовая маржа %', gmPctPlan || pctPlan(planAgg._GP), 'gp');
 
-  html += sectionHdr('II.  ПЕРЕМЕННЫЕ ТОРГОВЫЕ РАСХОДЫ');
-  html += row('(-) Банковские комиссии и сборы', planLeaf.kom, mk => pmAll[mk] && pmAll[mk].kom, true, false, true);
-  html += row('(-) Логистика (доставка)', planLeaf.log, mk => pmAll[mk] && pmAll[mk].log, true, false, true);
-  html += row('(-) Упаковочные материалы', planLeaf.upk, mk => pmAll[mk] && pmAll[mk].upk, true, false, true);
-  if (planAgg._MP) html += profRowB(AGG_LABEL._MP, planAgg._MP, mk => pmAll[mk] && pmAll[mk].mp);
+  html += sectionHdr('II.  ПЕРЕМЕННЫЕ ТОРГОВЫЕ РАСХОДЫ  →  МАРЖИНАЛЬНАЯ ПРИБЫЛЬ');
+  html += L('(-) Банковские комиссии и сборы', 'kom');
+  html += L('(-) Логистика (доставка)', 'log');
+  html += L('(-) Упаковочные материалы', 'upk');
+  html += profRowB('МАРЖИНАЛЬНАЯ ПРИБЫЛЬ', planAgg._MP, F('mp'));
+  html += pctRowB('Маржинальность %', pctPlan(planAgg._MP), 'mp');
 
-  html += sectionHdr('III.  ПОСТОЯННЫЕ РАСХОДЫ');
-  html += row('(-) Аренда', planLeaf.rentA, mk => pmAll[mk] && pmAll[mk].rentA, true, false, true);
-  html += row('(-) Коммунальные платежи', planLeaf.rentB, mk => pmAll[mk] && pmAll[mk].rentB, true, false, true);
-  html += row('(-) Аренда/содержание магазина', planLeaf.rentC, mk => pmAll[mk] && pmAll[mk].rentC, true, false, true);
-  html += row('Зарплата', planLeaf.fotZp, mk => pmAll[mk] && pmAll[mk].fotZp, true, false, true);
-  html += row('Авансы', planLeaf.fotAv, mk => pmAll[mk] && pmAll[mk].fotAv, true, false, true);
-  html += row('(-) ФОТ (зарплата + авансы)', planLeaf.fot, mk => pmAll[mk] && pmAll[mk].fot, true, false, true);
-  html += row('(-) Наёмники', planLeaf.naem, mk => pmAll[mk] && pmAll[mk].naem, true, false, true);
-  html += row('(-) Налоги и социальные взносы', planLeaf.tax, mk => pmAll[mk] && pmAll[mk].tax, true, false, true);
-  html += row('(-) ОС / Лизинг', planLeaf.os, mk => pmAll[mk] && pmAll[mk].os, true, false, true);
-  if (planAgg._OP) html += profRowB(AGG_LABEL._OP, planAgg._OP, mk => pmAll[mk] && pmAll[mk].op);
+  html += sectionHdr('III.  ПОСТОЯННЫЕ РАСХОДЫ  →  ОПЕРАЦИОННАЯ ПРИБЫЛЬ');
+  html += row('(-) Аренда и коммунальные платежи', sumPlans('rentA','rentB','rentC'), F('rent'), true, false, true);
+  html += row('Аренда', planLeaf.rentA, F('rentA'), true, false, true);
+  html += row('Коммунальные платежи', planLeaf.rentB, F('rentB'), true, false, true);
+  html += row('Аренда/содержание магазина', planLeaf.rentC, F('rentC'), true, false, true);
+  html += row('(-) ФОТ (зарплата + авансы)', planLeaf.fot || sumPlans('fotZp','fotAv'), F('fot'), true, false, true);
+  html += row('Зарплата', planLeaf.fotZp, F('fotZp'), true, false, true);
+  html += row('Авансы', planLeaf.fotAv, F('fotAv'), true, false, true);
+  html += L('(-) Наёмники', 'naem');
+  html += L('(-) Налоги и социальные взносы', 'tax');
+  html += L('(-) ОС / Лизинг', 'os');
+  html += profRowB('ОПЕРАЦИОННАЯ ПРИБЫЛЬ', planAgg._OP, F('op'));
+  html += pctRowB('Операционная маржа %', pctPlan(planAgg._OP), 'op');
 
-  html += sectionHdr('IV.  КОММЕРЧЕСКИЕ РАСХОДЫ');
-  // ДОБАВЛЕНО 29.09 — раньше строка бакета рисовалась только "if (planLeaf[k])",
-  // т.е. молча пропадала, если бухгалтер не завела для него строку в листе
-  // «Бюджет» (нашлось на «Прочее»/cOther — 1 743 000 ₸ в сентябре были не
-  // видны на этой странице вообще, хотя корректно входили в ЕБИТ/Общий
-  // расход). Теперь рисуем ВСЕГДА — если строки в таблице нет, план просто
-  // покажется "не задан", а факт всё равно возьмётся из ОПиУ.
+  html += sectionHdr('IV.  КОММЕРЧЕСКИЕ РАСХОДЫ  →  EBIT (прибыль до вывода собственников)');
+  html += row('(-) Шашу / Командировочные / Авторасходы / Проч.', sumPlans('cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther'), F('com'), true, false, true);
   const IV = [['cShashu','Шашу — бонусы ретейлерам'],['cKom','Командировочные расходы'],['cAvto','Авторасходы'],['cObed','Обед / питание'],
-    ['cUsl','Услуги'],['cKomp','Компенсация'],['cKanc','Канц. товары'],['cUborka','Уборка'],['cOther','Прочее'],['kasp','Бонусы клиентам'],['mark','Маркетинг и реклама']];
-  IV.forEach(([k,label]) => { html += row('(-) '+label, planLeaf[k], mk => pmAll[mk] && pmAll[mk][k], true, false, true); });
-  if (planAgg._EBIT) html += profRowB(AGG_LABEL._EBIT, planAgg._EBIT, mk => pmAll[mk] && pmAll[mk].ebit);
-  if (planAgg._TOTALEXP) html += row(AGG_LABEL._TOTALEXP, planAgg._TOTALEXP, mk => pmAll[mk] && pmAll[mk].totalExp, true, false, true);
+    ['cUsl','Услуги'],['cKomp','Компенсация'],['cKanc','Канц. товары'],['cUborka','Уборка'],['cOther','Прочее']];
+  IV.forEach(([k,label]) => { html += L(label, k); });
+  html += L('(-) Бонусы клиентам', 'kasp');
+  html += L('(-) Маркетинг и реклама', 'mark');
+  html += profRowB('EBIT  (прибыль до вывода)', planAgg._EBIT, F('ebit'));
+  html += row('Справочно: Общий расход  (II+III+IV, без вывода собственника)', planAgg._TOTALEXP, F('totalExp'), true, false, true);
 
   html += sectionHdr('V.  ВЫВОД СОБСТВЕННИКА');
-  html += row('(-) Шеф — Темирлан ага', planLeaf.shef, mk => pmAll[mk] && pmAll[mk].shef, true, false, true);
-  html += row('(-) Дастан ага', planLeaf.das, mk => pmAll[mk] && pmAll[mk].das, true, false, true);
-  html += row('(-) Ерик', planLeaf.erk, mk => pmAll[mk] && pmAll[mk].erk, true, false, true);
-  if (planAgg._NET) html += profRowB(AGG_LABEL._NET, planAgg._NET, mk => pmAll[mk] && pmAll[mk].net);
+  html += L('(-) Шеф — Темирлан ага', 'shef');
+  html += L('(-) Дастан ага', 'das');
+  html += L('(-) Ерик', 'erk');
+  html += profRowB('НЕРАСПРЕДЕЛЁННАЯ ПРИБЫЛЬ', planAgg._NET, F('net'));
 
   html += '</tbody></table></div>';
 
