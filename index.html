@@ -255,6 +255,7 @@
       <div class="nav-item" onclick="showPage('dashboard',this)"><span class="icon">&#128202;</span> Дашборд</div>
       <div class="nav-item active" onclick="showPage('daily-report',this)"><span class="icon">&#128197;</span> Отчёт дня</div>
       <div class="nav-item" onclick="showPage('budget',this)"><span class="icon">&#128181;</span> Бюджет</div>
+      <div class="nav-item" onclick="showPage('saldo',this)"><span class="icon">&#128176;</span> Сальдо</div>
       <div class="nav-item" onclick="showPage('debts',this)"><span class="icon">&#129309;</span> Дебиторка</div>
       <div class="nav-item" onclick="showPage('journal',this)"><span class="icon">&#128203;</span> Журнал</div>
       <div class="nav-item" onclick="showPage('dds-daily',this)"><span class="icon">&#128197;</span> ДДС Ежедневный</div>
@@ -419,6 +420,20 @@
         </div>
       </div>
       <div id="budget-result"></div>
+    </div>
+    <div class="page" id="page-saldo">
+      <div class="page-title">Сальдо вывода средств</div>
+      <div class="form-card" style="max-width:560px;margin-bottom:20px;">
+        <div class="form-row">
+          <div class="field">
+            <label>Период</label>
+            <select id="saldo-period"><option value="all">Весь период</option></select>
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button class="btn btn-save" onclick="buildSaldoBlock()" style="width:100%;">&#128181; Сформировать</button>
+          </div>
+        </div>
+      </div>
       <div id="saldo-block"></div>
     </div>
     <div class="page" id="page-debts">
@@ -1448,6 +1463,7 @@ function showPage(name, el) {
   if (name === 'dashboard') buildDashboard();
   if (name === 'daily-report') buildDailyReport();
   if (name === 'budget') buildBudgetPage();
+  if (name === 'saldo') buildSaldoBlock();
   if (name === 'debts') buildDebtsPage();
   if (name === 'opiu') {
     document.getElementById('admin-opiu-init').style.display = currentRole === 'admin' ? 'block' : 'none';
@@ -4691,6 +4707,22 @@ function saldoCompute(facts, starts) {
   return rows;
 }
 
+// Заполняет список периодов страницы «Сальдо» (с мая 2026, когда стартует расчёт).
+function saldoFillPeriods(facts) {
+  const sel = document.getElementById('saldo-period'); if (!sel) return;
+  const months = facts.MONTHS.filter(m => m >= '2026-05').slice().sort();
+  if (!months.length) return;
+  const sig = months.join(',');
+  if (sel.dataset.sig === sig) return;
+  const prev = sel.value;
+  const years = [...new Set(months.map(m => m.slice(0,4)))];
+  sel.innerHTML = '<option value="all">Весь период (' + monthLabel(months[0]) + ' — ' + monthLabel(months[months.length-1]) + ')</option>' +
+    years.map(y => '<option value="year:'+y+'">Весь '+y+' год</option>').join('') +
+    months.map(m => '<option value="'+m+'">'+monthLabel(m)+'</option>').join('');
+  sel.dataset.sig = sig;
+  sel.value = (prev && (prev==='all' || /^year:/.test(prev) || months.includes(prev))) ? prev : 'all';
+}
+
 function saldoPeriodMonths(rows, period) {
   if (period === 'all') return rows;
   if (/^year:/.test(period)) return rows.filter(r => r.m.startsWith(period.slice(5)));
@@ -4726,18 +4758,19 @@ function saldoBar(label, val, max, col, note) {
 async function buildSaldoBlock() {
   const host = document.getElementById('saldo-block');
   if (!host) return;
-  const periodEl = document.getElementById('budget-period');
-  const period = periodEl ? periodEl.value : 'all';
   host.innerHTML = '<div class="loading"><div class="spinner"></div>Сальдо вывода средств…</div>';
   let facts, starts, chan;
   try {
     facts = await computeOpiuFacts();
+    saldoFillPeriods(facts);
     starts = await loadSaldoStart();
     chan = await computeChannelGP(facts);
   } catch(e) {
     host.innerHTML = '<div class="card" style="background:#fef2f2;border:1px solid #fca5a5">✗ Сальдо вывода средств: не удалось загрузить данные: '+e.message+'</div>';
     return;
   }
+  const periodEl = document.getElementById('saldo-period');
+  const period = periodEl ? periodEl.value : 'all';
   const all = saldoCompute(facts, starts);
   const rows = saldoPeriodMonths(all, period);
   const upBtn = '<label class="btn saldo-noprint" style="cursor:pointer;background:#0ea5e9;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px">&#128194; Загрузить продажи 1С (по каналам)<input type="file" id="saldo-upload" accept=".xlsx,.xls" multiple style="display:none" onchange="saldoUploadFiles(this.files)"></label>';
@@ -4898,14 +4931,6 @@ async function saldoUploadFiles(fileList) {
   const inp = document.getElementById('saldo-upload'); if (inp) inp.value = '';
 }
 
-// Обёртка: после обычного построения «Бюджета» дорисовываем блок сальдо.
-(function(){
-  const orig = buildBudgetPage;
-  buildBudgetPage = async function() {
-    await orig.apply(this, arguments);
-    try { await buildSaldoBlock(); } catch(e) { console.error('saldo', e); }
-  };
-})();
 
 // ── ДЕБИТОРКА (долги нам / наши долги) ─────────────────────────────────
 // Добавлено 20.09. База — лист «Долги» (см. loadDebtsData/getDebts), у
