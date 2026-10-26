@@ -419,6 +419,7 @@
         </div>
       </div>
       <div id="budget-result"></div>
+      <div id="saldo-block"></div>
     </div>
     <div class="page" id="page-debts">
       <div class="page-title">Дебиторка — долги нам / наши долги</div>
@@ -546,7 +547,7 @@
 <div class="toast" id="toast"></div>
 <div id="pdf-print-area"></div>
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzLEaF0WMB3Q_wbRfValrlq8jpUQE191bO9cupNFXz4RdSNMkhDwgsyvdIbk--DScha/exec'; // 20.09: новый деплой — добавлены getBudget/getBudget-парсинг заголовка, схемогибкие addDebt/getDebts/updateDebtAmount/updateDebtStatus
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbweS3RQGxkmfJhzdiVMSFsnM8xF1i2tutF4kGd6gCA9ufwAReueePlPJRKfjCUZeMtd/exec'; // 26.10: новый деплой (сальдо вывода средств); раньше 20.09: новый деплой — добавлены getBudget/getBudget-парсинг заголовка, схемогибкие addDebt/getDebts/updateDebtAmount/updateDebtStatus
 const FALLBACK_USERS = { admin: 'electromax2026', manager: 'manager2026', 'Гульмира': 'electromax2026' };
 let currentUser = null;
 let currentRole = null;
@@ -4588,6 +4589,323 @@ async function buildBudgetPage() {
 
   resultEl.innerHTML = html;
 }
+
+// ── САЛЬДО ВЫВОДА СРЕДСТВ (блок под страницей «Бюджет») ───────────────
+// ДОБАВЛЕНО 27.10. Ничего из существующего кода не меняется: блок рисуется в
+// отдельный <div id="saldo-block"> ниже #budget-result, а buildBudgetPage()
+// ниже просто «обёрнута» — после своей обычной работы вызывает buildSaldoBlock().
+// Данные: ОПиУ-факт (computeOpiuFacts) + лист «СальдоСтарт» + лист «ПродажиКаналы».
+const SALDO_DEFAULT_START = [
+  { month:'2026-05', partner:'Дастан',   amount:-15349444.1 },
+  { month:'2026-05', partner:'Темирлан', amount: 7738212.9 }
+];
+const SALDO_KASPI_CH = ['Techno-Vision','Sana Store','BuyNow'];
+const SALDO_CH_ORDER = ['Techno-Vision','Sana Store','BuyNow','Halyk / Forte / Ozon','B2B / опт','Acona','Прочие клиенты'];
+let _saldoStartCache = null, _channelSalesCache = null, _saldoLast = null;
+
+async function loadSaldoStart() {
+  if (_saldoStartCache) return _saldoStartCache;
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getSaldoStart');
+    const d = await r.json();
+    if (d && Array.isArray(d.items) && d.items.length) { _saldoStartCache = d.items; return d.items; }
+  } catch(e) {}
+  return SALDO_DEFAULT_START; // запасной вариант, пока бэкенд не обновлён
+}
+async function loadChannelSales() {
+  if (_channelSalesCache) return _channelSalesCache;
+  try {
+    const r = await fetch(SCRIPT_URL + '?action=getChannelSales');
+    const d = await r.json();
+    if (d && Array.isArray(d.items)) { _channelSalesCache = d.items; return d.items; }
+  } catch(e) {}
+  return [];
+}
+function saldoChannelOf(client) {
+  const u = String(client||'').toUpperCase();
+  if (/TECHNO|ТЕХНО/.test(u)) return 'Techno-Vision';
+  if (/SANGO|SANA|САНА/.test(u)) return 'Sana Store';
+  if (/BUY\s*NOW|БАЙНОУ/.test(u)) return 'BuyNow';
+  if (/HALYK|FORTE|OZON|ХАЛЫК|ФОРТЕ|ОЗОН/.test(u)) return 'Halyk / Forte / Ozon';
+  if (/ACONA|АКОНА/.test(u)) return 'Acona';
+  if (/ФИЗ|ЮР\.?\s*ЛИЦ/.test(u)) return 'B2B / опт';
+  return 'Прочие клиенты';
+}
+
+// Валовая прибыль по каналам: выручка − себестоимость на дату продажи
+// (та же itemCostDetailAsOf, что и в ОПиУ). Комиссия Kaspi в 1С по каналам не
+// разбита → месячная сумма (kaspiMk+kaspiDl) распределяется между Kaspi-каналами
+// пропорционально их выручке. Остаток до валовой прибыли ОПиУ (компенсации
+// Kaspi, доп. доходы, расхождения) идёт строкой «Прочие доходы и корректировки».
+async function computeChannelGP(facts) {
+  const sales = await loadChannelSales();
+  const out = { months:{}, hasData:false };
+  if (!sales.length) return out;
+  const { purchaseLines, itemPrices } = await getReportData();
+  const priceMap = {}; itemPrices.forEach(p => { priceMap[p.product] = p.avgPrice || 0; });
+  const linesByItem = groupPurchaseLinesByItem(purchaseLines);
+  sales.forEach(s => {
+    const dt = String(s.date||''), mo = dt.slice(0,7);
+    if (!mo || !s.qty) return;
+    if (OTHER_INCOME_ITEM_RE.test(s.item||'')) return;
+    const ch = saldoChannelOf(s.client);
+    const { cost } = itemCostDetailAsOf(s.item, dt, linesByItem, priceMap, s.item);
+    const M = out.months[mo] || (out.months[mo] = { ch:{} });
+    const c = M.ch[ch] || (M.ch[ch] = { rev:0, cogs:0, kom:0, gp:0 });
+    c.rev += +s.revenue||0; c.cogs += s.qty * cost;
+  });
+  Object.keys(out.months).forEach(mo => {
+    const M = out.months[mo], p = facts.pm[mo];
+    const kas = SALDO_KASPI_CH.filter(k => M.ch[k]);
+    const kasRev = kas.reduce((a,k) => a + M.ch[k].rev, 0);
+    const kom = p ? (p.kaspiMk||0) + (p.kaspiDl||0) : 0;
+    kas.forEach(k => { M.ch[k].kom = kasRev ? kom * M.ch[k].rev / kasRev : 0; });
+    let sum = 0;
+    Object.values(M.ch).forEach(c => { c.gp = c.rev - c.cogs - c.kom; sum += c.gp; });
+    M.sum = sum;
+    M.other = p ? (p.gp||0) - sum : 0;
+  });
+  out.hasData = Object.keys(out.months).length > 0;
+  return out;
+}
+
+function saldoCompute(facts, starts) {
+  const months = facts.MONTHS.filter(m => m >= '2026-05').slice().sort();
+  const partners = ['Дастан','Темирлан'];
+  const startOf = (m, p) => { const e = starts.find(x => x.month === m && x.partner === p); return e ? e.amount : null; };
+  const rows = [], bal = { 'Дастан':null, 'Темирлан':null };
+  months.forEach(m => {
+    const p = facts.pm[m];
+    const share = ((p.gp||0) - (p.totalExp||0) - (p.erk||0)) / 2;
+    const r = { m, gp:p.gp||0, exp:(p.totalExp||0), erk:p.erk||0, share, d:{} };
+    partners.forEach(pt => {
+      const st = startOf(m, pt);
+      const open = st !== null ? st : (bal[pt] !== null ? bal[pt] : 0);
+      const draw = pt === 'Дастан' ? (p.das||0) : (p.shef||0);
+      const close = open + share - draw;
+      r.d[pt] = { open, share, draw, close };
+      bal[pt] = close;
+    });
+    rows.push(r);
+  });
+  return rows;
+}
+
+function saldoPeriodMonths(rows, period) {
+  if (period === 'all') return rows;
+  if (/^year:/.test(period)) return rows.filter(r => r.m.startsWith(period.slice(5)));
+  return rows.filter(r => r.m === period);
+}
+
+function saldoMln(n) { return (n/1e6).toFixed(1).replace('.', ',') + ' млн'; }
+function saldoSigned(n) { return (n>0?'+':'') + saldoMln(n); }
+
+function saldoLineChart(rows) {
+  if (rows.length < 2) return '';
+  const W=640, H=190, pl=44, pr=16, pt=14, pb=28;
+  const vals = rows.flatMap(r => [r.d['Дастан'].close, r.d['Темирлан'].close, 0]);
+  let mn = Math.min(...vals), mx = Math.max(...vals); if (mx === mn) mx = mn + 1;
+  const x = i => pl + (W-pl-pr) * i / (rows.length-1);
+  const y = v => pt + (H-pt-pb) * (1 - (v-mn)/(mx-mn));
+  const line = (pr_, col) => '<polyline fill="none" stroke="'+col+'" stroke-width="2.5" stroke-linejoin="round" points="'+rows.map((r,i)=>x(i).toFixed(1)+','+y(r.d[pr_].close).toFixed(1)).join(' ')+'"/>' +
+    rows.map((r,i)=>'<circle cx="'+x(i).toFixed(1)+'" cy="'+y(r.d[pr_].close).toFixed(1)+'" r="3.5" fill="'+col+'"/>').join('');
+  const ticks = [mn, 0, mx].filter((v,i,a)=>a.indexOf(v)===i).map(v => '<text x="'+(pl-6)+'" y="'+(y(v)+4).toFixed(1)+'" text-anchor="end" font-size="10" fill="#64748b">'+Math.round(v/1e6)+'</text>').join('');
+  const xl = rows.map((r,i)=>'<text x="'+x(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-size="10" fill="#64748b">'+monthLabel(r.m,true)+'</text>').join('');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:700px;height:auto">' +
+    '<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+y(0).toFixed(1)+'" y2="'+y(0).toFixed(1)+'" stroke="#cbd5e1" stroke-dasharray="4 3"/>' +
+    ticks + xl + line('Дастан','#2563eb') + line('Темирлан','#16a34a') + '</svg>' +
+    '<div style="font-size:12px;color:#475569;margin-top:2px"><span style="color:#2563eb">●</span> Дастан &nbsp; <span style="color:#16a34a">●</span> Темирлан &nbsp; <span style="color:#94a3b8">(млн ₸, пунктир — ноль)</span></div>';
+}
+
+function saldoBar(label, val, max, col, note) {
+  const w = max > 0 ? Math.max(0, Math.min(100, Math.abs(val)/max*100)) : 0;
+  return '<div style="margin:7px 0"><div style="display:flex;justify-content:space-between;font-size:13px"><span>'+label+(note?' <span style="color:#94a3b8;font-size:11.5px">'+note+'</span>':'')+'</span><b style="color:'+(val<0?'#dc2626':'#0f172a')+'">'+fmt(Math.round(val))+' ₸</b></div>' +
+    '<div style="height:9px;background:#e2e8f0;border-radius:6px;overflow:hidden"><div style="height:100%;width:'+w.toFixed(1)+'%;background:'+col+';border-radius:6px"></div></div></div>';
+}
+
+async function buildSaldoBlock() {
+  const host = document.getElementById('saldo-block');
+  if (!host) return;
+  const periodEl = document.getElementById('budget-period');
+  const period = periodEl ? periodEl.value : 'all';
+  host.innerHTML = '<div class="loading"><div class="spinner"></div>Сальдо вывода средств…</div>';
+  let facts, starts, chan;
+  try {
+    facts = await computeOpiuFacts();
+    starts = await loadSaldoStart();
+    chan = await computeChannelGP(facts);
+  } catch(e) {
+    host.innerHTML = '<div class="card" style="background:#fef2f2;border:1px solid #fca5a5">✗ Сальдо вывода средств: не удалось загрузить данные: '+e.message+'</div>';
+    return;
+  }
+  const all = saldoCompute(facts, starts);
+  const rows = saldoPeriodMonths(all, period);
+  const upBtn = '<label class="btn saldo-noprint" style="cursor:pointer;background:#0ea5e9;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px">&#128194; Загрузить продажи 1С (по каналам)<input type="file" id="saldo-upload" accept=".xlsx,.xls" multiple style="display:none" onchange="saldoUploadFiles(this.files)"></label>';
+  const head = '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:34px 0 14px">' +
+    '<div class="page-title" style="margin:0">&#128176; Сальдо вывода средств</div>' +
+    '<div class="saldo-noprint" style="display:flex;gap:8px;flex-wrap:wrap">' + upBtn +
+    '<button class="btn" onclick="exportSaldoPdf()" style="background:#dc2626;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px">PDF</button>' +
+    '<button class="btn" onclick="exportSaldoExcel()" style="background:#16a34a;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px">Excel</button></div></div>';
+  if (!rows.length) {
+    host.innerHTML = '<style>@media print{.saldo-noprint{display:none!important}}</style>' + head + '<div class="card" style="background:#fef3c7;border:1px solid #f59e0b">Нет данных за выбранный период. Сальдо считается с мая 2026 (старт — лист «СальдоСтарт»).</div>';
+    _saldoLast = null; return;
+  }
+  const sum = f => rows.reduce((a,r)=>a+f(r),0);
+  const gp = sum(r=>r.gp), exp = sum(r=>r.exp), erk = sum(r=>r.erk), dist = gp-exp-erk;
+  const first = rows[0], last = rows[rows.length-1];
+  const pLbl = rows.length>1 ? monthLabel(first.m,true)+' — '+monthLabel(last.m,true)+' '+last.m.slice(0,4) : monthLabel(first.m);
+  const partners = [['Дастан','#2563eb','#eff6ff'],['Темирлан','#16a34a','#f0fdf4']];
+  const cards = partners.map(([pt,col,bg]) => {
+    const open = first.d[pt].open, close = last.d[pt].close;
+    const share = rows.reduce((a,r)=>a+r.d[pt].share,0), draw = rows.reduce((a,r)=>a+r.d[pt].draw,0);
+    const pct = share > 0 ? Math.min(100, Math.max(0, draw/share*100)) : (draw>0?100:0);
+    const neg = close < 0;
+    return '<div style="flex:1;min-width:260px;background:'+bg+';border:1px solid '+col+'33;border-radius:14px;padding:16px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:16px;color:'+col+'">'+pt+'</b>' +
+      '<span style="font-size:11.5px;padding:2px 9px;border-radius:20px;background:'+(neg?'#fee2e2':'#dcfce7')+';color:'+(neg?'#b91c1c':'#15803d')+'">'+(neg?'выведено сверх доли':'ещё можно вывести')+'</span></div>' +
+      '<div style="font-size:30px;font-weight:700;margin:8px 0 2px;color:'+(neg?'#dc2626':'#15803d')+'">'+saldoSigned(close)+' ₸</div>' +
+      '<div style="font-size:12px;color:#64748b;margin-bottom:10px">сальдо на конец периода</div>' +
+      '<div style="height:9px;background:#fff;border-radius:6px;overflow:hidden;border:1px solid #e2e8f0"><div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>' +
+      '<div style="font-size:11.5px;color:#64748b;margin:3px 0 10px">выведено '+pct.toFixed(0)+'% от доли за период</div>' +
+      '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
+      '<tr><td>Сальдо на начало</td><td style="text-align:right">'+fmt(Math.round(open))+'</td></tr>' +
+      '<tr><td>+ Доля прибыли (50%)</td><td style="text-align:right">'+fmt(Math.round(share))+'</td></tr>' +
+      '<tr><td>− Выведено по факту</td><td style="text-align:right">'+fmt(Math.round(draw))+'</td></tr>' +
+      '<tr style="border-top:1px solid #cbd5e1;font-weight:700"><td>Сальдо на конец</td><td style="text-align:right">'+fmt(Math.round(close))+'</td></tr></table></div>';
+  }).join('');
+  const flowMax = Math.max(gp, exp+erk, 1);
+  const flow = '<div style="flex:1;min-width:280px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px"><b>Куда уходит прибыль</b>' +
+    saldoBar('Валовая прибыль', gp, flowMax, '#2563eb') +
+    saldoBar('Расходы (вкл. ФОТ)', exp, flowMax, '#f97316') +
+    saldoBar('Ерик', erk, flowMax, '#a855f7') +
+    saldoBar('К распределению', dist, flowMax, '#16a34a', '(÷2 = '+fmt(Math.round(dist/2))+' каждому)') + '</div>';
+  // Каналы
+  let chHtml = '', chRows = [];
+  const chMonths = rows.map(r=>r.m).filter(m => chan.months[m]);
+  if (chan.hasData && chMonths.length) {
+    const tot = {}; let other = 0, gpCh = 0;
+    chMonths.forEach(m => {
+      Object.entries(chan.months[m].ch).forEach(([k,c]) => { tot[k] = (tot[k]||0) + c.gp; });
+      other += chan.months[m].other; gpCh += facts.pm[m].gp||0;
+    });
+    const names = SALDO_CH_ORDER.filter(k => tot[k] !== undefined);
+    const max = Math.max(...names.map(k=>Math.abs(tot[k])), Math.abs(other), 1);
+    names.forEach(k => chRows.push([k, tot[k]]));
+    chRows.push(['Прочие доходы и корректировки', other]);
+    chHtml = '<div style="flex:1;min-width:280px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px"><b>Валовая прибыль по каналам</b>' +
+      names.map(k => saldoBar(k, tot[k], max, SALDO_KASPI_CH.indexOf(k)>=0?'#0ea5e9':'#64748b')).join('') +
+      saldoBar('Прочие доходы и корректировки', other, max, '#94a3b8', '(компенсации Kaspi, доп. доходы)') +
+      '<div style="font-size:11.5px;color:#64748b;margin-top:6px">Итого = ВП по ОПиУ: '+fmt(Math.round(gpCh))+' ₸ · месяцев с разбивкой: '+chMonths.length+' из '+rows.length+'</div></div>';
+  } else {
+    chHtml = '<div style="flex:1;min-width:280px;background:#f8fafc;border:1px dashed #94a3b8;border-radius:14px;padding:16px;font-size:13px;color:#475569"><b>Валовая прибыль по каналам</b><br><br>Разбивки пока нет. Нажмите «Загрузить продажи 1С (по каналам)» и выберите файлы «Продажа…» за нужные недели — прибыль разделится по клиентам (Techno-Vision, Sana Store, BuyNow, Halyk/Forte/Ozon, B2B, Acona).</div>';
+  }
+  // Таблица по месяцам
+  const tr = rows.map(r => '<tr><td>'+monthLabel(r.m)+'</td><td>'+fmt(Math.round(r.gp))+'</td><td>'+fmt(Math.round(r.exp+r.erk))+'</td><td>'+fmt(Math.round(r.share))+'</td>' +
+    '<td>'+fmt(Math.round(r.d['Дастан'].draw))+'</td><td style="font-weight:600;color:'+(r.d['Дастан'].close<0?'#dc2626':'#15803d')+'">'+fmt(Math.round(r.d['Дастан'].close))+'</td>' +
+    '<td>'+fmt(Math.round(r.d['Темирлан'].draw))+'</td><td style="font-weight:600;color:'+(r.d['Темирлан'].close<0?'#dc2626':'#15803d')+'">'+fmt(Math.round(r.d['Темирлан'].close))+'</td></tr>').join('');
+  const tbl = '<div style="overflow-x:auto;margin-top:16px"><table class="data-table" style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr style="background:#1e3a5f;color:#fff"><th style="text-align:left;padding:6px">Месяц</th><th>Валовая прибыль</th><th>Расходы + Ерик</th><th>Доля каждого</th><th>Дастан выведено</th><th>Дастан сальдо</th><th>Темирлан выведено</th><th>Темирлан сальдо</th></tr></thead><tbody>'+tr+
+    '<tr style="font-weight:700;border-top:2px solid #1e3a5f"><td>Итого</td><td>'+fmt(Math.round(gp))+'</td><td>'+fmt(Math.round(exp+erk))+'</td><td>'+fmt(Math.round(dist/2))+'</td><td>'+fmt(Math.round(sum(r=>r.d['Дастан'].draw)))+'</td><td>'+fmt(Math.round(last.d['Дастан'].close))+'</td><td>'+fmt(Math.round(sum(r=>r.d['Темирлан'].draw)))+'</td><td>'+fmt(Math.round(last.d['Темирлан'].close))+'</td></tr></tbody></table></div>';
+  host.innerHTML = '<style>@media print{.saldo-noprint{display:none!important}} #saldo-block table.data-table td{padding:5px 6px;text-align:right;border-bottom:1px solid #e2e8f0} #saldo-block table.data-table td:first-child{text-align:left} #saldo-block table.data-table th{padding:6px;text-align:right;font-weight:600} #saldo-block table.data-table th:first-child{text-align:left}</style>' +
+    head + '<div style="font-size:13px;color:#64748b;margin:-6px 0 12px">Период: '+pLbl+' · сальдо считается с мая 2026 (старт — лист «СальдоСтарт»), доля каждого партнёра = (валовая прибыль − расходы − Ерик) ÷ 2, выведено — по факту</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:14px">'+cards+'</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:14px">'+flow+chHtml+'</div>' +
+    (rows.length>1 ? '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-top:14px"><b>Динамика сальдо</b><div style="margin-top:6px">'+saldoLineChart(rows)+'</div></div>' : '') + tbl;
+  _saldoLast = { rows, pLbl, gp, exp, erk, dist, chRows };
+}
+
+function exportSaldoPdf() { exportPdf('#saldo-block', 'Сальдо вывода средств'); }
+
+function exportSaldoExcel() {
+  if (typeof XLSX === 'undefined') { showToast('Библиотека Excel не загружена', 'error'); return; }
+  if (!_saldoLast) { showToast('Сначала сформируйте отчёт', 'error'); return; }
+  const L = _saldoLast, rows = L.rows, f = rows[0], l = rows[rows.length-1];
+  const wb = XLSX.utils.book_new();
+  const sm = [['Сальдо вывода средств', L.pLbl], [],
+    ['Показатель','Сумма, ₸'],
+    ['Валовая прибыль', Math.round(L.gp)], ['Расходы (вкл. ФОТ)', Math.round(L.exp)], ['Ерик', Math.round(L.erk)], ['К распределению', Math.round(L.dist)], ['Доля каждого (50%)', Math.round(L.dist/2)], [],
+    ['Партнёр','Сальдо на начало','Доля прибыли','Выведено','Сальдо на конец']];
+  ['Дастан','Темирлан'].forEach(p => sm.push([p, Math.round(f.d[p].open), Math.round(rows.reduce((a,r)=>a+r.d[p].share,0)), Math.round(rows.reduce((a,r)=>a+r.d[p].draw,0)), Math.round(l.d[p].close)]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sm), 'Сводка');
+  const mm = [['Месяц','Валовая прибыль','Расходы','Ерик','Доля каждого','Дастан: начало','Дастан: выведено','Дастан: конец','Темирлан: начало','Темирлан: выведено','Темирлан: конец']];
+  rows.forEach(r => mm.push([monthLabel(r.m), Math.round(r.gp), Math.round(r.exp), Math.round(r.erk), Math.round(r.share),
+    Math.round(r.d['Дастан'].open), Math.round(r.d['Дастан'].draw), Math.round(r.d['Дастан'].close),
+    Math.round(r.d['Темирлан'].open), Math.round(r.d['Темирлан'].draw), Math.round(r.d['Темирлан'].close)]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mm), 'По месяцам');
+  if (L.chRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Канал','Валовая прибыль, ₸']].concat(L.chRows.map(c=>[c[0], Math.round(c[1])]))), 'Каналы');
+  XLSX.writeFile(wb, 'Сальдо_вывода_средств.xlsx');
+}
+
+// Отдельная загрузка продаж 1С для разбивки по каналам (не трогает основную загрузку).
+function saldoReadSalesFile(file) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array', raw:true});
+        const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, defval:null, raw:true});
+        let hi = -1;
+        for (let i = 0; i < Math.min(raw.length, 25); i++) if (String(raw[i]?.[0]||'').toLowerCase().includes('реализ')) { hi = i; break; }
+        if (hi < 0) { resolve({ name:file.name, error:'не файл продаж 1С' }); return; }
+        const byDate = {};
+        for (let i = hi+1; i < raw.length; i++) {
+          const r = raw[i] || []; if (!r[0]) continue;
+          const m = String(r[0]).match(/(\d{2})\.(\d{2})\.(\d{4})/); if (!m) continue;
+          const date = m[3]+'-'+m[2]+'-'+m[1];
+          const qty = parseFloat(r[11])||0, amount = qty*(parseFloat(r[12])||0);
+          const item = String(r[5]||'').trim(); if (!item || qty <= 0 || amount < 100) continue;
+          const client = String(r[4]||'').trim();
+          const d = byDate[date] || (byDate[date] = { n:0, agg:{} });
+          d.n++;
+          const k = item+'|'+client, a = d.agg[k] || (d.agg[k] = { date, item, client, qty:0, revenue:0 });
+          a.qty += qty; a.revenue += amount;
+        }
+        resolve({ name:file.name, byDate });
+      } catch(err) { reject(err); }
+    };
+    rd.onerror = reject;
+    rd.readAsArrayBuffer(file);
+  });
+}
+
+async function saldoUploadFiles(fileList) {
+  const files = Array.from(fileList||[]); if (!files.length) return;
+  if (typeof XLSX === 'undefined') { showToast('Библиотека Excel не загружена', 'error'); return; }
+  showToast('Читаю файлы 1С…', 'info');
+  try {
+    const res = [];
+    for (const f of files) res.push(await saldoReadSalesFile(f));
+    const bad = res.filter(r => r.error);
+    // Пересекающиеся недели: для каждой даты берём файл с наибольшим числом строк (при равенстве — более поздний).
+    const owner = {};
+    res.forEach((r, idx) => { if (r.error) return; Object.entries(r.byDate).forEach(([dt, d]) => { if (!owner[dt] || d.n >= owner[dt].n) owner[dt] = { n:d.n, idx }; }); });
+    const byDate = {};
+    res.forEach((r, idx) => { if (r.error) return; Object.entries(r.byDate).forEach(([dt, d]) => { if (owner[dt].idx === idx) byDate[dt] = Object.values(d.agg); }); });
+    const dates = Object.keys(byDate).sort();
+    if (!dates.length) { showToast('В файлах нет строк продаж' + (bad.length ? ' ('+bad[0].name+': '+bad[0].error+')' : ''), 'error'); return; }
+    let chunk = [], sent = 0;
+    const flush = async () => { if (!chunk.length) return; const r = await postAction('saveChannelSales', chunk); if (!r || r.error || r.success === false) throw new Error((r && r.error) || 'ошибка сохранения'); sent += chunk.length; chunk = []; };
+    for (const dt of dates) {
+      if (chunk.length && chunk.length + byDate[dt].length > 800) await flush();
+      chunk = chunk.concat(byDate[dt]);
+    }
+    await flush();
+    _channelSalesCache = null;
+    showToast('Загружено: '+sent+' строк, дней: '+dates.length + (bad.length ? ' · пропущено файлов: '+bad.length : ''), 'success');
+    await buildSaldoBlock();
+  } catch(e) {
+    showToast('Ошибка загрузки: ' + e.message + ' (обновлён ли Apps Script v4?)', 'error');
+  }
+  const inp = document.getElementById('saldo-upload'); if (inp) inp.value = '';
+}
+
+// Обёртка: после обычного построения «Бюджета» дорисовываем блок сальдо.
+(function(){
+  const orig = buildBudgetPage;
+  buildBudgetPage = async function() {
+    await orig.apply(this, arguments);
+    try { await buildSaldoBlock(); } catch(e) { console.error('saldo', e); }
+  };
+})();
 
 // ── ДЕБИТОРКА (долги нам / наши долги) ─────────────────────────────────
 // Добавлено 20.09. База — лист «Долги» (см. loadDebtsData/getDebts), у
