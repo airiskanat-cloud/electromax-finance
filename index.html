@@ -697,7 +697,9 @@ const OPIU_TARGET_DEFAULTS = {
   cUborka: ['уборка'],
   cOther:  ['прочее','проценты'],
   kasp:    ['бонусы', 'бонусы за отзывы', 'бонусы клиенту от продаж'],
-  mark:    ['маркетинг', 'рекламма прочие', 'рекламма — алгатоп', 'wa рассылка', 'таргет', 'бот — техно'],
+  mark:    ['маркетинг', 'рекламма прочие', 'wa рассылка', 'таргет'],
+  // 26.10: «Аналитика» — отдельная строка раздела IV (раньше эти категории шли в «Маркетинг»).
+  analytics: ['аналитика', 'рекламма — сэлес', 'рекламма — диметра', 'рекламма — алгатоп', 'рекламма — ниша', 'бот — техно', 'бот — алгатоп'],
   shef:    ['шеф'],
   das:     ['дастан'],
   erk:     ['еркин'],
@@ -713,7 +715,7 @@ const OPIU_TARGET_LABELS = {
   fotZp: 'III. Зарплата', fotAv: 'III. Авансы', naem: 'III. Наёмники', tax: 'III. Налоги и социальные взносы', os: 'III. ОС / Лизинг',
   cShashu: 'IV. Шашу — бонусы ретейлерам', cKom: 'IV. Командировочные расходы', cAvto: 'IV. Авторасходы',
   cObed: 'IV. Обед / питание', cUsl: 'IV. Услуги', cKomp: 'IV. Компенсация', cKanc: 'IV. Канц. товары', cUborka: 'IV. Уборка',
-  cOther: 'IV. Прочее', kasp: 'IV. Бонусы клиентам', mark: 'IV. Маркетинг и реклама',
+  cOther: 'IV. Прочее', kasp: 'IV. Бонусы клиентам', mark: 'IV. Маркетинг и реклама', analytics: 'IV. Аналитика',
   shef: 'V. Шеф — Темирлан ага', das: 'V. Дастан ага', erk: 'V. Ерик', cred: 'Справочно: кредиты/займы (не в ОПиУ)',
   returns: 'I. Возврат покупателю',
   excluded: '— Не входит в ОПиУ',
@@ -831,7 +833,21 @@ const SUBCATEGORY_RULES = {
   'авторасходы парковка':                                  { keywords: [], default: 'Парковка' },
   'авторасходы мойка':                                     { keywords: [], default: 'Мойка' },
   'рекламма прочие':                                      { keywords: [], default: 'Рекламма' },
-  'рекламма — алгатоп':                                    { keywords: [], default: 'Рекламма' },
+  'рекламма — алгатоп':                                    { keywords: [], default: 'Алгатоп' },
+  'рекламма — сэлес':                                      { keywords: [], default: 'Сэлес' },
+  'рекламма — диметра':                                    { keywords: [], default: 'Диметра' },
+  'рекламма — ниша':                                       { keywords: [], default: 'Ниша' },
+  'бот — алгатоп':                                         { keywords: [], default: 'БОТ — Алгатоп' },
+  'аналитика': {
+    keywords: [
+      [/сэлес|selles|sales/i, 'Сэлес'],
+      [/диметр|dimetr/i, 'Диметра'],
+      [/алгатоп|algatop/i, 'Алгатоп'],
+      [/ниш/i, 'Ниша'],
+      [/бот.*техно|техно.*бот|letostore/i, 'БОТ — Техно'],
+    ],
+    default: null,
+  },
   'wa рассылка':                                           { keywords: [], default: 'WA рассылка' },
   'таргет':                                                { keywords: [], default: 'Таргет' },
   'бот — техно':                                           { keywords: [], default: 'Бот — Техно' },
@@ -851,12 +867,13 @@ const SUBCATEGORY_OPTIONS_BY_BUCKET = {
   cAvto: ['Парковка', 'ГСМ', 'Мойка', 'Масло', 'Прочие ( запчасти,ремонт идр)'],
   cUsl:  ['Сервисы', 'Уборка', 'Вывоз мусора', 'Прочие ( картридж)', 'Программа'],
   mark:  ['Таргет', 'СММ', 'Рекламма', 'WA рассылка'],
+  analytics: ['Сэлес', 'Диметра', 'Алгатоп', 'Ниша', 'БОТ — Техно', 'БОТ — Алгатоп'],
 };
 // Обратное соответствие: ключ бакета ОПиУ → категория, по которой
 // SUBCATEGORY_RULES ищет ключевые слова (нужно и там, и там — например
 // при выборе подкатегории для только что классифицированной новой
 // категории на странице "Категории без статьи").
-const BUCKET_TO_SUBCAT_CATEGORY = { cAvto: 'авторасходы', cUsl: 'услуги', mark: 'маркетинг', das: 'шеф' };
+const BUCKET_TO_SUBCAT_CATEGORY = { cAvto: 'авторасходы', cUsl: 'услуги', mark: 'маркетинг', analytics: 'аналитика', das: 'шеф' };
 
 // Определяет подкатегорию строки Журнала по категории (уже приведена к
 // нижнему регистру, как ключи SUBCATEGORY_RULES) и названию операции.
@@ -1012,6 +1029,9 @@ function effectiveCategory(row, nameOverrideMap) {
   // "перевод" в названии (см. правило выше), теперь есть явная категория.
   if (raw === 'прочее ( перевод или приход)') return '__override_excluded';
   const ov = nameOverrideMap ? nameOverrideMap[nameKey] : undefined;
+  // 26.10: операции, ранее подтверждённые вручную как «Маркетинг» с подкатегорией
+  // Бот — Техно / Рекламма — Сэлес/Диметра/Алгатоп/Ниша и т.п., теперь идут в «Аналитику».
+  if (ov && ov.target === 'mark' && /^(бот\s*[—-]\s*(техно|алгатоп)|рекламма\s*[—-]\s*(сэлес|диметра|алгатоп|ниша)|сэлес|диметра|алгатоп|ниша)$/i.test(String(ov.subcategory||'').trim())) return '__override_analytics';
   return ov ? ('__override_' + ov.target) : raw;
 }
 // Ключевые слова маркетинга — ПЕРЕИСПОЛЬЗУЕТ тот же список, что в
@@ -1121,7 +1141,7 @@ function normCatKey(s) {
     .replace(/\s*[–—]\s*/g,' — ').replace(/\s+-\s+/g,' — ').replace(/\s+/g,' ').trim();
 }
 // Подкатегории, найденные автоматически по листу «Бюджет» (см. budgetAutoCategoryMap).
-const _autoSubCats = { cAvto: [], cUsl: [], mark: [] };
+const _autoSubCats = { cAvto: [], cUsl: [], mark: [], analytics: [] };
 // ДОБАВЛЕНО 05.10 по просьбе Гульмиры: правила статей берём из листа «Бюджет»
 // в базе. Каждая строка-лист там (колонка «Статья» + «КлючБакета») — это
 // точное название категории, которое бухгалтер вводит в Журнал, и бакет ОПиУ,
@@ -1987,7 +2007,7 @@ async function buildDashboard() {
     const mp=gp-varE;
     const fix=B('rentA')+B('rentB')+B('rentC')+B('fotZp')+B('fotAv')+B('naem')+B('tax')+B('os');
     const op=mp-fix;
-    const com=B('cShashu')+B('cKom')+B('cAvto')+B('cObed')+B('cUsl')+B('cKomp')+B('cKanc')+B('cUborka')+B('cOther')+B('kasp')+B('mark');
+    const com=B('cShashu')+B('cKom')+B('cAvto')+B('cObed')+B('cUsl')+B('cKomp')+B('cKanc')+B('cUborka')+B('cOther')+B('kasp')+B('mark')+B('analytics');
     const ebit=op-com;
     const own=B('shef')+B('das')+B('erk');
     const net=ebit-own;
@@ -3481,8 +3501,8 @@ async function buildDDS() {
           // "Категории без статьи" (или дефолтом — категория 'прочее'/
           // 'проценты'). 'excluded' (например 'обналичка') нигде не суммируется.
           cOther=B('cOther'),
-          cKasp=B('kasp'), cMark=B('mark');
-    const com  = cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther+cKasp+cMark;
+          cKasp=B('kasp'), cMark=B('mark'), cAnalytics=B('analytics');
+    const com  = cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther+cKasp+cMark+cAnalytics;
     const oOs=B('os'), oUpk=B('upk'), oLog=B('log'), oKom=B('kom');
     const oKaspiKom = kaspiKomM[m]||0;
     const other= oOs+oUpk+oLog+oKom+oKaspiKom;
@@ -3497,7 +3517,7 @@ async function buildDDS() {
     const finOut = own + cred;
     const netFlow = opFlow - finOut;
     return {rev,returns,kaspComp,othInc,netRev,cogs,fotZp,fotAv,fotNaem,fotTax,fot,rentA,rentB,rentC,rent,
-            cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,cKasp,cMark,com,
+            cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,cKasp,cMark,cAnalytics,com,
             oOs,oUpk,oLog,oKom,oKaspiKom,other,
             opOut,opFlow,shef,das,erk,own,cred,finOut,netFlow};
   };
@@ -3594,6 +3614,7 @@ async function buildDDS() {
   html += subRow('Шашу — бонусы ретейлерам', 'cShashu', 'dds-com');
   html += subRow('Бонусы клиентам', 'cKasp', 'dds-com');
   html += subRow('Маркетинг и реклама', 'cMark', 'dds-com');
+  html += subRow('Аналитика', 'cAnalytics', 'dds-com');
   html += subRow('Командировочные', 'cKom', 'dds-com');
   html += subRow('Авторасходы', 'cAvto', 'dds-com');
   html += subRow('Обед / питание', 'cObed', 'dds-com');
@@ -3844,7 +3865,7 @@ async function computeOpiuFacts() {
     const fotZp=B('fotZp'), fotAv=B('fotAv'), fot=fotZp+fotAv;
     const naem=B('naem'), tax=B('tax'), os_=B('os');
     const fix=rent+fot+naem+tax+os_, op=mp-fix;
-    const kasp=B('kasp'), mark=B('mark');
+    const kasp=B('kasp'), mark=B('mark'), analytics=B('analytics');
     const cShashu=B('cShashu'), cKom=B('cKom'), cAvto=B('cAvto'),
           cObed=B('cObed'), cUsl=B('cUsl'), cKomp=B('cKomp'),
           cKanc=B('cKanc'), cUborka=B('cUborka'),
@@ -3853,7 +3874,7 @@ async function computeOpiuFacts() {
           // например 'обналичка') нигде не суммируется, из ОПиУ не входит.
           cOther=B('cOther');
     const com=cShashu+cKom+cAvto+cObed+cUsl+cKomp+cKanc+cUborka+cOther;
-    const comTotal=com+kasp+mark;
+    const comTotal=com+kasp+mark+analytics;
     const ebit=op-comTotal;
     // Общий расход (справочно) — сумма всех расходов ОПиУ (разделы II+III+IV),
     // кроме комиссии/доставки Kaspi (те сидят внутри валовой прибыли, gp) и
@@ -3864,7 +3885,7 @@ async function computeOpiuFacts() {
     const cred=B('cred');
     const unmatchedRev=unmatchedRevM[m]||0, trackedRev=trackedRevM[m]||0;
     return {rev,cogs,returns,kaspComp,othInc,netRev,gp,kom,log:log_,upk,kaspiMk,kaspiDl,varE,mp,rentA,rentB,rentC,rent,fotZp,fotAv,fot,naem,tax,os:os_,fix,op,
-            kasp,mark,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,totalExp,shef,das,erk,own,net,cred,
+            kasp,mark,analytics,cShashu,cKom,cAvto,cObed,cUsl,cKomp,cKanc,cUborka,cOther,com,comTotal,ebit,totalExp,shef,das,erk,own,net,cred,
             unmatchedRev,trackedRev};
   };
 
@@ -4257,9 +4278,16 @@ async function buildOPIU() {
     // (например "услуги"/"зарплата"), переопределённые вручную в
     // "Маркетинг" по точному названию, см. effectiveCategory выше.
     const sc = subCatRows('opiu-mark', ['маркетинг', '__override_mark',
-      'рекламма прочие', 'рекламма — алгатоп', 'wa рассылка', 'таргет', 'бот — техно', ..._autoSubCats.mark]);
+      'рекламма прочие', 'wa рассылка', 'таргет', ..._autoSubCats.mark]);
     html += dRowSub('(-) Маркетинг и реклама', 'mark', 'opiu-mark', true, sc.hasSub);
     html += sc.rows;
+  }
+  {
+    // 26.10: «Аналитика» — отдельная строка (Сэлес, Диметра, Алгатоп, Ниша, БОТ — Техно/Алгатоп).
+    const sa = subCatRows('opiu-analytics', ['аналитика', '__override_analytics',
+      'рекламма — сэлес', 'рекламма — диметра', 'рекламма — алгатоп', 'рекламма — ниша', 'бот — техно', 'бот — алгатоп', ..._autoSubCats.analytics]);
+    html += dRowSub('(-) Аналитика', 'analytics', 'opiu-analytics', true, sa.hasSub);
+    html += sa.rows;
   }
   html += profRow('▶  EBIT  (прибыль до вывода)', 'ebit', 'rs-ebit');
   html += dRow('Справочно: Общий расход  (II+III+IV, без вывода собственника)', 'totalExp', true, true);
@@ -4370,7 +4398,7 @@ async function buildBudgetPage() {
     (leafByKey[key] = leafByKey[key]||[]).push(it);
   });
   const LEAF_ORDER = ['rev','returns','kaspComp','othInc','cogs','kaspiMk','kaspiDl','kom','log','upk','rentA','rentB','rentC','fotZp','fotAv','fot','naem','tax','os',
-    'cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther','kasp','mark','shef','das','erk','cred'];
+    'cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther','kasp','mark','analytics','shef','das','erk','cred'];
   const planLeaf = {}; // key -> { [monthHeader]: план }
   LEAF_ORDER.forEach(key => {
     const rows = leafByKey[key];
@@ -4403,7 +4431,7 @@ async function buildBudgetPage() {
   // Строки-расходы (для направления "хорошо/плохо" в отклонении — для них
   // благоприятно, когда Факт МЕНЬШЕ Плана, а не больше).
   const COST_KEYS = new Set(['returns','cogs','kaspiMk','kaspiDl','kom','log','upk','rentA','rentB','rentC','fot','fotZp','fotAv','naem','tax','os',
-    'cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther','kasp','mark','shef','das','erk','cred','totalExp']);
+    'cShashu','cKom','cAvto','cObed','cUsl','cKomp','cKanc','cUborka','cOther','kasp','mark','analytics','shef','das','erk','cred','totalExp']);
 
   const fmt2 = v => fmt(v) + ' ₸';
   const devColor = (dev, isCost) => {
@@ -4531,6 +4559,7 @@ async function buildBudgetPage() {
   IV.forEach(([k,label]) => { html += L(label, k); });
   html += L('(-) Бонусы клиентам', 'kasp');
   html += L('(-) Маркетинг и реклама', 'mark');
+  html += L('(-) Аналитика', 'analytics');
   html += profRowB('EBIT  (прибыль до вывода)', planAgg._EBIT, F('ebit'));
   html += row('Справочно: Общий расход  (II+III+IV, без вывода собственника)', planAgg._TOTALEXP, F('totalExp'), true, false, true);
 
