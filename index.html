@@ -4884,6 +4884,7 @@ function saldoReadSalesFile(file) {
           const r = raw[i] || []; if (!r[0]) continue;
           const m = String(r[0]).match(/(\d{2})\.(\d{2})\.(\d{4})/); if (!m) continue;
           const date = m[3]+'-'+m[2]+'-'+m[1];
+          if (date < '2026-05-01') continue; // сальдо считается с мая 2026 — старые продажи не грузим
           const qty = parseFloat(r[11])||0, amount = qty*(parseFloat(r[12])||0);
           const item = String(r[5]||'').trim(); if (!item || qty <= 0 || amount < 100) continue;
           const client = String(r[4]||'').trim();
@@ -4916,7 +4917,7 @@ async function saldoUploadFiles(fileList) {
     const dates = Object.keys(byDate).sort();
     if (!dates.length) { showToast('В файлах нет строк продаж' + (bad.length ? ' ('+bad[0].name+': '+bad[0].error+')' : ''), 'error'); return; }
     let chunk = [], sent = 0;
-    const flush = async () => { if (!chunk.length) return; const r = await postAction('saveChannelSales', chunk); if (!r || r.error || r.success === false) throw new Error((r && r.error) || 'ошибка сохранения'); sent += chunk.length; chunk = []; };
+    const flush = async () => { if (!chunk.length) return; showToast('Сохраняю… '+sent+' строк', 'info'); const r = await postAction('saveChannelSales', chunk); if (!r || r.error || r.success === false) throw new Error((r && r.error) || 'ошибка сохранения'); sent += chunk.length; chunk = []; };
     for (const dt of dates) {
       if (chunk.length && chunk.length + byDate[dt].length > 800) await flush();
       chunk = chunk.concat(byDate[dt]);
