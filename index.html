@@ -4729,6 +4729,7 @@ function saldoPeriodMonths(rows, period) {
   return rows.filter(r => r.m === period);
 }
 
+function saldoPct(draw, share) { return share > 0 ? Math.round(draw/share*100)+'%' : (draw>0 ? '—' : '0%'); }
 function saldoMln(n) { return (n/1e6).toFixed(1).replace('.', ',') + ' млн'; }
 function saldoSigned(n) { return (n>0?'+':'') + saldoMln(n); }
 
@@ -4802,7 +4803,7 @@ async function buildSaldoBlock() {
       '<div style="font-size:11.5px;color:#64748b;margin:3px 0 10px">выведено '+pct.toFixed(0)+'% от доли за период</div>' +
       '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
       '<tr><td>Сальдо на начало</td><td style="text-align:right">'+fmt(Math.round(open))+'</td></tr>' +
-      '<tr><td>+ Доля прибыли (50%)</td><td style="text-align:right">'+fmt(Math.round(share))+'</td></tr>' +
+      '<tr><td>+ Прибыль на каждого (50%)</td><td style="text-align:right">'+fmt(Math.round(share))+'</td></tr>' +
       '<tr><td>− Выведено по факту</td><td style="text-align:right">'+fmt(Math.round(draw))+'</td></tr>' +
       '<tr style="border-top:1px solid #cbd5e1;font-weight:700"><td>Сальдо на конец</td><td style="text-align:right">'+fmt(Math.round(close))+'</td></tr></table></div>';
   }).join('');
@@ -4834,11 +4835,11 @@ async function buildSaldoBlock() {
   }
   // Таблица по месяцам
   const tr = rows.map(r => '<tr><td>'+monthLabel(r.m)+'</td><td>'+fmt(Math.round(r.gp))+'</td><td>'+fmt(Math.round(r.exp+r.erk))+'</td><td>'+fmt(Math.round(r.share))+'</td>' +
-    '<td>'+fmt(Math.round(r.d['Дастан'].draw))+'</td><td style="font-weight:600;color:'+(r.d['Дастан'].close<0?'#dc2626':'#15803d')+'">'+fmt(Math.round(r.d['Дастан'].close))+'</td>' +
-    '<td>'+fmt(Math.round(r.d['Темирлан'].draw))+'</td><td style="font-weight:600;color:'+(r.d['Темирлан'].close<0?'#dc2626':'#15803d')+'">'+fmt(Math.round(r.d['Темирлан'].close))+'</td></tr>').join('');
-  const tbl = '<div style="overflow-x:auto;margin-top:16px"><table class="data-table" style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr style="background:#1e3a5f;color:#fff"><th style="text-align:left;padding:6px">Месяц</th><th>Валовая прибыль</th><th>Расходы + Ерик</th><th>Доля каждого</th><th>Дастан выведено</th><th>Дастан сальдо</th><th>Темирлан выведено</th><th>Темирлан сальдо</th></tr></thead><tbody>'+tr+
-    '<tr style="font-weight:700;border-top:2px solid #1e3a5f"><td>Итого</td><td>'+fmt(Math.round(gp))+'</td><td>'+fmt(Math.round(exp+erk))+'</td><td>'+fmt(Math.round(dist/2))+'</td><td>'+fmt(Math.round(sum(r=>r.d['Дастан'].draw)))+'</td><td>'+fmt(Math.round(last.d['Дастан'].close))+'</td><td>'+fmt(Math.round(sum(r=>r.d['Темирлан'].draw)))+'</td><td>'+fmt(Math.round(last.d['Темирлан'].close))+'</td></tr></tbody></table></div>';
-  host.innerHTML = '<style>@media print{.saldo-noprint{display:none!important}} #saldo-block table.data-table td{padding:5px 6px;text-align:right;border-bottom:1px solid #e2e8f0} #saldo-block table.data-table td:first-child{text-align:left} #saldo-block table.data-table th{padding:6px;text-align:right;font-weight:600} #saldo-block table.data-table th:first-child{text-align:left}</style>' +
+    '<td>'+fmt(Math.round(r.d['Дастан'].draw))+'</td><td>'+saldoPct(r.d['Дастан'].draw,r.share)+'</td><td style="font-weight:600;color:'+(r.d['Дастан'].close<0?'#dc2626':'#15803d')+'">'+fmt(Math.round(r.d['Дастан'].close))+'</td>' +
+    '<td>'+fmt(Math.round(r.d['Темирлан'].draw))+'</td><td>'+saldoPct(r.d['Темирлан'].draw,r.share)+'</td><td style="font-weight:600;color:'+(r.d['Темирлан'].close<0?'#dc2626':'#15803d')+'">'+fmt(Math.round(r.d['Темирлан'].close))+'</td></tr>').join('');
+  const tbl = '<div style="overflow-x:auto;margin-top:16px"><table class="data-table" style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr style="background:#1e3a5f;color:#fff"><th style="text-align:left;padding:6px">Месяц</th><th>Валовая прибыль</th><th>Расходы + Ерик</th><th>Прибыль на каждого</th><th>Дастан выведено</th><th>% от прибыли</th><th>Дастан сальдо</th><th>Темирлан выведено</th><th>% от прибыли</th><th>Темирлан сальдо</th></tr></thead><tbody>'+tr+
+    '<tr style="font-weight:700;border-top:2px solid #1e3a5f"><td>Итого</td><td>'+fmt(Math.round(gp))+'</td><td>'+fmt(Math.round(exp+erk))+'</td><td>'+fmt(Math.round(dist/2))+'</td><td>'+fmt(Math.round(sum(r=>r.d['Дастан'].draw)))+'</td><td>'+saldoPct(sum(r=>r.d['Дастан'].draw),dist/2)+'</td><td>'+fmt(Math.round(last.d['Дастан'].close))+'</td><td>'+fmt(Math.round(sum(r=>r.d['Темирлан'].draw)))+'</td><td>'+saldoPct(sum(r=>r.d['Темирлан'].draw),dist/2)+'</td><td>'+fmt(Math.round(last.d['Темирлан'].close))+'</td></tr></tbody></table></div>';
+  host.innerHTML = '<style>@media print{.saldo-noprint{display:none!important}} #saldo-block table.data-table td{padding:5px 6px;text-align:right;border-bottom:1px solid #e2e8f0} #saldo-block table.data-table td:first-child{text-align:left} #saldo-block table.data-table thead th{padding:8px 6px;text-align:right;font-weight:700;color:#fff!important;background:#1e3a5f!important;font-size:12px;text-transform:none;letter-spacing:0} #saldo-block table.data-table th:first-child{text-align:left}</style>' +
     head + '<div style="font-size:13px;color:#64748b;margin:-6px 0 12px">Период: '+pLbl+' · сальдо считается с мая 2026 (старт — лист «СальдоСтарт»), доля каждого партнёра = (валовая прибыль − расходы − Ерик) ÷ 2, выведено — по факту</div>' +
     '<div style="display:flex;flex-wrap:wrap;gap:14px">'+cards+'</div>' +
     '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:14px">'+flow+chHtml+'</div>' +
@@ -4859,10 +4860,10 @@ function exportSaldoExcel() {
     ['Партнёр','Сальдо на начало','Доля прибыли','Выведено','Сальдо на конец']];
   ['Дастан','Темирлан'].forEach(p => sm.push([p, Math.round(f.d[p].open), Math.round(rows.reduce((a,r)=>a+r.d[p].share,0)), Math.round(rows.reduce((a,r)=>a+r.d[p].draw,0)), Math.round(l.d[p].close)]));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sm), 'Сводка');
-  const mm = [['Месяц','Валовая прибыль','Расходы','Ерик','Доля каждого','Дастан: начало','Дастан: выведено','Дастан: конец','Темирлан: начало','Темирлан: выведено','Темирлан: конец']];
+  const mm = [['Месяц','Валовая прибыль','Расходы','Ерик','Прибыль на каждого','Дастан: начало','Дастан: выведено','Дастан: % от прибыли','Дастан: конец','Темирлан: начало','Темирлан: выведено','Темирлан: % от прибыли','Темирлан: конец']];
   rows.forEach(r => mm.push([monthLabel(r.m), Math.round(r.gp), Math.round(r.exp), Math.round(r.erk), Math.round(r.share),
-    Math.round(r.d['Дастан'].open), Math.round(r.d['Дастан'].draw), Math.round(r.d['Дастан'].close),
-    Math.round(r.d['Темирлан'].open), Math.round(r.d['Темирлан'].draw), Math.round(r.d['Темирлан'].close)]));
+    Math.round(r.d['Дастан'].open), Math.round(r.d['Дастан'].draw), saldoPct(r.d['Дастан'].draw,r.share), Math.round(r.d['Дастан'].close),
+    Math.round(r.d['Темирлан'].open), Math.round(r.d['Темирлан'].draw), saldoPct(r.d['Темирлан'].draw,r.share), Math.round(r.d['Темирлан'].close)]));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mm), 'По месяцам');
   if (L.chRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Канал','Валовая прибыль, ₸']].concat(L.chRows.map(c=>[c[0], Math.round(c[1])]))), 'Каналы');
   XLSX.writeFile(wb, 'Сальдо_вывода_средств.xlsx');
